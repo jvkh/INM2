@@ -1,0 +1,24 @@
+services:
+  collector:
+    build:
+      context: .
+      dockerfile: collector/Dockerfile
+    command: ["python", "-m", "collector.main"]
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./databases:/app/databases
+      - ./logs:/logs
+      - ./databases/geoip:/geoip:ro
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    restart: unless-stopped
+    volumes:
+      - ./databases:/app/databases
+    ports:
+      - "8000:8000"
