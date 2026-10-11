@@ -8,9 +8,14 @@ from fastapi import FastAPI
 from common.database import Database
 from api.actors import router as actors_router
 from api.bursts import router as bursts_router
+from api.categories import router as categories_router
 from api.requests import router as requests_router
+from api.request_counts import router as request_counts_router
 from api.status import router as status_router
 from api.errors import register_error_handlers
+from api.hosts import router as hosts_router
+from api.params import router as params_router
+from api.operations import router as operations_router
 
 logger = logging.getLogger(__name__)
 
@@ -38,5 +43,10 @@ app = FastAPI(
 app.include_router(requests_router, prefix="/api/v1")
 app.include_router(actors_router, prefix="/api/v1")
 app.include_router(bursts_router, prefix="/api/v1")
+app.include_router(categories_router, prefix="/api/v1")
+app.include_router(hosts_router, prefix="/api/v1")
+app.include_router(params_router, prefix="/api/v1")
+app.include_router(operations_router, prefix="/api/v1")
 app.include_router(status_router, prefix="/api/v1")
+app.include_router(request_counts_router, prefix="/api/v1")
 register_error_handlers(app)

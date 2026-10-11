@@ -4,6 +4,8 @@ services:
       context: .
       dockerfile: collector/Dockerfile
     command: ["python", "-m", "collector.main"]
+    expose:
+      - "8001"
     restart: unless-stopped
     env_file:
       - .env
@@ -17,6 +19,8 @@ services:
       context: .
       dockerfile: api/Dockerfile
     command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      COLLECTOR_CONTROL_URL: http://collector:8001
     restart: unless-stopped
     volumes:
       - ./databases:/app/databases

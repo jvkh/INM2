@@ -61,27 +61,33 @@ Vorberechnungen und Caching von Daten:
 
 ## API
 
-/api/v1/requests        GET   liefert alle Requests in einem Zeitraum
-                              (ggf. für einen Akteur, host, etc.)
-/api/v1/requests/{id}   GET   liefert einen Request mit Akteur, Host und Kategorien
+/api/v1/requests                GET   liefert alle Requests in einem Zeitraum
+                                      (ggf. für einen Akteur, host, etc.)
+/api/v1/requests/{id}           GET   liefert einen Request mit Akteur, Host und Kategorien
 
-/api/v1/actors          GET   liefert alle Akteure in einem Zeitraum (ggf. nur neue)
-/api/v1/actors/{id}     GET   liefert einen Akteur mit Geo-Daten sowie Request- und Burstanzahl
+/api/v1/actors                  GET   liefert alle Akteure in einem Zeitraum (ggf. nur neue)
+/api/v1/actors/{id}             GET   liefert einen Akteur mit Geo-Daten sowie Request- und     
+                                      Burstanzahl
 
-/api/v1/bursts          GET   liefert Zusammenfassung und paginierte Bursts im Zeitraum;
-                              Textfilter: actor, host, country, provider, asn, city; Kennzahlen: Akteure/Bursts, Bursts pro Akteur (Durchschnitt/Median/Maximum), Requests pro Burst (Durchschnitt/Median/Maximum), Burst-Dauer (Durchschnitt/Median/Maximum), Requestarten
-/api/v1/burst/{id}      GET   liefert die Burstrequests für einen Burst
+/api/v1/bursts                  GET   liefert Zusammenfassung und paginierte Bursts im Zeitraum;
+                                      Textfilter: actor, host, country, provider, asn, city; Kennzahlen: Akteure/Bursts, Bursts pro Akteur (Durchschnitt/Median/Maximum), Requests pro Burst (Durchschnitt/Median/Maximum), Burst-Dauer (Durchschnitt/Median/Maximum), Requestarten
+/api/v1/bursts/{id}             GET   liefert die Daten eines Bursts
+/api/v1/burst_requests/{id}     GET   liefert die Burstdaten und alle zugehörigen Requests
 
-/api/v1/request_counts  GET   liefert die Anzahl der Requests in einem 
-                              Zeitraum pro Zeiteinheit
-/api/v1/categories      GET   liefert die Anzahl der Zugriffe pro 
-                              Kategory pro Zeitraum
-/api/v1/hosts           GET   liefert alle Hosts pro Zeitraum
-/api/v1/maintenance     PUT   stößt manuell die Wartungsarbeiten an
-/api/vi/import          PUT   stößt manuell einen Import an
-/api/v1/status          GET   gibt Statusparameter des Collectors zurück
-/api/v1/params          GET   liest einen oder mehrere Parameter
-/api/v1/params          PUT   schreibt einen oder mehrere Parameter
+/api/v1/request_counts          GET   liefert lesende, schreibende und andere Requests in gleich  
+                                      breite Zeitbalken; Filter: from, to, bars, host, actor/IP oder actor_id, category
+/api/v1/categories              GET   liefert Zugriffe pro Kategorie im Zeitraum, getrennt nach 
+                                      lesend/schreibend/sonstige sowie HTTP/HTTPS/sonstigem Scheme; optionaler Teiltrefferfilter category
+/api/v1/hosts                   GET   liefert Zugriffe pro Host im Zeitraum, getrennt nach 
+                                      lesend/schreibend/sonstige sowie HTTP/HTTPS/sonstigem Scheme; optionaler Teiltrefferfilter host
+/api/v1/maintenance             PUT   stößt manuell die Wartungsarbeiten an
+/api/v1/import                  PUT   stößt manuell einen Import an
+/api/v1/status                  GET   gibt Statusparameter des Collectors zurück
+/api/v1/params                  GET   group_name erforderlich; mit name einzelner Eintrag, 
+                                      ohne name alle Einträge der Gruppe
+/api/v1/params                  PUT   group_name und name erforderlich; value setzt/aktualisiert,
+                                      bei fehlendem value wird der Eintrag gelöscht
+/api/v1/params                  PUT   schreibt einen oder mehrere Parameter
 
 
 ## Frontend

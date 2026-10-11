@@ -18,7 +18,7 @@ def _utc_timestamp(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
-@router.get("/bursts/{id}")
+@router.get("/burst_requests/{id}")
 def get_burst_requests(
     request: Request,
     id: int = Path(ge=1, description="Burst ID"),
@@ -50,6 +50,27 @@ def get_burst_requests(
     )
     return {"burst": burst, "requests": requests, "total": len(requests)}
 
+
+@router.get("/bursts/{id}")
+def get_burst_requests(
+    request: Request,
+    id: int = Path(ge=1, description="Burst ID"),
+) -> dict[str, Any]:
+    """Return a burst."""
+    database = get_database(request)
+    burst_rows = database.query(
+        """SELECT b.*, a.ip AS actor_ip, a.country, a.provider, a.asn, a.city,
+                  h.name AS host
+           FROM burst AS b
+           JOIN actor AS a ON a.actor_id = b.actor_id
+           LEFT JOIN host AS h ON h.host_id = b.host_id
+           WHERE b.burst_id = ?""",
+        (id,),
+    )
+    if not burst_rows:
+        raise HTTPException(status_code=404, detail="Burst not found")
+
+    return burst_rows[0]
 
 @router.get("/bursts")
 def get_bursts(
