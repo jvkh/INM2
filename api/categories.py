@@ -1,7 +1,7 @@
 """Request counts grouped by category."""
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
@@ -24,6 +24,8 @@ def get_categories(
     from_: datetime = Query(alias="from", description="Start time, inclusive (ISO 8601)"),
     to: datetime = Query(description="End time, exclusive (ISO 8601)"),
     category: str | None = Query(default=None, min_length=1, description="Category-name substring"),
+    sort_by: Literal["category_name", "total_count", "read_count", "write_count", "other_count", "http_count", "https_count", "other_scheme_count", "traffic_share", "https_share"] = Query(default="category_name"),
+    sort_order: Literal["asc", "desc"] = Query(default="asc"),
 ) -> dict[str, Any]:
     """Return request-method and HTTP-scheme counts for matching categories."""
     start = _utc_text(from_)
@@ -38,6 +40,8 @@ def get_categories(
         parameters.append(f"%{category}%")
 
     database = get_database(request)
+    sort_expressions = {"category_name": "c.category_name", "total_count": "total_count", "read_count": "read_count", "write_count": "write_count", "other_count": "other_count", "http_count": "http_count", "https_count": "https_count", "other_scheme_count": "other_scheme_count", "traffic_share": "total_count", "https_share": "CAST(SUM(CASE WHEN LOWER(COALESCE(r.request_scheme, '')) = 'https' THEN 1 ELSE 0 END) AS REAL) / NULLIF(COUNT(*), 0)"}
+    order_by = f"{sort_expressions[sort_by]} {sort_order.upper()}, c.category_name ASC, c.category_id"
     items = database.query(
         f"""SELECT c.category_id, c.category_name,
                    COUNT(*) AS total_count,
@@ -60,7 +64,7 @@ def get_categories(
             JOIN category AS c ON c.category_id = rc.category_id
             WHERE {' AND '.join(conditions)}
             GROUP BY c.category_id, c.category_name
-            ORDER BY c.category_name""",
+            ORDER BY {order_by}""",
         parameters,
     )
-    return {"items": items, "from": start, "to": end, "category": category}
+    return {"items": items, "total": len(items), "from": start, "to": end, "category": category}

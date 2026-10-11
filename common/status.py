@@ -30,7 +30,7 @@ class CollectorStatus:
         self._write_values({"activity": "Import", "import_file": "", "import_count": "0"})
 
     def set_import_file(self, path: str) -> None:
-        self._write_values({"import_file": path})
+        self._write_values({"import_file": path, "last_import_file": path})
 
     def increment_import_count(self) -> None:
         row = self.database.connection.execute(
@@ -72,6 +72,7 @@ class CollectorStatus:
             "last_import": values.get("last_import"),
             "activity": values.get("activity", "Idle"),
             "import_file": values.get("import_file", ""),
+            "last_import_file": values.get("last_import_file", ""),
             "import_count": int(values.get("import_count") or 0),
             "environment": environment,
         }

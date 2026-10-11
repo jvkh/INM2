@@ -23,6 +23,7 @@ def get_status(request: Request) -> dict[str, Any]:
             "last_import": None,
             "activity": "Unknown",
             "import_file": "",
+            "last_import_file": "",
             "import_count": 0,
         },
         "environment": {},

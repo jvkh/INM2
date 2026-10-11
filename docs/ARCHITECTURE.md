@@ -92,7 +92,53 @@ Vorberechnungen und Caching von Daten:
 
 ## Frontend
 
-Das Frontent steuert komplett das Aussehen der Anwendung.
+Das Frontent steuert komplett das Aussehen der Anwendung. Die Anwendung benutzt ausschließlich die API und hat keinen Zugriff auf die Datenbank. Die Hauptfunktionen sind:
+
+Dashboard
+    - Filter nach Zeitfenster (von-bis)
+    - Anzeige der Requestmengen als Balken oder Liniengrafik (request_counts). Angabe der Auflösung (z.B. pro Stunde, Minute, etc). Umschaltber zwischen Balken und Liniengrafik. Liniengrafik benötigt i.d.R. eine detailiertere Auflösung als Balkengrafik
+    - Anzeige Gesamtzahl Zugriffe nach Zeifenster, aktive Quellen (davon neue)
+Bursts
+    - Filter nach Zeitfenster (von-bis), Kategorien, Akteur (Provider, IP, Stadt, Land) und Host
+    - Zeigt Bursts als Balkengrafik mit Anzahl der Aufrufe an (ggf. Rollbalken)
+    - Beim Klick auf einen Balken werden die Requests dazu angezeigt
+Akteure
+    - Filter nach Zeitfenster (von-bis), Kategorien, Land, Stadt und Host
+Hosts
+    - Filter nach Zeitfenster, Akteur (Provider, IP, Stadt, Land) und Kategorien
+Kategorien
+    - Filter nach Zeitfenster, Akteur (Provider, IP, Stadt, Land) und Hosts
+Requests
+    Liste mit Requests incl. Paginator
+    Filter nach Provider, Stadt, Land, ASN, Kategorien und Zeitbereich. 
+Admin
+    Aufrufbutton Maintenance
+    Aufrufbutton Import
+    Statusanzeige
+    Parametereinstellungen?
+
+
+- Alle Listen haben bei Bedarf einen Paginator.
+- Zeitanzeigen immer im lokalen Format
+- Der Zeitfilter kann per Auswahlbutton und modalem Dialog eingegeben werden. Er soll neben einem Kalender für die beiden Zeitwerte auf vordefinierte Zeitintervall enthalten, wie z.B. heute, gestern, 30 Tage, 90 Tage, ein Jahr
+- Filter für Hosts, Land, Stadt und Kategorien werden per editierbarerer Kombobox zur Auswahl bereit gestellt.
+
+Layout: Das Frontend soll auch für Mobilgeräten optimiert werden.
+
+┌──────────────────┬─────────────────────────────────────────────┐
+│ INM2             │ Zeitraum: [Letzte 24 h ▾] [Von] [Bis]       │
+│                  ├─────────────────────────────────────────────┤
+│ Dashboard        │                                             │
+│ Bursts           │                Seiteninhalt                 │
+│ Akteure          │                                             │
+│ Hosts            │                                             │
+│ Kategorien       │                                             │
+│ Requests         │                                             │
+│                  │                                             │
+│ Admin            │                                             │
+│ ● Collector      │                                             │
+└──────────────────┴─────────────────────────────────────────────┘
+
 
 ## Datenbank
 

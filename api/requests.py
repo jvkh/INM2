@@ -1,7 +1,7 @@
 """Request listing endpoint and its optional filters."""
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 
@@ -63,6 +63,12 @@ def get_requests(
     city: str | None = Query(default=None, min_length=1),
     provider: str | None = Query(default=None, min_length=1),
     asn: str | None = Query(default=None, min_length=1),
+    category: str | None = Query(default=None, min_length=1, description="Category-name substring"),
+    search: str | None = Query(default=None, min_length=1, description="Search IP, country, city, provider, ASN, or request path"),
+    status_class: Literal["2xx", "3xx", "4xx", "5xx"] | None = Query(default=None),
+    burst_id: int | None = Query(default=None, ge=1, description="Return requests associated with this burst"),
+    sort_by: Literal["start_utc", "request_method", "request_path", "downstream_status", "actor_ip", "host", "duration", "downstream_content_size"] = Query(default="start_utc"),
+    sort_order: Literal["asc", "desc"] = Query(default="asc"),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
@@ -74,6 +80,23 @@ def get_requests(
 
     conditions = ["r.start_utc >= ?", "r.start_utc < ?"]
     parameters: list[Any] = [start, end]
+    if burst_id is not None:
+        conditions.append(
+            """EXISTS (
+                   SELECT 1 FROM burst AS b
+                   WHERE b.burst_id = ?
+                     AND b.actor_id = r.actor_id
+                     AND b.host_id IS r.host_id
+                     AND r.start_utc >= b.start_time
+                     AND r.start_utc <= b.end_time
+               )"""
+        )
+        parameters.append(burst_id)
+    if category is not None:
+        conditions.append(
+            "EXISTS (SELECT 1 FROM request_category AS rc JOIN category AS c ON c.category_id = rc.category_id WHERE rc.request_id = r.request_id AND c.category_name LIKE ?)"
+        )
+        parameters.append(f"%{category}%")
     for column, value in (
         ("h.name", host),
         ("a.ip", actor),
@@ -91,12 +114,21 @@ def get_requests(
             else:
                 conditions.append(f"{column} LIKE ?")
                 parameters.append(f"%{value}%")
+    if search is not None:
+        conditions.append("(a.ip LIKE ? OR a.country LIKE ? OR a.city LIKE ? OR a.provider LIKE ? OR a.asn LIKE ? OR r.request_path LIKE ?)")
+        parameters.extend([f"%{search}%"] * 6)
+    if status_class is not None:
+        status_start = int(status_class[0]) * 100
+        conditions.append("r.downstream_status >= ? AND r.downstream_status < ?")
+        parameters.extend([status_start, status_start + 100])
 
     where_clause = " AND ".join(conditions)
     database = get_database(request)
     joins = """FROM request AS r
                JOIN actor AS a ON a.actor_id = r.actor_id
                LEFT JOIN host AS h ON h.host_id = r.host_id"""
+    sort_expressions = {"start_utc": "r.start_utc", "request_method": "r.request_method", "request_path": "r.request_path", "downstream_status": "r.downstream_status", "actor_ip": "a.ip", "host": "h.name", "duration": "r.duration", "downstream_content_size": "r.downstream_content_size"}
+    order_by = f"{sort_expressions[sort_by]} {sort_order.upper()}, r.start_utc DESC, r.request_id DESC"
     total_rows = database.query(
         f"SELECT COUNT(*) AS total {joins} WHERE {where_clause}", parameters
     )
@@ -108,7 +140,7 @@ def get_requests(
                       r.duration, r.user_agent
                {joins}
                WHERE {where_clause}
-               ORDER BY r.start_utc, r.request_id
+               ORDER BY {order_by}
                LIMIT ? OFFSET ?""",
         [*parameters, limit, offset],
     )

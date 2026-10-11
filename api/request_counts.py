@@ -1,7 +1,7 @@
 """Time-bucketed request counts for charts."""
 
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
@@ -32,6 +32,9 @@ def get_request_counts(
     actor_ip: str | None = Query(default=None, min_length=1, description="Actor IP substring"),
     actor_id: int | None = Query(default=None, ge=1),
     category: str | None = Query(default=None, min_length=1),
+    burst_id: int | None = Query(default=None, ge=1),
+    search: str | None = Query(default=None, min_length=1, description="Search IP, country, city, provider, ASN, or request path"),
+    status_class: Literal["2xx", "3xx", "4xx", "5xx"] | None = Query(default=None),
 ) -> dict[str, Any]:
     """Return read, write, and other request counts in equal time buckets."""
     start_dt = _utc_datetime(from_)
@@ -65,6 +68,27 @@ def get_request_counts(
                )"""
         )
         filter_parameters.append(f"%{category}%")
+    if burst_id is not None:
+        filter_conditions.append(
+            """EXISTS (
+                   SELECT 1 FROM burst AS fb
+                   WHERE fb.burst_id = ?
+                     AND fb.actor_id = r.actor_id
+                     AND fb.host_id IS r.host_id
+                     AND r.start_utc >= fb.start_time
+                     AND r.start_utc <= fb.end_time
+               )"""
+        )
+        filter_parameters.append(burst_id)
+    if search is not None:
+        filter_conditions.append(
+            "EXISTS (SELECT 1 FROM actor AS sa WHERE sa.actor_id = r.actor_id AND (sa.ip LIKE ? OR sa.country LIKE ? OR sa.city LIKE ? OR sa.provider LIKE ? OR sa.asn LIKE ?)) OR r.request_path LIKE ?"
+        )
+        filter_parameters.extend([f"%{search}%"] * 6)
+    if status_class is not None:
+        status_start = int(status_class[0]) * 100
+        filter_conditions.append("r.downstream_status >= ? AND r.downstream_status < ?")
+        filter_parameters.extend([status_start, status_start + 100])
 
     extra_filters = "".join(f" AND ({condition})" for condition in filter_conditions)
     database = get_database(request)

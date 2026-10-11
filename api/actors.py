@@ -1,7 +1,7 @@
 """Actor listing endpoint."""
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 
@@ -15,6 +15,29 @@ def _utc_timestamp(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+@router.get("/countries")
+def get_countries(
+    request: Request,
+    from_: datetime = Query(alias="from", description="Start time, inclusive (ISO 8601)"),
+    to: datetime = Query(description="End time, exclusive (ISO 8601)"),
+) -> dict[str, Any]:
+    """Return distinct countries with requests in the selected time range."""
+    start = _utc_timestamp(from_)
+    end = _utc_timestamp(to)
+    if start >= end:
+        raise HTTPException(status_code=422, detail="'from' must be earlier than 'to'")
+    database = get_database(request)
+    items = database.query(
+        """SELECT DISTINCT a.country AS country
+           FROM actor AS a JOIN request AS r ON r.actor_id = a.actor_id
+           WHERE r.start_utc >= ? AND r.start_utc < ?
+             AND a.country IS NOT NULL AND TRIM(a.country) <> ''
+           ORDER BY a.country""",
+        [start, end],
+    )
+    return {"items": items, "from": start, "to": end}
 
 
 @router.get("/actors/{id}")
@@ -51,6 +74,10 @@ def get_actors(
     city: str | None = Query(default=None, min_length=1),
     asn: str | None = Query(default=None, min_length=1),
     ip: str | None = Query(default=None, min_length=1),
+    search: str | None = Query(default=None, min_length=1, description="Substring in actor IP or city"),
+    global_search: str | None = Query(default=None, min_length=1, description="Search actor IP, country, city, or ASN"),
+    sort_by: Literal["ip", "first_time", "last_time", "provider", "asn", "city", "country", "request_count"] = Query(default="first_time"),
+    sort_order: Literal["asc", "desc"] = Query(default="asc"),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
@@ -75,7 +102,15 @@ def get_actors(
         if value is not None:
             conditions.append(f"{column} LIKE ?")
             parameters.append(f"%{value}%")
+    if search is not None:
+        conditions.append("(a.ip LIKE ? OR COALESCE(a.city, '') LIKE ? OR COALESCE(a.provider, '') LIKE ? OR COALESCE(a.asn, '') LIKE ?)")
+        parameters.extend([f"%{search}%"] * 4)
+    if global_search is not None:
+        conditions.append("(a.ip LIKE ? OR COALESCE(a.country, '') LIKE ? OR COALESCE(a.city, '') LIKE ? OR COALESCE(a.asn, '') LIKE ?)")
+        parameters.extend([f"%{global_search}%"] * 4)
     where_clause = " AND ".join(conditions)
+    sort_expressions = {"ip": "a.ip", "first_time": "a.first_time", "last_time": "a.last_time", "provider": "a.provider", "asn": "a.asn", "city": "a.city", "country": "a.country", "request_count": "request_count"}
+    order_by = f"{sort_expressions[sort_by]} {sort_order.upper()}, a.actor_id"
     database = get_database(request)
     joins = """FROM actor AS a
                JOIN request AS r ON r.actor_id = a.actor_id"""
@@ -91,7 +126,7 @@ def get_actors(
                {joins}
                WHERE {where_clause}
                GROUP BY a.actor_id
-               ORDER BY a.first_time, a.actor_id
+               ORDER BY {order_by}
                LIMIT ? OFFSET ?""",
         [*parameters, limit, offset],
     )

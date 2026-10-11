@@ -1,4 +1,14 @@
 services:
+  ui:
+    build:
+      context: ./UI
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "3000:80"
+
   collector:
     build:
       context: .

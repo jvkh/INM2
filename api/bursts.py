@@ -1,7 +1,7 @@
 """Burst listing and summary endpoint."""
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 
@@ -84,6 +84,9 @@ def get_bursts(
     provider: str | None = Query(default=None, min_length=1),
     asn: str | None = Query(default=None, min_length=1),
     city: str | None = Query(default=None, min_length=1),
+    search: str | None = Query(default=None, min_length=1, description="Substring in actor IP, provider, ASN, or city"),
+    sort_by: Literal["start_time", "actor_ip", "host", "country", "duration", "requests", "avg_count"] = Query(default="start_time"),
+    sort_order: Literal["asc", "desc"] = Query(default="asc"),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
@@ -106,6 +109,9 @@ def get_bursts(
         if value is not None:
             conditions.append(f"{column} LIKE ?")
             parameters.append(f"%{value}%")
+    if search is not None:
+        conditions.append("(a.ip LIKE ? OR COALESCE(a.provider, '') LIKE ? OR COALESCE(a.asn, '') LIKE ? OR COALESCE(a.city, '') LIKE ?)")
+        parameters.extend([f"%{search}%"] * 4)
     if actor_id is not None:
         conditions.append("b.actor_id = ?")
         parameters.append(actor_id)
@@ -128,6 +134,7 @@ def get_bursts(
                    AVG(read_count + write_count + other_count) AS avg_requests_per_burst,
                    MAX(read_count + write_count + other_count) AS max_requests_per_burst,
                    AVG((julianday(end_time) - julianday(start_time)) * 86400.0) AS avg_duration_seconds,
+                   MIN((julianday(end_time) - julianday(start_time)) * 86400.0) AS min_duration_seconds,
                    MAX((julianday(end_time) - julianday(start_time)) * 86400.0) AS max_duration_seconds,
                    AVG(avg_count) AS avg_requests_per_second
             FROM filtered""",
@@ -156,9 +163,19 @@ def get_bursts(
         }
     )
 
+    sort_expressions = {
+        "start_time": "b.start_time",
+        "actor_ip": "a.ip",
+        "host": "h.name",
+        "country": "a.country",
+        "duration": "(julianday(b.end_time) - julianday(b.start_time))",
+        "requests": "(b.read_count + b.write_count + b.other_count)",
+        "avg_count": "b.avg_count",
+    }
+    order_by = f"{sort_expressions[sort_by]} {sort_order.upper()}, b.start_time DESC, b.burst_id DESC"
     items = database.query(
         f"""{filtered}
-            ORDER BY b.start_time, b.burst_id
+            ORDER BY {order_by}
             LIMIT ? OFFSET ?""",
         [*parameters, limit, offset],
     )
