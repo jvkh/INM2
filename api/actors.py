@@ -71,6 +71,7 @@ def get_actors(
     new_only: bool = Query(default=False, description="Only actors first seen in this period"),
     provider: str | None = Query(default=None, min_length=1),
     country: str | None = Query(default=None, min_length=1),
+    country_exact: bool = Query(default=False, description="Match the country exactly"),
     city: str | None = Query(default=None, min_length=1),
     asn: str | None = Query(default=None, min_length=1),
     ip: str | None = Query(default=None, min_length=1),
@@ -92,9 +93,11 @@ def get_actors(
     if new_only:
         conditions.extend(["a.first_time >= ?", "a.first_time < ?"])
         parameters.extend([start, end])
+    if country is not None:
+        conditions.append("a.country = ?" if country_exact else "a.country LIKE ?")
+        parameters.append(country if country_exact else f"%{country}%")
     for column, value in (
         ("a.provider", provider),
-        ("a.country", country),
         ("a.city", city),
         ("a.asn", asn),
         ("a.ip", ip),

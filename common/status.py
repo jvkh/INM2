@@ -33,11 +33,11 @@ class CollectorStatus:
         self._write_values({"import_file": path, "last_import_file": path})
 
     def increment_import_count(self) -> None:
-        row = self.database.connection.execute(
+        rows = self.database.query(
             "SELECT value FROM settings WHERE group_name = ? AND name = 'import_count'",
             (self.GROUP,),
-        ).fetchone()
-        count = int(row[0]) if row and row[0] else 0
+        )
+        count = int(rows[0]["value"]) if rows and rows[0]["value"] else 0
         self._write_values({"import_count": str(count + 1)})
 
     def complete_import(self) -> None:
@@ -59,10 +59,10 @@ class CollectorStatus:
     @classmethod
     def read_snapshot(cls, database: Database) -> dict[str, Any]:
         """Read the stored collector status without changing it."""
-        rows = database.connection.execute(
+        rows = database.query(
             "SELECT name, value FROM settings WHERE group_name = ?",
             (cls.GROUP,),
-        ).fetchall()
+        )
         values = {row["name"]: row["value"] for row in rows}
         try:
             environment = json.loads(values.get("environment") or "{}")
@@ -78,9 +78,8 @@ class CollectorStatus:
         }
 
     def _write_values(self, values: dict[str, str]) -> None:
-        with self.database.connection:
-            self.database.connection.executemany(
-                """INSERT INTO settings (group_name, name, value) VALUES (?, ?, ?)
-                   ON CONFLICT(group_name, name) DO UPDATE SET value = excluded.value""",
-                [(self.GROUP, name, value) for name, value in values.items()],
-            )
+        self.database.execute_many(
+            """INSERT INTO settings (group_name, name, value) VALUES (?, ?, ?)
+               ON CONFLICT(group_name, name) DO UPDATE SET value = excluded.value""",
+            [(self.GROUP, name, value) for name, value in values.items()],
+        )

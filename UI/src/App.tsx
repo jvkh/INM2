@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import {
   Activity, ArrowDown, ArrowDownRight, ArrowUp, ArrowUpRight, Bell, Blocks, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CircleHelp,
-  Clock3, Command, Database, Globe2, LayoutDashboard, ListFilter, Menu,
+  Clock3, Command, Database, FileText, Globe2, LayoutDashboard, ListFilter, LockKeyhole, LockOpen, Menu,
   Network, Search, Settings2, ShieldAlert, SkipBack, SkipForward, Sun, Users, X,
 } from 'lucide-react'
 import { messages, type Language, type MessageKey } from './i18n'
 
-type Theme = 'cloud' | 'midnight' | 'moss'
+type Theme = 'auto' | 'cloud' | 'midnight' | 'moss'
 type PageKey = 'dashboard' | 'bursts' | 'actors' | 'hosts' | 'categories' | 'requests' | 'administration'
 type BurstSortColumn = 'start_time' | 'actor_ip' | 'host' | 'country' | 'duration' | 'requests' | 'avg_count'
 type BurstSort = { column: BurstSortColumn; direction: 'asc' | 'desc' }
@@ -38,7 +38,7 @@ const tablePageSize = 30
 const navigation: { key: PageKey; icon: typeof LayoutDashboard }[] = [
   { key: 'dashboard', icon: LayoutDashboard }, { key: 'bursts', icon: Activity },
   { key: 'actors', icon: Users }, { key: 'hosts', icon: Globe2 },
-  { key: 'categories', icon: Blocks }, { key: 'requests', icon: ListFilter },
+  { key: 'categories', icon: Blocks }, { key: 'requests', icon: FileText },
 ]
 
 type RangePreset = 'last24h' | 'today' | 'yesterday' | 'last6h' | 'last7d' | 'last30d' | 'last90d' | 'custom'
@@ -49,7 +49,7 @@ type ActorItem = { actor_id: number; ip: string; first_time: string; last_time: 
 type BurstItem = { burst_id: number; actor_ip: string; country: string | null; provider: string | null; asn: string | null; city: string | null; host: string | null; start_time: string; end_time: string; avg_count: number; read_count: number; write_count: number; other_count: number }
 type HostItem = { host_id: number; host: string; total_count: number; read_count: number; write_count: number; other_count: number; http_count: number; https_count: number; other_scheme_count: number }
 type CategoryItem = { category_id: number; category_name: string; total_count: number; read_count: number; write_count: number; other_count: number; http_count: number; https_count: number; other_scheme_count: number }
-type RequestItem = { request_id: number; start_utc: string; actor_ip: string; provider: string | null; asn: string | null; city: string | null; country: string | null; host: string | null; request_method: string; request_path: string; request_scheme: string; downstream_status: number; downstream_content_size: number; duration: number }
+type RequestItem = { request_id: number; start_utc: string; actor_ip: string; provider: string | null; asn: string | null; city: string | null; country: string | null; host: string | null; request_method: string; request_path: string; request_scheme: string; categories: string | null; downstream_status: number; downstream_content_size: number; duration: number }
 type GlobalSearchActor = Pick<ActorItem, 'actor_id' | 'ip' | 'provider' | 'asn' | 'city' | 'country' | 'request_count'>
 type GlobalSearchHost = Pick<HostItem, 'host_id' | 'host' | 'total_count'>
 type GlobalSearchCategory = Pick<CategoryItem, 'category_id' | 'category_name' | 'total_count'>
@@ -60,6 +60,12 @@ type NotificationData = { request_count: number; burst_count: number; requests: 
 type StatusData = { status: string; database: string; collector_status: { available: boolean; last_import: string | null; activity: string; import_file: string; last_import_file: string; import_count: number }; environment: Record<string, string> }
 type BurstResponse = { summary: Record<string, number | null>; items: BurstItem[]; total?: number; limit: number; offset: number }
 type CountItem = { read_count: number; write_count: number; other_count: number; total_count?: number; from?: string; to?: string }
+
+let liveRefreshTick = 0
+const liveRefreshListeners = new Set<() => void>()
+function subscribeLiveRefresh(listener: () => void) { liveRefreshListeners.add(listener); return () => liveRefreshListeners.delete(listener) }
+function getLiveRefreshTick() { return liveRefreshTick }
+function triggerLiveRefresh() { liveRefreshTick += 1; liveRefreshListeners.forEach((listener) => listener()) }
 
 let pendingApiRequests = 0
 const apiRequestListeners = new Set<() => void>()
@@ -153,6 +159,11 @@ function rangeTick(range: TimeRange, fraction: number, language: Language) {
 }
 
 function useApiData<T>(url: string, pollIntervalMs = 0, showActivityToast = true) {
+  const refreshTick = useSyncExternalStore(subscribeLiveRefresh, getLiveRefreshTick, getLiveRefreshTick)
+  const previousRefreshTick = useRef(refreshTick)
+  const scheduledRefresh = previousRefreshTick.current !== refreshTick
+  previousRefreshTick.current = refreshTick
+  const showToastForRequest = showActivityToast && !scheduledRefresh
   const [data, setData] = useState<T | null>(null)
   const dataRef = useRef<T | null>(null)
   const [loading, setLoading] = useState(true)
@@ -166,10 +177,10 @@ function useApiData<T>(url: string, pollIntervalMs = 0, showActivityToast = true
     const finishRequest = () => {
       if (!requestFinished) {
         requestFinished = true
-        if (showActivityToast) updatePendingApiRequests(-1)
+        if (showToastForRequest) updatePendingApiRequests(-1)
       }
     }
-    if (showActivityToast) updatePendingApiRequests(1)
+    if (showToastForRequest) updatePendingApiRequests(1)
     if (dataRef.current === null) setLoading(true)
     setError(null)
     fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } })
@@ -190,7 +201,7 @@ function useApiData<T>(url: string, pollIntervalMs = 0, showActivityToast = true
         }
       })
     return () => { if (pollTimer !== undefined) window.clearTimeout(pollTimer); finishRequest(); controller.abort() }
-  }, [url, reloadKey, pollIntervalMs, showActivityToast])
+  }, [url, reloadKey, pollIntervalMs, showToastForRequest, refreshTick])
 
   return { data, loading, error, reload: () => setReloadKey((key) => key + 1) }
 }
@@ -207,7 +218,7 @@ function parsePreferences(items: { name: string; value: string | null }[]): UiPr
   const values = Object.fromEntries(items.map(({ name, value }) => [name, value]))
   const preferences: UiPreferences = {}
   if (values.language === 'de' || values.language === 'en') preferences.language = values.language
-  if (values.theme === 'cloud' || values.theme === 'midnight' || values.theme === 'moss') preferences.theme = values.theme
+  if (values.theme === 'auto' || values.theme === 'cloud' || values.theme === 'midnight' || values.theme === 'moss') preferences.theme = values.theme
   if (values.time_range) {
     try {
       const parsed = JSON.parse(values.time_range) as UiPreferences['timeRange']
@@ -295,7 +306,14 @@ function dateText(value: string | null | undefined, language: Language) {
   if (!value) return '—'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat(language === 'de' ? 'de-DE' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(date)
+  return new Intl.DateTimeFormat(language === 'de' ? 'de-DE' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short' }).format(date)
+}
+
+function timeText(value: string | null | undefined, language: Language) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return new Intl.DateTimeFormat(language === 'de' ? 'de-DE' : 'en-GB', { hour: '2-digit', minute: '2-digit' }).format(date)
 }
 
 function secondsText(seconds: number | null | undefined, language: Language) {
@@ -344,6 +362,8 @@ function activityText(activity: string | undefined, t: (key: MessageKey) => stri
 function App() {
   const [language, setLanguage] = useState<Language>('de')
   const [theme, setTheme] = useState<Theme>('midnight')
+  const [systemPrefersDark, setSystemPrefersDark] = useState(() => typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+  const activeTheme: Exclude<Theme, 'auto'> = theme === 'auto' ? (systemPrefersDark ? 'midnight' : 'cloud') : theme
   const [menuOpen, setMenuOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchText, setSearchText] = useState('')
@@ -371,6 +391,18 @@ function App() {
   const preferenceSaves = useRef<Record<string, AbortController>>({})
   const searchInputRef = useRef<HTMLInputElement>(null)
   const t = (key: MessageKey) => messages[language][key]
+  const liveStatus = useApiData<StatusData>(apiUrl('status'), 10_000, false)
+
+  useEffect(() => {
+    if (range.preset !== 'last24h') return
+    const configuredSeconds = Number(liveStatus.data?.environment.INPUT_INTERVAL_SECONDS)
+    const intervalMs = Number.isFinite(configuredSeconds) && configuredSeconds > 0 ? configuredSeconds * 1000 : 3_600_000
+    const timer = window.setInterval(() => {
+      setRange(makeRange('last24h'))
+      triggerLiveRefresh()
+    }, intervalMs)
+    return () => window.clearInterval(timer)
+  }, [range.preset, liveStatus.data?.environment.INPUT_INTERVAL_SECONDS])
 
   useEffect(() => {
     const onShortcut = (event: KeyboardEvent) => {
@@ -440,9 +472,17 @@ function App() {
   }, [preferencesLoaded])
 
   useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)')
+    const updateSystemTheme = () => setSystemPrefersDark(media.matches)
+    updateSystemTheme()
+    media.addEventListener('change', updateSystemTheme)
+    return () => media.removeEventListener('change', updateSystemTheme)
+  }, [])
+
+  useEffect(() => {
     document.documentElement.lang = language
-    document.documentElement.dataset.theme = theme
-  }, [language, theme])
+    document.documentElement.dataset.theme = activeTheme
+  }, [language, activeTheme])
 
   const savePreference = (name: string, value: string) => {
     preferenceSaves.current[name]?.abort()
@@ -484,7 +524,7 @@ function App() {
   if (!preferencesLoaded) return <div className="preferences-loading">{messages.de.loadingPreferences}</div>
 
   return (
-    <div className="app-shell" data-theme={theme}>
+    <div className="app-shell" data-theme={activeTheme}>
       <aside className={`sidebar ${menuOpen ? 'sidebar-open' : ''}`}>
         <div className="brand-row">
           <div className="brand-mark"><Activity size={19} strokeWidth={2.4} /></div>
@@ -520,9 +560,9 @@ function App() {
         </header>
 
         <div className="content-wrap">
-          {activePage === 'bursts' ? <BurstsPage t={t} language={language} range={range} onRangeChange={updateRange} sort={burstSort} onSortChange={updateBurstSort} filters={burstFilters} onFiltersChange={updateBurstFilters} onBurstSelect={(id) => { setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setActivePage('requests') }} /> : activePage === 'actors' ? <ActorsPage t={t} language={language} range={range} onRangeChange={updateRange} sort={actorSort} onSortChange={updateActorSort} filters={actorFilters} onFiltersChange={updateActorFilters} onActorSelect={(ip) => { setSelectedActorIp(ip); setSelectedBurstId(null); setSelectedHost(null); setSelectedCategory(null); setActivePage('requests') }} /> : activePage === 'hosts' ? <HostsPage t={t} language={language} range={range} onRangeChange={updateRange} sort={hostSort} onSortChange={updateHostSort} filters={hostFilters} onFiltersChange={updateHostFilters} onHostSelect={(host) => { setSelectedHost(host); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedCategory(null); setActivePage('requests') }} /> : activePage === 'categories' ? <CategoriesPage t={t} language={language} range={range} onRangeChange={updateRange} sort={categorySort} onSortChange={updateCategorySort} filters={categoryFilters} onFiltersChange={updateCategoryFilters} onCategorySelect={(category) => { setSelectedCategory(category); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setActivePage('requests') }} /> : activePage === 'requests' ? <RequestsPage t={t} language={language} range={range} onRangeChange={updateRange} burstId={selectedBurstId} actorIp={selectedActorIp} host={selectedHost} category={selectedCategory} filters={requestFilters} onFiltersChange={updateRequestFilters} sort={requestSort} onSortChange={updateRequestSort} onBurstClear={() => setSelectedBurstId(null)} onActorClear={() => setSelectedActorIp(null)} onHostClear={() => setSelectedHost(null)} onCategoryClear={() => setSelectedCategory(null)} /> : activePage === 'administration' ? <AdministrationPage t={t} language={language} /> : <DashboardPage t={t} language={language} range={range} onRangeChange={updateRange} onBurstSelect={(id) => { setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setActivePage('requests') }} />}
+          {activePage === 'bursts' ? <BurstsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} sort={burstSort} onSortChange={updateBurstSort} filters={burstFilters} onFiltersChange={updateBurstFilters} onBurstSelect={(id) => { setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setActivePage('requests') }} /> : activePage === 'actors' ? <ActorsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} sort={actorSort} onSortChange={updateActorSort} filters={actorFilters} onFiltersChange={updateActorFilters} onActorSelect={(ip) => { setSelectedActorIp(ip); setSelectedBurstId(null); setSelectedHost(null); setSelectedCategory(null); setActivePage('requests') }} /> : activePage === 'hosts' ? <HostsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} sort={hostSort} onSortChange={updateHostSort} filters={hostFilters} onFiltersChange={updateHostFilters} onHostSelect={(host) => { setSelectedHost(host); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedCategory(null); setActivePage('requests') }} /> : activePage === 'categories' ? <CategoriesPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} sort={categorySort} onSortChange={updateCategorySort} filters={categoryFilters} onFiltersChange={updateCategoryFilters} onCategorySelect={(category) => { setSelectedCategory(category); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setActivePage('requests') }} /> : activePage === 'requests' ? <RequestsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} burstId={selectedBurstId} actorIp={selectedActorIp} host={selectedHost} category={selectedCategory} filters={requestFilters} onFiltersChange={updateRequestFilters} sort={requestSort} onSortChange={updateRequestSort} onBurstClear={() => setSelectedBurstId(null)} onActorClear={() => setSelectedActorIp(null)} onHostClear={() => setSelectedHost(null)} onCategoryClear={() => setSelectedCategory(null)} /> : activePage === 'administration' ? <AdministrationPage t={t} language={language} /> : <DashboardPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} onBurstSelect={(id) => { setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setActivePage('requests') }} />}
 
-          <footer className="page-footer"><span>INM2 <b>·</b> Internet Noise Monitor</span><div className="footer-controls">{preferencesError && <span className="preferences-error">{t('preferencesError')}</span>}<label><span>{t('theme')}</span><select value={theme} onChange={(event) => updateTheme(event.target.value as Theme)} aria-label={t('theme')}><option value="cloud">{t('themeCloud')}</option><option value="midnight">{t('themeMidnight')}</option><option value="moss">{t('themeMoss')}</option></select><Sun size={14} /></label><label><span>{t('language')}</span><select value={language} onChange={(event) => updateLanguage(event.target.value as Language)} aria-label={t('language')}><option value="de">DE</option><option value="en">EN</option></select></label><span className="version-label">v0.1.0</span></div></footer>
+          <footer className="page-footer"><span>INM2 <b>·</b> Internet Noise Monitor</span><div className="footer-controls">{preferencesError && <span className="preferences-error">{t('preferencesError')}</span>}<label><span>{t('theme')}</span><select value={theme} onChange={(event) => updateTheme(event.target.value as Theme)} aria-label={t('theme')}><option value="auto">{t('themeAuto')}</option><option value="cloud">{t('themeCloud')}</option><option value="midnight">{t('themeMidnight')}</option><option value="moss">{t('themeMoss')}</option></select><Sun size={14} /></label><label><span>{t('language')}</span><select value={language} onChange={(event) => updateLanguage(event.target.value as Language)} aria-label={t('language')}><option value="de">DE</option><option value="en">EN</option></select></label><span className="version-label">v0.1.0</span></div></footer>
         </div>
       </main>
       <ApiActivityToast t={t} />
@@ -602,11 +642,12 @@ function SearchResultRow({ primary, secondary, detail, country, language, onClic
   return <button type="button" className="search-result-row" onClick={onClick}><span className="search-result-copy"><strong>{primary}</strong><small>{country && <span className="country-flag" title={country}>{countryFlag(country)}</span>}{secondary || (language === 'de' ? 'Ohne weitere Angaben' : 'No additional details')}{detail ? ` · ${detail}` : ''}</small></span><ArrowUpRight size={15} /></button>
 }
 
-type RangePageProps = { t: (key: MessageKey) => string; language: Language; range: TimeRange; onRangeChange: (range: TimeRange) => void }
+type RangePageProps = { t: (key: MessageKey) => string; language: Language; range: TimeRange; onRangeChange: (range: TimeRange) => void; lastImport: string | null | undefined }
 
-function DashboardPage({ t, language, range, onRangeChange, onBurstSelect }: RangePageProps & { onBurstSelect: (id: number) => void }) {
+function DashboardPage({ t, language, range, onRangeChange, lastImport, onBurstSelect }: RangePageProps & { onBurstSelect: (id: number) => void }) {
+  const [burstSort, setBurstSort] = useState<BurstSort>({ column: 'requests', direction: 'desc' })
   const counts = useApiData<ApiResult<CountItem>>(apiUrl('request_counts', range.query, { bars: '24' }))
-  const bursts = useApiData<BurstResponse>(apiUrl('bursts', range.query, { limit: '6', offset: '0', sort_by: 'requests', sort_order: 'desc' }))
+  const bursts = useApiData<BurstResponse>(apiUrl('bursts', range.query, { limit: '6', offset: '0', sort_by: burstSort.column, sort_order: burstSort.direction }))
   const actors = useApiData<PagedResponse<ActorItem>>(apiUrl('actors', range.query, { limit: '1', offset: '0' }))
   const newActors = useApiData<PagedResponse<ActorItem>>(apiUrl('actors', range.query, { limit: '1', offset: '0', new_only: 'true' }))
   const hosts = useApiData<ApiResult<HostItem>>(apiUrl('hosts', range.query))
@@ -619,6 +660,7 @@ function DashboardPage({ t, language, range, onRangeChange, onBurstSelect }: Ran
   const busy = counts.loading || bursts.loading || actors.loading || newActors.loading || hosts.loading || (status.loading && !status.data)
   const error = counts.error ?? bursts.error ?? actors.error ?? newActors.error ?? hosts.error ?? (status.data ? null : status.error)
   const retry = () => { counts.reload(); bursts.reload(); actors.reload(); newActors.reload(); hosts.reload(); status.reload() }
+  const changeBurstSort = (column: BurstSortColumn) => setBurstSort({ column, direction: burstSort.column === column && burstSort.direction === 'asc' ? 'desc' : 'asc' })
   const maxBucket = Math.max(1, ...requestRows.map((item) => item.read_count + item.write_count + item.other_count))
   const burstRead = bursts.data?.summary.read_count ?? 0
   const burstWrite = bursts.data?.summary.write_count ?? 0
@@ -630,7 +672,7 @@ function DashboardPage({ t, language, range, onRangeChange, onBurstSelect }: Ran
   const burstRingStyle = { background: `conic-gradient(var(--blue) 0 ${burstReadEnd}%, var(--green) ${burstReadEnd}% ${burstWriteEnd}%, var(--amber) ${burstWriteEnd}% ${burstOtherEnd}%)` }
 
   return <>
-    <PageHeading title={t('overview')} subtitle={t('subtitle')} t={t} language={language} range={range} onRangeChange={onRangeChange} />
+    <PageHeading title={t('overview')} subtitle={t('subtitle')} t={t} language={language} range={range} onRangeChange={onRangeChange} lastImport={lastImport} />
     {busy || error ? <PageDataState loading={busy} error={error} retry={retry} t={t} /> : <>
       <section className="metric-grid" aria-label={t('trafficSummary')}>
         <MetricCard label={t('totalRequests')} value={numberText(requestsTotal, language)} icon={Activity} iconClass="blue" />
@@ -644,7 +686,7 @@ function DashboardPage({ t, language, range, onRangeChange, onBurstSelect }: Ran
           <div className="chart-summary"><div><strong>{numberText(requestsTotal, language)}</strong><span>{t('requestsLabel')}</span></div></div>
           <div className="chart-wrap" role="img" aria-label={t('trafficActivity')}>
             <div className="y-labels"><span>{numberText(maxBucket, language)}</span><span>{numberText(Math.round(maxBucket * .75), language)}</span><span>{numberText(Math.round(maxBucket * .5), language)}</span><span>{numberText(Math.round(maxBucket * .25), language)}</span><span>0</span></div>
-            <div className="chart-main"><div className="grid-lines"><i /><i /><i /><i /><i /></div><div className="bars">{requestRows.map((item, index) => { const total = item.read_count + item.write_count + item.other_count; const height = total === 0 ? 1 : Math.max(2, total / maxBucket * 100); return <div className="bar-slot" key={item.from ?? index}><div className="bar-stack" style={{ height: `${height}%` }}><i className="bar-read" style={{ height: `${total ? item.read_count / total * 100 : 0}%` }} /><i className="bar-write" style={{ height: `${total ? item.write_count / total * 100 : 0}%` }} /><i className="bar-other" style={{ height: `${total ? item.other_count / total * 100 : 0}%` }} /></div></div> })}</div><div className="x-labels"><span>{rangeTick(range, 0, language)}</span><span>{rangeTick(range, .25, language)}</span><span>{rangeTick(range, .5, language)}</span><span>{rangeTick(range, .75, language)}</span><span>{rangeTick(range, 1, language)}</span></div></div>
+            <div className="chart-main"><div className="grid-lines"><i /><i /><i /><i /><i /></div><div className="bars">{requestRows.map((item, index) => { const total = item.read_count + item.write_count + item.other_count; const height = total === 0 ? 1 : Math.max(2, total / maxBucket * 100); const hint = `${t('startDate')}: ${dateText(item.from, language)}\n${t('endDate')}: ${dateText(item.to, language)}\n${t('read')}: ${numberText(item.read_count, language)}\n${t('write')}: ${numberText(item.write_count, language)}\n${t('other')}: ${numberText(item.other_count, language)}`; return <div className="bar-slot" key={item.from ?? index} data-tooltip={hint} style={{ '--bar-height': `${height}%` } as CSSProperties} aria-label={hint}><div className="bar-stack" style={{ height: `${height}%` }}><i className="bar-read" style={{ height: `${total ? item.read_count / total * 100 : 0}%` }} /><i className="bar-write" style={{ height: `${total ? item.write_count / total * 100 : 0}%` }} /><i className="bar-other" style={{ height: `${total ? item.other_count / total * 100 : 0}%` }} /></div></div> })}</div><div className="x-labels"><span>{rangeTick(range, 0, language)}</span><span>{rangeTick(range, .25, language)}</span><span>{rangeTick(range, .5, language)}</span><span>{rangeTick(range, .75, language)}</span><span>{rangeTick(range, 1, language)}</span></div></div>
           </div>
           <div className="chart-legend"><span><i className="legend-dot read-dot" />{t('read')} · {numberText(readTotal, language)}</span><span><i className="legend-dot write-dot" />{t('write')} · {numberText(writeTotal, language)}</span><span><i className="legend-dot other-dot" />{t('other')} · {numberText(otherTotal, language)}</span></div>
         </div>
@@ -656,7 +698,7 @@ function DashboardPage({ t, language, range, onRangeChange, onBurstSelect }: Ran
       </section>
       <section className="lower-grid">
         <div className="panel table-panel"><div className="panel-header"><div><h2>{t('burstsInPeriod')}</h2></div></div>
-          <div className="table-scroll"><table><thead><tr><th>{t('startTime')}</th><th>{t('actor')}</th><th>{t('host')}</th><th>{t('country')}</th><th>{t('duration')}</th><th>{t('requestsLabel')}</th><th /></tr></thead><tbody>{bursts.data?.items.length ? bursts.data.items.map((burst) => <tr key={burst.burst_id}><td>{dateText(burst.start_time, language)}</td><td><strong className="primary-cell">{burst.actor_ip}</strong></td><td className="host-cell">{burst.host || '—'}</td><td><span className="country-cell"><span className="country-flag">{countryFlag(burst.country)}</span>{burst.country || '—'}</span></td><td>{secondsText((new Date(burst.end_time).getTime() - new Date(burst.start_time).getTime()) / 1000, language)}</td><td><span className="request-count">{numberText(burst.read_count + burst.write_count + burst.other_count, language)}</span></td><td><button className="icon-button row-more" aria-label={t('viewBurstRequests')} title={t('viewBurstRequests')} onClick={() => onBurstSelect(burst.burst_id)}><ArrowUpRight size={15} /></button></td></tr>) : <EmptyRows t={t} columns={7} />}</tbody></table></div>
+          <div className="table-scroll"><table><thead><tr><SortableHeader column="start_time" label={t('startTime')} sort={burstSort} onSort={changeBurstSort} filtered={true} filterLabel={t('filteredColumn')} /><SortableHeader column="actor_ip" label={t('actor')} sort={burstSort} onSort={changeBurstSort} /><SortableHeader column="host" label={t('host')} sort={burstSort} onSort={changeBurstSort} /><SortableHeader column="country" label={t('country')} sort={burstSort} onSort={changeBurstSort} /><SortableHeader column="duration" label={t('duration')} sort={burstSort} onSort={changeBurstSort} /><SortableHeader column="requests" label={t('requestsLabel')} sort={burstSort} onSort={changeBurstSort} /><th /></tr></thead><tbody>{bursts.data?.items.length ? bursts.data.items.map((burst) => <tr key={burst.burst_id}><td>{dateText(burst.start_time, language)}</td><td><strong className="primary-cell">{burst.actor_ip}</strong></td><td className="host-cell">{burst.host || '—'}</td><td><span className="country-cell"><span className="country-flag">{countryFlag(burst.country)}</span>{burst.country || '—'}</span></td><td>{secondsText((new Date(burst.end_time).getTime() - new Date(burst.start_time).getTime()) / 1000, language)}</td><td><span className="request-count">{numberText(burst.read_count + burst.write_count + burst.other_count, language)}</span></td><td><button className="icon-button row-more" aria-label={t('viewBurstRequests')} title={t('viewBurstRequests')} onClick={() => onBurstSelect(burst.burst_id)}><ArrowUpRight size={15} /></button></td></tr>) : <EmptyRows t={t} columns={7} />}</tbody></table></div>
         </div>
         <div className="panel system-panel"><div className="panel-header"><div><h2>{t('status')}</h2><p>{t('infrastructure')}</p></div><span className={`health-pill ${status.data?.status === 'ok' ? '' : 'health-degraded'}`}><i />{status.data?.status === 'ok' ? t('allSystems') : t('degraded')}</span></div>
           <div className="system-list"><SystemRow icon={Activity} label={t('collector')} detail={activityText(status.data?.collector_status.activity, t)} healthy={status.data?.collector_status.available === true} /><SystemRow icon={Globe2} label={t('api')} detail={status.data?.status === 'ok' ? t('connected') : t('degraded')} healthy={status.data?.status === 'ok'} /><SystemRow icon={Database} label={t('database')} detail={status.data?.database === 'ok' ? t('operational') : t('degraded')} healthy={status.data?.database === 'ok'} /></div>
@@ -675,12 +717,12 @@ function SystemRow({ icon: Icon, label, detail, healthy }: { icon: typeof Activi
   return <div className="system-row"><div className="system-icon"><Icon size={16} /></div><div className="system-copy"><strong>{label}</strong><span>{detail}</span></div><span className={`system-check ${healthy ? '' : 'system-check-error'}`}>{healthy ? '✓' : '!'}</span></div>
 }
 
-function BurstsPage({ t, language, range, onRangeChange, sort, onSortChange, filters, onFiltersChange, onBurstSelect }: RangePageProps & { sort: BurstSort; onSortChange: (sort: BurstSort) => void; filters: BurstFilters; onFiltersChange: (filters: BurstFilters) => void; onBurstSelect: (id: number) => void }) {
+function BurstsPage({ t, language, range, onRangeChange, lastImport, sort, onSortChange, filters, onFiltersChange, onBurstSelect }: RangePageProps & { sort: BurstSort; onSortChange: (sort: BurstSort) => void; filters: BurstFilters; onFiltersChange: (filters: BurstFilters) => void; onBurstSelect: (id: number) => void }) {
   const [pageIndex, setPageIndex] = useState(0)
   const [draftFilters, setDraftFilters] = useState<BurstFilters>(filters)
   const hostOptions = useApiData<ApiResult<HostItem>>(apiUrl('hosts', range.query, { sort_by: 'host', sort_order: 'asc' }))
   const countryOptions = useApiData<ApiResult<{ country: string }>>(apiUrl('countries', range.query))
-  const burstFilterParams = Object.fromEntries(Object.entries({ search: filters.search.trim(), host: filters.host, country: filters.country }).filter(([, value]) => value))
+  const burstFilterParams = Object.fromEntries(Object.entries({ search: filters.search.trim(), host: filters.host, host_exact: filters.host ? 'true' : '', country: filters.country, country_exact: filters.country ? 'true' : '' }).filter(([, value]) => value))
   const result = useApiData<BurstResponse>(apiUrl('bursts', range.query, { limit: String(tablePageSize), offset: String(pageIndex * tablePageSize), sort_by: sort.column, sort_order: sort.direction, ...burstFilterParams }))
   const newActors = useApiData<PagedResponse<ActorItem>>(apiUrl('actors', range.query, { limit: '1', offset: '0', new_only: 'true' }))
   const summary = result.data?.summary
@@ -695,9 +737,9 @@ function BurstsPage({ t, language, range, onRangeChange, sort, onSortChange, fil
   const applyFilters = () => { setPageIndex(0); onFiltersChange(draftFilters) }
   const resetFilters = () => { const empty = { ...defaultBurstFilters }; setDraftFilters(empty); setPageIndex(0); onFiltersChange(empty) }
   return <>
-    <PageHeading title={t('burstAnalysis')} subtitle={t('burstPageSubtitle')} t={t} language={language} range={range} onRangeChange={onRangeChange} />
+    <PageHeading title={t('burstAnalysis')} subtitle={t('burstPageSubtitle')} t={t} language={language} range={range} onRangeChange={onRangeChange} lastImport={lastImport} />
     <PageDataState loading={result.loading || newActors.loading} error={result.error ?? newActors.error} retry={retry} t={t} />
-    <div className="filter-toolbar burst-filters burst-filter-controls"><label className="filter-search"><Search size={15} /><input value={draftFilters.search} placeholder={t('burstSearchPlaceholder')} aria-label={t('burstSearchPlaceholder')} onChange={(event) => setDraftFilters((value) => ({ ...value, search: event.target.value }))} onKeyDown={(event) => { if (event.key === 'Enter') applyFilters() }} /></label><label className="filter-select"><Globe2 size={15} /><select aria-label={t('filterHost')} value={draftFilters.host} onChange={(event) => setDraftFilters((value) => ({ ...value, host: event.target.value }))}><option value="">{t('allHosts')}</option>{hostOptions.data?.items.map((item) => <option key={item.host_id} value={item.host}>{item.host}</option>)}</select><span className="filter-select-value">{draftFilters.host || t('allHosts')}</span><ChevronDown size={13} /></label><label className="filter-select country-filter"><select aria-label={t('filterCountry')} value={draftFilters.country} onChange={(event) => setDraftFilters((value) => ({ ...value, country: event.target.value }))}><option value="">{t('allCountries')}</option>{countryOptions.data?.items.map((item) => <option key={item.country} value={item.country}>{item.country}</option>)}</select><span className="filter-select-value">{draftFilters.country || t('allCountries')}</span><ChevronDown size={13} /></label><button type="button" className="filter-button" onClick={resetFilters}>{t('resetFilters')}</button><button type="button" className="primary-button filter-submit" onClick={applyFilters}>{t('applyFilters')}</button></div>
+    <div className="filter-toolbar burst-filters burst-filter-controls"><label className="filter-search"><Search size={15} /><input value={draftFilters.search} placeholder={t('burstSearchPlaceholder')} aria-label={t('burstSearchPlaceholder')} onChange={(event) => setDraftFilters((value) => ({ ...value, search: event.target.value }))} onKeyDown={(event) => { if (event.key === 'Enter') applyFilters() }} /></label><label className="filter-select"><Globe2 size={15} /><select aria-label={t('filterHost')} value={draftFilters.host} onChange={(event) => setDraftFilters((value) => ({ ...value, host: event.target.value }))}><option value="">{t('allHosts')}</option>{hostOptions.data?.items.map((item) => <option key={item.host_id} value={item.host}>{item.host}</option>)}</select><span className="filter-select-value">{draftFilters.host || t('allHosts')}</span><ChevronDown size={13} /></label><label className="filter-select country-filter"><select aria-label={t('filterCountry')} value={draftFilters.country} onChange={(event) => setDraftFilters((value) => ({ ...value, country: event.target.value }))}><option value="">{t('allCountries')}</option>{countryOptions.data?.items.map((item) => <option key={item.country} value={item.country}>{countryFlag(item.country)} {item.country}</option>)}</select><span className="filter-select-value">{draftFilters.country && <span className="country-flag">{countryFlag(draftFilters.country)}</span>}{draftFilters.country || t('allCountries')}</span><ChevronDown size={13} /></label><button type="button" className="filter-button" onClick={resetFilters}>{t('resetFilters')}</button><button type="button" className="primary-button filter-submit" onClick={applyFilters}>{t('applyFilters')}</button></div>
     {!result.loading && !newActors.loading && !result.error && !newActors.error && <>
       <section className="burst-metrics">
         <MetricCard label={t('burstsInPeriod')} value={numberText(summary?.burst_count, language)} icon={Activity} iconClass="blue" />
@@ -714,7 +756,7 @@ function BurstsPage({ t, language, range, onRangeChange, sort, onSortChange, fil
         <div className="burst-list-heading"><div><h2>{t('burstEvents')}</h2></div></div>
         
         <Paginator total={summary?.burst_count ?? 0} pageIndex={pageIndex} pageSize={tablePageSize} onPageChange={setPageIndex} t={t} language={language} />
-        <div className="table-scroll burst-table-scroll"><table className="burst-table"><thead><tr><SortableHeader column="start_time" label={t('startTime')} sort={sort} onSort={changeSort} /><SortableHeader column="actor_ip" label={t('actor')} sort={sort} onSort={changeSort} /><SortableHeader column="host" label={t('host')} sort={sort} onSort={changeSort} /><SortableHeader column="country" label={t('country')} sort={sort} onSort={changeSort} /><SortableHeader column="duration" label={t('duration')} sort={sort} onSort={changeSort} /><SortableHeader column="requests" label={t('requestsLabel')} sort={sort} onSort={changeSort} /><SortableHeader column="avg_count" label={t('avgPerSecond')} sort={sort} onSort={changeSort} /><th /></tr></thead><tbody>
+        <div className="table-scroll burst-table-scroll"><table className="burst-table"><thead><tr><SortableHeader column="start_time" label={t('startTime')} sort={sort} onSort={changeSort} filtered={true} filterLabel={t('filteredColumn')} /><SortableHeader column="actor_ip" label={t('actor')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim())} filterLabel={t('filteredColumn')} /><SortableHeader column="host" label={t('host')} sort={sort} onSort={changeSort} filtered={Boolean(filters.host)} filterLabel={t('filteredColumn')} /><SortableHeader column="country" label={t('country')} sort={sort} onSort={changeSort} filtered={Boolean(filters.country)} filterLabel={t('filteredColumn')} /><SortableHeader column="duration" label={t('duration')} sort={sort} onSort={changeSort} /><SortableHeader column="requests" label={t('requestsLabel')} sort={sort} onSort={changeSort} /><SortableHeader column="avg_count" label={t('avgPerSecond')} sort={sort} onSort={changeSort} /><th /></tr></thead><tbody>
           {items.length ? items.map((burst) => <tr key={burst.burst_id}><td><span className="burst-time"><strong>{dateText(burst.start_time, language)}</strong><span>{dateText(burst.end_time, language)}</span></span></td><td><span className="actor-detail"><strong className="primary-cell">{burst.actor_ip}</strong>{(burst.provider || burst.asn) && <small>{[burst.provider, burst.asn].filter(Boolean).join(' · ')}</small>}</span></td><td className="host-cell">{burst.host || '—'}</td><td><span className="actor-detail"><span className="country-cell"><span className="country-flag" title={burst.country || ''}>{countryFlag(burst.country)}</span>{burst.country || '—'}</span>{burst.city && <small>{burst.city}</small>}</span></td><td>{secondsText((new Date(burst.end_time).getTime() - new Date(burst.start_time).getTime()) / 1000, language)}</td><td><span className="request-count">{numberText(burst.read_count + burst.write_count + burst.other_count, language)}</span></td><td><span className="rate-value">{numberText(burst.avg_count, language)}<small> {t('requestsPerSecond')}</small></span></td><td><button type="button" className="icon-button row-more" aria-label={t('viewBurstRequests')} title={t('viewBurstRequests')} onClick={() => onBurstSelect(burst.burst_id)}><ArrowUpRight size={15} /></button></td></tr>) : <EmptyRows t={t} columns={8} />}
         </tbody></table></div>
         <Paginator total={summary?.burst_count ?? 0} pageIndex={pageIndex} pageSize={tablePageSize} onPageChange={setPageIndex} t={t} language={language} />
@@ -723,11 +765,11 @@ function BurstsPage({ t, language, range, onRangeChange, sort, onSortChange, fil
   </>
 }
 
-function ActorsPage({ t, language, range, onRangeChange, sort, onSortChange, filters, onFiltersChange, onActorSelect }: RangePageProps & { sort: ActorSort; onSortChange: (sort: ActorSort) => void; filters: ActorFilters; onFiltersChange: (filters: ActorFilters) => void; onActorSelect: (ip: string) => void }) {
+function ActorsPage({ t, language, range, onRangeChange, lastImport, sort, onSortChange, filters, onFiltersChange, onActorSelect }: RangePageProps & { sort: ActorSort; onSortChange: (sort: ActorSort) => void; filters: ActorFilters; onFiltersChange: (filters: ActorFilters) => void; onActorSelect: (ip: string) => void }) {
   const [pageIndex, setPageIndex] = useState(0)
   const [draftFilters, setDraftFilters] = useState<ActorFilters>(filters)
   const countryOptions = useApiData<ApiResult<{ country: string }>>(apiUrl('countries', range.query))
-  const actorParams = Object.fromEntries(Object.entries({ search: filters.search.trim(), country: filters.country, sort_by: sort.column, sort_order: sort.direction, limit: String(tablePageSize), offset: String(pageIndex * tablePageSize) }).filter(([, value]) => value))
+  const actorParams = Object.fromEntries(Object.entries({ search: filters.search.trim(), country: filters.country, country_exact: filters.country ? 'true' : '', sort_by: sort.column, sort_order: sort.direction, limit: String(tablePageSize), offset: String(pageIndex * tablePageSize) }).filter(([, value]) => value))
   const result = useApiData<PagedResponse<ActorItem>>(apiUrl('actors', range.query, actorParams))
   const newActors = useApiData<PagedResponse<ActorItem>>(apiUrl('actors', range.query, { limit: '1', offset: '0', new_only: 'true' }))
   const actors = result.data?.items ?? []
@@ -740,21 +782,21 @@ function ActorsPage({ t, language, range, onRangeChange, sort, onSortChange, fil
   const resetFilters = () => { const empty = { ...defaultActorFilters }; setDraftFilters(empty); setPageIndex(0); onFiltersChange(empty) }
   const changeSort = (column: ActorSortColumn) => { setPageIndex(0); onSortChange({ column, direction: sort.column === column && sort.direction === 'asc' ? 'desc' : 'asc' }) }
   return <>
-    <PageHeading title={t('actors')} subtitle={t('actorPageSubtitle')} t={t} language={language} range={range} onRangeChange={onRangeChange} />
+    <PageHeading title={t('actors')} subtitle={t('actorPageSubtitle')} t={t} language={language} range={range} onRangeChange={onRangeChange} lastImport={lastImport} />
     <PageDataState loading={result.loading || newActors.loading} error={result.error ?? newActors.error} retry={retry} t={t} />
-    <div className="filter-toolbar burst-filters burst-filter-controls"><label className="filter-search"><Search size={15} /><input value={draftFilters.search} placeholder={t('actorSearchPlaceholder')} aria-label={t('actorSearchPlaceholder')} onChange={(event) => setDraftFilters((value) => ({ ...value, search: event.target.value }))} onKeyDown={(event) => { if (event.key === 'Enter') applyFilters() }} /></label><label className="filter-select"><Globe2 size={15} /><select aria-label={t('filterCountry')} value={draftFilters.country} onChange={(event) => setDraftFilters((value) => ({ ...value, country: event.target.value }))}><option value="">{t('allCountries')}</option>{countryOptions.data?.items.map((item) => <option key={item.country} value={item.country}>{item.country}</option>)}</select><span className="filter-select-value">{draftFilters.country || t('allCountries')}</span><ChevronDown size={13} /></label><button type="button" className="filter-button" onClick={resetFilters}>{t('resetFilters')}</button><button type="button" className="primary-button filter-submit" onClick={applyFilters}>{t('applyFilters')}</button></div>
+    <div className="filter-toolbar burst-filters burst-filter-controls"><label className="filter-search"><Search size={15} /><input value={draftFilters.search} placeholder={t('actorSearchPlaceholder')} aria-label={t('actorSearchPlaceholder')} onChange={(event) => setDraftFilters((value) => ({ ...value, search: event.target.value }))} onKeyDown={(event) => { if (event.key === 'Enter') applyFilters() }} /></label><label className="filter-select"><Globe2 size={15} /><select aria-label={t('filterCountry')} value={draftFilters.country} onChange={(event) => setDraftFilters((value) => ({ ...value, country: event.target.value }))}><option value="">{t('allCountries')}</option>{countryOptions.data?.items.map((item) => <option key={item.country} value={item.country}>{countryFlag(item.country)} {item.country}</option>)}</select><span className="filter-select-value">{draftFilters.country && <span className="country-flag">{countryFlag(draftFilters.country)}</span>}{draftFilters.country || t('allCountries')}</span><ChevronDown size={13} /></label><button type="button" className="filter-button" onClick={resetFilters}>{t('resetFilters')}</button><button type="button" className="primary-button filter-submit" onClick={applyFilters}>{t('applyFilters')}</button></div>
     {!result.loading && !newActors.loading && !result.error && !newActors.error && <>
       <div className="metric-grid"><MetricCard label={t('uniqueActors')} value={numberText(result.data?.total, language)} icon={Users} iconClass="violet" /><MetricCard label={t('newActors')} value={numberText(newActors.data?.total, language)} icon={ArrowUpRight} iconClass="blue" /><MetricCard label={t('countriesSeen')} value={numberText(countries, language)} icon={Globe2} iconClass="green" caption={t('loadedActors')} /><MetricCard label={t('avgRequestsActor')} value={numberText(actors.length ? totalRequests / actors.length : 0, language)} icon={Activity} iconClass="amber" caption={t('loadedActors')} /></div>
       <div className="panel data-list-panel"><ListHeading title={t('actors')} />
         <Paginator total={result.data?.total ?? 0} pageIndex={pageIndex} pageSize={tablePageSize} onPageChange={setPageIndex} t={t} language={language} />
-        <div className="table-scroll"><table className="actor-table"><thead><tr><SortableHeader column="ip" label={t('ipAddress')} sort={sort} onSort={changeSort} /><SortableHeader column="country" label={t('location')} sort={sort} onSort={changeSort} /><SortableHeader column="first_time" label={t('firstSeen')} sort={sort} onSort={changeSort} /><SortableHeader column="last_time" label={t('lastSeen')} sort={sort} onSort={changeSort} /><SortableHeader column="request_count" label={t('requestsLabel')} sort={sort} onSort={changeSort} /><th /></tr></thead><tbody>{actors.length ? actors.map((actor) => <tr key={actor.actor_id}><td><span className="actor-detail"><button type="button" className="table-link primary-cell" onClick={() => onActorSelect(actor.ip)}>{actor.ip}</button>{(actor.provider || actor.asn) && <small>{[actor.provider, actor.asn].filter(Boolean).join(' · ')}</small>}</span></td><td><span className="actor-detail"><span className="country-cell"><span className="country-flag" title={actor.country || ''}>{countryFlag(actor.country)}</span>{actor.country || '—'}</span>{actor.city && <small>{actor.city}</small>}</span></td><td>{dateText(actor.first_time, language)}</td><td>{dateText(actor.last_time, language)}</td><td><span className="request-count">{numberText(actor.request_count, language)}</span></td><td><button type="button" className="icon-button row-more" aria-label={t('viewActorRequests')} title={t('viewActorRequests')} onClick={() => onActorSelect(actor.ip)}><ArrowUpRight size={15} /></button></td></tr>) : <EmptyRows t={t} columns={6} />}</tbody></table></div>
+        <div className="table-scroll"><table className="actor-table"><thead><tr><SortableHeader column="ip" label={t('ipAddress')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim())} filterLabel={t('filteredColumn')} /><SortableHeader column="country" label={t('location')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.country)} filterLabel={t('filteredColumn')} /><SortableHeader column="first_time" label={t('firstSeen')} sort={sort} onSort={changeSort} /><SortableHeader column="last_time" label={t('lastSeen')} sort={sort} onSort={changeSort} /><SortableHeader column="request_count" label={t('requestsLabel')} sort={sort} onSort={changeSort} /><th /></tr></thead><tbody>{actors.length ? actors.map((actor) => <tr key={actor.actor_id}><td><span className="actor-detail"><button type="button" className="table-link primary-cell" onClick={() => onActorSelect(actor.ip)}>{actor.ip}</button>{(actor.provider || actor.asn) && <small>{[actor.provider, actor.asn].filter(Boolean).join(' · ')}</small>}</span></td><td><span className="actor-detail"><span className="country-cell"><span className="country-flag" title={actor.country || ''}>{countryFlag(actor.country)}</span>{actor.country || '—'}</span>{actor.city && <small>{actor.city}</small>}</span></td><td>{dateText(actor.first_time, language)}</td><td>{dateText(actor.last_time, language)}</td><td><span className="request-count">{numberText(actor.request_count, language)}</span></td><td><button type="button" className="icon-button row-more" aria-label={t('viewActorRequests')} title={t('viewActorRequests')} onClick={() => onActorSelect(actor.ip)}><ArrowUpRight size={15} /></button></td></tr>) : <EmptyRows t={t} columns={6} />}</tbody></table></div>
         <Paginator total={result.data?.total ?? 0} pageIndex={pageIndex} pageSize={tablePageSize} onPageChange={setPageIndex} t={t} language={language} />
       </div>
     </>}
   </>
 }
 
-function HostsPage({ t, language, range, onRangeChange, sort, onSortChange, filters, onFiltersChange, onHostSelect }: RangePageProps & { sort: HostSort; onSortChange: (sort: HostSort) => void; filters: HostFilters; onFiltersChange: (filters: HostFilters) => void; onHostSelect: (host: string) => void }) {
+function HostsPage({ t, language, range, onRangeChange, lastImport, sort, onSortChange, filters, onFiltersChange, onHostSelect }: RangePageProps & { sort: HostSort; onSortChange: (sort: HostSort) => void; filters: HostFilters; onFiltersChange: (filters: HostFilters) => void; onHostSelect: (host: string) => void }) {
   const [pageIndex, setPageIndex] = useState(0)
   const [draftSearch, setDraftSearch] = useState(filters.search)
   const hostParams = Object.fromEntries(Object.entries({ host: filters.search.trim(), sort_by: sort.column, sort_order: sort.direction }).filter(([, value]) => value))
@@ -771,21 +813,21 @@ function HostsPage({ t, language, range, onRangeChange, sort, onSortChange, filt
   const resetFilter = () => { setDraftSearch(''); setPageIndex(0); onFiltersChange({ ...defaultHostFilters }) }
   const changeSort = (column: HostSortColumn) => { setPageIndex(0); onSortChange({ column, direction: sort.column === column && sort.direction === 'asc' ? 'desc' : 'asc' }) }
   return <>
-    <PageHeading title={t('hosts')} subtitle={t('hostPageSubtitle')} t={t} language={language} range={range} onRangeChange={onRangeChange} />
+    <PageHeading title={t('hosts')} subtitle={t('hostPageSubtitle')} t={t} language={language} range={range} onRangeChange={onRangeChange} lastImport={lastImport} />
     <PageDataState loading={result.loading} error={result.error} retry={result.reload} t={t} />
     <div className="filter-toolbar burst-filters burst-filter-controls"><label className="filter-search"><Search size={15} /><input value={draftSearch} placeholder={t('filterHost')} aria-label={t('filterHost')} onChange={(event) => setDraftSearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') applyFilter() }} /></label><button type="button" className="filter-button" onClick={resetFilter}>{t('resetFilters')}</button><button type="button" className="primary-button filter-submit" onClick={applyFilter}>{t('applyFilters')}</button></div>
     {!result.loading && !result.error && <>
       <div className="metric-grid"><MetricCard label={t('totalHosts')} value={numberText(hosts.length, language)} icon={Globe2} iconClass="blue" /><MetricCard label={t('totalRequests')} value={numberText(total, language)} icon={Network} iconClass="green" /><MetricCard label={t('httpsShare')} value={`${new Intl.NumberFormat(language === 'de' ? 'de-DE' : 'en-US', { maximumFractionDigits: 1 }).format(httpsShare)}%`} icon={ShieldAlert} iconClass="violet" /><MetricCard label={t('topHost')} value={topHost?.host ?? '—'} icon={Activity} iconClass="amber" caption={t('trafficShare')} /></div>
       <div className="panel data-list-panel"><ListHeading title={t('hosts')} />
         <Paginator total={hosts.length} pageIndex={pageIndex} pageSize={tablePageSize} onPageChange={setPageIndex} t={t} language={language} />
-        <div className="table-scroll"><table className="host-table"><thead><tr><SortableHeader column="host" label={t('hostName')} sort={sort} onSort={changeSort} /><SortableHeader column="total_count" label={t('requestsLabel')} sort={sort} onSort={changeSort} /><SortableHeader column="read_count" label={t('read')} sort={sort} onSort={changeSort} /><SortableHeader column="write_count" label={t('write')} sort={sort} onSort={changeSort} /><SortableHeader column="other_count" label={t('other')} sort={sort} onSort={changeSort} /><SortableHeader column="https_count" label={t('schemeSplit')} sort={sort} onSort={changeSort} /><SortableHeader column="https_share" label={t('httpsShare')} sort={sort} onSort={changeSort} /><th /></tr></thead><tbody>{visibleHosts.length ? visibleHosts.map((host) => { const hostTotal = host.total_count || 0; const share = hostTotal ? host.https_count / hostTotal * 100 : 0; return <tr key={host.host_id}><td><strong className="primary-cell">{host.host}</strong></td><td><span className="request-count">{numberText(host.total_count, language)}</span></td><td>{numberText(host.read_count, language)}</td><td>{numberText(host.write_count, language)}</td><td>{numberText(host.other_count, language)}</td><td><span className="scheme-chips"><i>HTTPS {numberText(host.https_count, language)}</i><i>HTTP {numberText(host.http_count, language)}</i></span></td><td><span className="share-cell"><span><i style={{ width: `${share}%` }} /></span>{new Intl.NumberFormat(language === 'de' ? 'de-DE' : 'en-US', { maximumFractionDigits: 0 }).format(share)}%</span></td><td><button type="button" className="icon-button row-more" aria-label={t('viewHostRequests')} title={t('viewHostRequests')} onClick={() => onHostSelect(host.host)}><ArrowUpRight size={15} /></button></td></tr> }) : <EmptyRows t={t} columns={8} />}</tbody></table></div>
+        <div className="table-scroll"><table className="host-table"><thead><tr><SortableHeader column="host" label={t('hostName')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim())} filterLabel={t('filteredColumn')} /><SortableHeader column="total_count" label={t('requestsLabel')} sort={sort} onSort={changeSort} /><SortableHeader column="read_count" label={t('read')} sort={sort} onSort={changeSort} /><SortableHeader column="write_count" label={t('write')} sort={sort} onSort={changeSort} /><SortableHeader column="other_count" label={t('other')} sort={sort} onSort={changeSort} /><SortableHeader column="https_count" label={t('schemeSplit')} sort={sort} onSort={changeSort} /><SortableHeader column="https_share" label={t('httpsShare')} sort={sort} onSort={changeSort} /><th /></tr></thead><tbody>{visibleHosts.length ? visibleHosts.map((host) => { const hostTotal = host.total_count || 0; const share = hostTotal ? host.https_count / hostTotal * 100 : 0; return <tr key={host.host_id}><td><strong className="primary-cell">{host.host}</strong></td><td><span className="request-count">{numberText(host.total_count, language)}</span></td><td>{numberText(host.read_count, language)}</td><td>{numberText(host.write_count, language)}</td><td>{numberText(host.other_count, language)}</td><td><span className="scheme-chips"><i>HTTPS {numberText(host.https_count, language)}</i><i>HTTP {numberText(host.http_count, language)}</i></span></td><td><span className="share-cell"><span><i style={{ width: `${share}%` }} /></span>{new Intl.NumberFormat(language === 'de' ? 'de-DE' : 'en-US', { maximumFractionDigits: 0 }).format(share)}%</span></td><td><button type="button" className="icon-button row-more" aria-label={t('viewHostRequests')} title={t('viewHostRequests')} onClick={() => onHostSelect(host.host)}><ArrowUpRight size={15} /></button></td></tr> }) : <EmptyRows t={t} columns={8} />}</tbody></table></div>
         <Paginator total={hosts.length} pageIndex={pageIndex} pageSize={tablePageSize} onPageChange={setPageIndex} t={t} language={language} />
       </div>
     </>}
   </>
 }
 
-function CategoriesPage({ t, language, range, onRangeChange, sort, onSortChange, filters, onFiltersChange, onCategorySelect }: RangePageProps & { sort: CategorySort; onSortChange: (sort: CategorySort) => void; filters: CategoryFilters; onFiltersChange: (filters: CategoryFilters) => void; onCategorySelect: (category: string) => void }) {
+function CategoriesPage({ t, language, range, onRangeChange, lastImport, sort, onSortChange, filters, onFiltersChange, onCategorySelect }: RangePageProps & { sort: CategorySort; onSortChange: (sort: CategorySort) => void; filters: CategoryFilters; onFiltersChange: (filters: CategoryFilters) => void; onCategorySelect: (category: string) => void }) {
   const [pageIndex, setPageIndex] = useState(0)
   const [draftSearch, setDraftSearch] = useState(filters.search)
   const params = Object.fromEntries(Object.entries({ category: filters.search.trim(), sort_by: sort.column, sort_order: sort.direction }).filter(([, value]) => value))
@@ -801,21 +843,21 @@ function CategoriesPage({ t, language, range, onRangeChange, sort, onSortChange,
   const resetFilter = () => { setDraftSearch(''); setPageIndex(0); onFiltersChange({ ...defaultCategoryFilters }) }
   const changeSort = (column: CategorySortColumn) => { setPageIndex(0); onSortChange({ column, direction: sort.column === column && sort.direction === 'asc' ? 'desc' : 'asc' }) }
   return <>
-    <PageHeading title={t('categories')} subtitle={t('categoryPageSubtitle')} t={t} language={language} range={range} onRangeChange={onRangeChange} />
+    <PageHeading title={t('categories')} subtitle={t('categoryPageSubtitle')} t={t} language={language} range={range} onRangeChange={onRangeChange} lastImport={lastImport} />
     <PageDataState loading={result.loading} error={result.error} retry={result.reload} t={t} />
     <div className="filter-toolbar burst-filters burst-filter-controls"><label className="filter-search"><Search size={15} /><input value={draftSearch} placeholder={t('filterCategory')} aria-label={t('filterCategory')} onChange={(event) => setDraftSearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') applyFilter() }} /></label><button type="button" className="filter-button" onClick={resetFilter}>{t('resetFilters')}</button><button type="button" className="primary-button filter-submit" onClick={applyFilter}>{t('applyFilters')}</button></div>
     {!result.loading && !result.error && <>
       <div className="metric-grid"><MetricCard label={t('activeCategories')} value={numberText(categories.length, language)} icon={Blocks} iconClass="blue" /><MetricCard label={t('totalRequests')} value={numberText(total, language)} icon={Activity} iconClass="green" /><MetricCard label={t('topCategory')} value={top?.category_name ?? '—'} icon={ShieldAlert} iconClass="amber" caption={top ? `${numberText(top.total_count, language)} ${t('requestsLabel')}` : t('noResults')} /><MetricCard label={t('httpsShare')} value={`${new Intl.NumberFormat(language === 'de' ? 'de-DE' : 'en-US', { maximumFractionDigits: 1 }).format(total ? https / total * 100 : 0)}%`} icon={Globe2} iconClass="violet" /></div>
       <div className="panel data-list-panel"><ListHeading title={t('categories')} />
         <Paginator total={categories.length} pageIndex={pageIndex} pageSize={tablePageSize} onPageChange={setPageIndex} t={t} language={language} />
-        <div className="table-scroll"><table className="category-table"><thead><tr><SortableHeader column="category_name" label={t('categoryName')} sort={sort} onSort={changeSort} /><SortableHeader column="total_count" label={t('requestsLabel')} sort={sort} onSort={changeSort} /><SortableHeader column="read_count" label={t('read')} sort={sort} onSort={changeSort} /><SortableHeader column="write_count" label={t('write')} sort={sort} onSort={changeSort} /><SortableHeader column="other_count" label={t('other')} sort={sort} onSort={changeSort} /><SortableHeader column="traffic_share" label={t('trafficShare')} sort={sort} onSort={changeSort} /><SortableHeader column="https_share" label={t('schemeSplit')} sort={sort} onSort={changeSort} /><th /></tr></thead><tbody>{visibleCategories.length ? visibleCategories.map((category) => { const share = total ? category.total_count / total * 100 : 0; const schemeTotal = category.http_count + category.https_count + category.other_scheme_count; const secure = schemeTotal ? category.https_count / schemeTotal * 100 : 0; return <tr key={category.category_id}><td><strong className="primary-cell">{category.category_name}</strong></td><td><span className="request-count">{numberText(category.total_count, language)}</span></td><td>{numberText(category.read_count, language)}</td><td>{numberText(category.write_count, language)}</td><td>{numberText(category.other_count, language)}</td><td><span className="share-cell"><span><i style={{ width: `${share}%` }} /></span>{new Intl.NumberFormat(language === 'de' ? 'de-DE' : 'en-US', { maximumFractionDigits: 1 }).format(share)}%</span></td><td><span className="https-text">HTTPS</span> <span className="scheme-muted">{new Intl.NumberFormat(language === 'de' ? 'de-DE' : 'en-US', { maximumFractionDigits: 0 }).format(secure)}%</span></td><td><button type="button" className="icon-button row-more" aria-label={t('viewCategoryRequests')} title={t('viewCategoryRequests')} onClick={() => onCategorySelect(category.category_name)}><ArrowUpRight size={15} /></button></td></tr> }) : <EmptyRows t={t} columns={8} />}</tbody></table></div>
+        <div className="table-scroll"><table className="category-table"><thead><tr><SortableHeader column="category_name" label={t('categoryName')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim())} filterLabel={t('filteredColumn')} /><SortableHeader column="total_count" label={t('requestsLabel')} sort={sort} onSort={changeSort} /><SortableHeader column="read_count" label={t('read')} sort={sort} onSort={changeSort} /><SortableHeader column="write_count" label={t('write')} sort={sort} onSort={changeSort} /><SortableHeader column="other_count" label={t('other')} sort={sort} onSort={changeSort} /><SortableHeader column="traffic_share" label={t('trafficShare')} sort={sort} onSort={changeSort} /><SortableHeader column="https_share" label={t('schemeSplit')} sort={sort} onSort={changeSort} /><th /></tr></thead><tbody>{visibleCategories.length ? visibleCategories.map((category) => { const share = total ? category.total_count / total * 100 : 0; const schemeTotal = category.http_count + category.https_count + category.other_scheme_count; const secure = schemeTotal ? category.https_count / schemeTotal * 100 : 0; return <tr key={category.category_id}><td><strong className="primary-cell">{category.category_name}</strong></td><td><span className="request-count">{numberText(category.total_count, language)}</span></td><td>{numberText(category.read_count, language)}</td><td>{numberText(category.write_count, language)}</td><td>{numberText(category.other_count, language)}</td><td><span className="share-cell"><span><i style={{ width: `${share}%` }} /></span>{new Intl.NumberFormat(language === 'de' ? 'de-DE' : 'en-US', { maximumFractionDigits: 1 }).format(share)}%</span></td><td><span className="https-text">HTTPS</span> <span className="scheme-muted">{new Intl.NumberFormat(language === 'de' ? 'de-DE' : 'en-US', { maximumFractionDigits: 0 }).format(secure)}%</span></td><td><button type="button" className="icon-button row-more" aria-label={t('viewCategoryRequests')} title={t('viewCategoryRequests')} onClick={() => onCategorySelect(category.category_name)}><ArrowUpRight size={15} /></button></td></tr> }) : <EmptyRows t={t} columns={8} />}</tbody></table></div>
         <Paginator total={categories.length} pageIndex={pageIndex} pageSize={tablePageSize} onPageChange={setPageIndex} t={t} language={language} />
       </div>
     </>}
   </>
 }
 
-function RequestsPage({ t, language, range, onRangeChange, burstId, actorIp, host, category, filters, onFiltersChange, sort, onSortChange, onBurstClear, onActorClear, onHostClear, onCategoryClear }: RangePageProps & { burstId: number | null; actorIp: string | null; host: string | null; category: string | null; filters: RequestFilters; onFiltersChange: (filters: RequestFilters) => void; sort: RequestSort; onSortChange: (sort: RequestSort) => void; onBurstClear: () => void; onActorClear: () => void; onHostClear: () => void; onCategoryClear: () => void }) {
+function RequestsPage({ t, language, range, onRangeChange, lastImport, burstId, actorIp, host, category, filters, onFiltersChange, sort, onSortChange, onBurstClear, onActorClear, onHostClear, onCategoryClear }: RangePageProps & { burstId: number | null; actorIp: string | null; host: string | null; category: string | null; filters: RequestFilters; onFiltersChange: (filters: RequestFilters) => void; sort: RequestSort; onSortChange: (sort: RequestSort) => void; onBurstClear: () => void; onActorClear: () => void; onHostClear: () => void; onCategoryClear: () => void }) {
   const [pageIndex, setPageIndex] = useState(0)
   const [draftFilters, setDraftFilters] = useState(filters)
   const requestFilter: Record<string, string> = { ...(burstId == null ? {} : { burst_id: String(burstId) }), ...(actorIp == null ? {} : { actor: actorIp }), ...(host == null ? {} : { host }), ...(category == null ? {} : { category }), ...(filters.search.trim() ? { search: filters.search.trim() } : {}), ...(filters.status ? { status_class: filters.status } : {}), sort_by: sort.column, sort_order: sort.direction }
@@ -833,7 +875,7 @@ function RequestsPage({ t, language, range, onRangeChange, burstId, actorIp, hos
   const resetFilters = () => { setDraftFilters({ ...defaultRequestFilters }); setPageIndex(0); onFiltersChange({ ...defaultRequestFilters }) }
   const changeSort = (column: RequestSortColumn) => { setPageIndex(0); onSortChange({ column, direction: sort.column === column && sort.direction === 'asc' ? 'desc' : 'asc' }) }
   return <>
-    <PageHeading title={t('requests')} subtitle={t('requestPageSubtitle')} t={t} language={language} range={range} onRangeChange={onRangeChange} />
+    <PageHeading title={t('requests')} subtitle={t('requestPageSubtitle')} t={t} language={language} range={range} onRangeChange={onRangeChange} lastImport={lastImport} />
     <PageDataState loading={result.loading || counts.loading} error={result.error ?? counts.error} retry={retry} t={t} />
     {burstId != null && <div className="burst-filter-notice"><span>{t('filteredByBurst')} <strong>#{burstId}</strong></span><button type="button" onClick={onBurstClear}>{t('clearFilter')}</button></div>}{actorIp != null && <div className="burst-filter-notice"><span>{t('filteredByActor')} <strong>{actorIp}</strong></span><button type="button" onClick={onActorClear}>{t('clearFilter')}</button></div>}{host != null && <div className="burst-filter-notice"><span>{t('filteredByHost')} <strong>{host}</strong></span><button type="button" onClick={onHostClear}>{t('clearFilter')}</button></div>}{category != null && <div className="burst-filter-notice"><span>{t('filteredByCategory')} <strong>{category}</strong></span><button type="button" onClick={onCategoryClear}>{t('clearFilter')}</button></div>}
     <div className="filter-toolbar burst-filters burst-filter-controls"><label className="filter-search request-search"><Search size={15} /><input value={draftFilters.search} placeholder={t('searchRequests')} aria-label={t('searchRequests')} onChange={(event) => setDraftFilters((value) => ({ ...value, search: event.target.value }))} onKeyDown={(event) => { if (event.key === 'Enter') applyFilters() }} /></label><label className="filter-select"><select aria-label={t('responseStatus')} value={draftFilters.status} onChange={(event) => setDraftFilters((value) => ({ ...value, status: event.target.value as RequestFilters['status'] }))}><option value="">{t('allStatuses')}</option><option value="2xx">2xx · {t('statusSuccess')}</option><option value="3xx">3xx · {t('statusRedirect')}</option><option value="4xx">4xx · {t('statusClientError')}</option><option value="5xx">5xx · {t('statusServerError')}</option></select><span className="filter-select-value">{draftFilters.status ? `${draftFilters.status} · ${draftFilters.status === '2xx' ? t('statusSuccess') : draftFilters.status === '3xx' ? t('statusRedirect') : draftFilters.status === '4xx' ? t('statusClientError') : t('statusServerError')}` : t('allStatuses')}</span><ChevronDown size={13} /></label><button type="button" className="filter-button" onClick={resetFilters}>{t('resetFilters')}</button><button type="button" className="primary-button filter-submit" onClick={applyFilters}>{t('applyFilters')}</button></div>
@@ -841,15 +883,15 @@ function RequestsPage({ t, language, range, onRangeChange, burstId, actorIp, hos
       <div className="metric-grid request-metrics"><MetricCard label={t('totalRequests')} value={numberText(result.data?.total ?? total, language)} icon={Activity} iconClass="blue" /><MetricCard label={t('errorsInLoadedRows')} value={numberText(errorCount, language)} icon={ShieldAlert} iconClass="amber" caption={`${numberText(requests.length, language)} ${t('loadedRequests')}`} /><MetricCard label={t('writeRequests')} value={numberText(countRow?.write_count, language)} icon={ArrowUpRight} iconClass="violet" /></div>
       <div className="panel data-list-panel requests-list-panel"><ListHeading title={t('requests')} />
         <Paginator total={result.data?.total ?? 0} pageIndex={pageIndex} pageSize={tablePageSize} onPageChange={setPageIndex} t={t} language={language} />
-        <div className="table-scroll"><table className="requests-table"><thead><tr><SortableHeader column="start_utc" label={t('startTime')} sort={sort} onSort={changeSort} /><SortableHeader column="request_method" label={t('method')} sort={sort} onSort={changeSort} /><SortableHeader column="request_path" label={t('requestPath')} sort={sort} onSort={changeSort} /><SortableHeader column="downstream_status" label={t('responseStatus')} sort={sort} onSort={changeSort} /><SortableHeader column="actor_ip" label={t('actor')} sort={sort} onSort={changeSort} /><SortableHeader column="host" label={t('host')} sort={sort} onSort={changeSort} /><SortableHeader column="duration" label={t('durationShort')} sort={sort} onSort={changeSort} /><SortableHeader column="downstream_content_size" label={t('responseSize')} sort={sort} onSort={changeSort} /></tr></thead><tbody>{requests.length ? requests.map((request) => <tr key={request.request_id}><td>{dateText(request.start_utc, language)}</td><td><span className={`method-badge ${request.request_method.toLowerCase()}`}>{request.request_method}</span></td><td><code className="path-cell">{request.request_path}</code></td><td><span className={`response-code ${request.downstream_status < 400 ? 'response-success' : ''}`}>{request.downstream_status}</span></td><td><span className="actor-detail"><strong className="primary-cell">{request.actor_ip}</strong>{(request.provider || request.asn) && <small>{[request.provider, request.asn].filter(Boolean).join(' · ')}</small>}{(request.city || request.country) && <small className="country-cell">{request.country && <><span className="country-flag" title={request.country}>{countryFlag(request.country)}</span>{request.country}</>}{request.city && <>{request.country ? ' · ' : ''}{request.city}</>}</small>}</span></td><td className="host-cell">{request.host || '—'}</td><td>{numberText(request.duration / 1_000_000, language)} ms</td><td>{numberText(request.downstream_content_size, language)} B</td></tr>) : <EmptyRows t={t} columns={8} />}</tbody></table></div>
+        <div className="table-scroll"><table className="requests-table"><thead><tr><SortableHeader column="start_utc" label={t('startTime')} sort={sort} onSort={changeSort} filtered={true} filterLabel={t('filteredColumn')} /><SortableHeader column="request_method" label={t('method')} sort={sort} onSort={changeSort} /><SortableHeader column="request_path" label={t('requestPath')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || category != null)} filterLabel={t('filteredColumn')} /><SortableHeader column="downstream_status" label={t('responseStatus')} sort={sort} onSort={changeSort} filtered={Boolean(filters.status)} filterLabel={t('filteredColumn')} /><SortableHeader column="actor_ip" label={t('actor')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || actorIp != null || burstId != null)} filterLabel={t('filteredColumn')} /><SortableHeader column="host" label={t('host')} sort={sort} onSort={changeSort} filtered={Boolean(host != null || burstId != null)} filterLabel={t('filteredColumn')} /><SortableHeader column="duration" label={t('durationShort')} sort={sort} onSort={changeSort} /><SortableHeader column="downstream_content_size" label={t('responseSize')} sort={sort} onSort={changeSort} /></tr></thead><tbody>{requests.length ? requests.map((request) => <tr key={request.request_id}><td>{dateText(request.start_utc, language)}</td><td><span className="method-cell">{request.request_scheme.toLowerCase() === 'https' && <span className="https-lock" title="HTTPS" aria-label="HTTPS"><LockKeyhole size={13} /></span>}{request.request_scheme.toLowerCase() === 'http' && <span className="http-lock" title="HTTP" aria-label="HTTP"><LockOpen size={13} /></span>}<span className={`method-badge ${request.request_method.toLowerCase()}`}>{request.request_method}</span></span></td><td><span className="request-path-detail"><code className="path-cell">{request.request_path}</code>{request.categories && <small>{request.categories}</small>}</span></td><td><span className={`response-code ${request.downstream_status < 400 ? 'response-success' : ''}`}>{request.downstream_status}</span></td><td><span className="actor-detail"><strong className="primary-cell">{request.actor_ip}</strong>{(request.provider || request.asn) && <small>{[request.provider, request.asn].filter(Boolean).join(' · ')}</small>}{(request.city || request.country) && <small className="country-cell">{request.country && <><span className="country-flag" title={request.country}>{countryFlag(request.country)}</span>{request.country}</>}{request.city && <>{request.country ? ' · ' : ''}{request.city}</>}</small>}</span></td><td className="host-cell">{request.host || '—'}</td><td>{numberText(request.duration / 1_000_000, language)} ms</td><td>{numberText(request.downstream_content_size, language)} B</td></tr>) : <EmptyRows t={t} columns={8} />}</tbody></table></div>
         <Paginator total={result.data?.total ?? 0} pageIndex={pageIndex} pageSize={tablePageSize} onPageChange={setPageIndex} t={t} language={language} />
       </div>
     </>}
   </>
 }
 
-function PageHeading({ title, subtitle, t, range, onRangeChange, language }: { title: string; subtitle: string; t: (key: MessageKey) => string; range: TimeRange; onRangeChange: (range: TimeRange) => void; language: Language }) {
-  return <div className="page-heading"><div><h1>{title}</h1><p>{subtitle}</p></div><div className="heading-actions"><DateRangePicker range={range} onChange={onRangeChange} t={t} language={language} /></div></div>
+function PageHeading({ title, subtitle, t, range, onRangeChange, language, lastImport }: { title: string; subtitle: string; t: (key: MessageKey) => string; range: TimeRange; onRangeChange: (range: TimeRange) => void; language: Language; lastImport: string | null | undefined }) {
+  return <div className="page-heading"><div>{range.preset === 'last24h' && <div className="live-monitoring"><i />{t('liveMonitoring')} · {t('lastImport')}: {timeText(lastImport, language)}</div>}<h1>{title}</h1><p>{subtitle}</p></div><div className="heading-actions"><DateRangePicker range={range} onChange={onRangeChange} t={t} language={language} /></div></div>
 }
 
 function DateRangePicker({ range, onChange, t, language }: { range: TimeRange; onChange: (range: TimeRange) => void; t: (key: MessageKey) => string; language: Language }) {
@@ -869,7 +911,7 @@ function DateRangePicker({ range, onChange, t, language }: { range: TimeRange; o
     setStart(localDateTimeInput(range.from))
     setEnd(localDateTimeInput(range.to))
   }, [range])
-  const presets: [RangePreset, MessageKey][] = [['today', 'todayRange'], ['yesterday', 'yesterdayRange'], ['last6h', 'last6h'], ['last7d', 'last7d'], ['last30d', 'last30d'], ['last90d', 'last90d']]
+  const presets: [RangePreset, MessageKey][] = [['last24h', 'last24h'], ['today', 'todayRange'], ['yesterday', 'yesterdayRange'], ['last6h', 'last6h'], ['last7d', 'last7d'], ['last30d', 'last30d'], ['last90d', 'last90d']]
   const commitPreset = (preset: RangePreset) => { onChange(makeRange(preset)); setOpen(false) }
   const applyCustom = () => {
     if (!start || !end || start >= end) return
@@ -889,9 +931,9 @@ function ListHeading({ title }: { title: string }) {
   return <div className="burst-list-heading"><div><h2>{title}</h2></div></div>
 }
 
-function SortableHeader<T extends string>({ column, label, sort, onSort }: { column: T; label: string; sort: { column: T; direction: 'asc' | 'desc' }; onSort: (column: T) => void }) {
+function SortableHeader<T extends string>({ column, label, sort, onSort, filtered = false, filterLabel }: { column: T; label: string; sort: { column: T; direction: 'asc' | 'desc' }; onSort: (column: T) => void; filtered?: boolean; filterLabel?: string }) {
   const active = sort.column === column
-  return <th aria-sort={active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}><button type="button" className="sort-header" onClick={() => onSort(column)}>{label}{active && (sort.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</button></th>
+  return <th aria-sort={active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}><button type="button" className="sort-header" title={filtered ? `${label} · ${filterLabel ?? ''}` : label} aria-label={filtered ? `${label} · ${filterLabel ?? ''}` : label} onClick={() => onSort(column)}>{label}{active && (sort.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}{filtered && <ListFilter size={11} className="column-filter-marker" aria-hidden="true" />}</button></th>
 }
 
 function Paginator({ total, pageIndex, pageSize, onPageChange, t, language }: { total: number; pageIndex: number; pageSize: number; onPageChange: (page: number) => void; t: (key: MessageKey) => string; language: Language }) {

@@ -16,14 +16,16 @@ class TraefikReader:
             raise ValueError("Save margin must be greater than zero")
         self.path = Path(path)
         self.save_margin_characters = save_margin_characters
+        self.skipped_count = 0
 
-    def read(self, callback: Callable[[dict[str, Any]], None]) -> int:
+    def read(self, callback: Callable[[dict[str, Any]], bool | None]) -> int:
         """Pass safe complete log records to ``callback`` and return their count.
 
         A successfully handled prefix is removed even if a later line fails, so
         already committed records are not imported again on the next run.
         """
         imported = 0
+        skipped = 0
         consumed_bytes = 0
         with self.path.open("r+b") as log_file:
             file_size = log_file.seek(0, 2)
@@ -42,13 +44,16 @@ class TraefikReader:
                     record = json.loads(line.decode("utf-8"))
                     if not isinstance(record, dict):
                         raise ValueError(f"Expected a JSON object in {self.path} at byte {line_start}")
-                    callback(record)
+                    imported_record = callback(record)
                     consumed_bytes = log_file.tell()
-                    imported += 1
+                    if imported_record is False:
+                        skipped += 1
+                    else:
+                        imported += 1
             finally:
                 if consumed_bytes:
                     self._remove_prefix(log_file, consumed_bytes)
-
+        self.skipped_count = skipped
         return imported
 
     @staticmethod

@@ -136,6 +136,10 @@ def get_requests(
         f"""SELECT r.request_id, r.start_utc, r.actor_id, a.ip AS actor_ip,
                       a.provider, a.country, a.city, a.asn, r.host_id, h.name AS host,
                       r.request_method, r.request_path, r.request_scheme,
+                      (SELECT GROUP_CONCAT(c.category_name, ', ')
+                       FROM request_category AS rc
+                       JOIN category AS c ON c.category_id = rc.category_id
+                       WHERE rc.request_id = r.request_id) AS categories,
                       r.downstream_status, r.downstream_content_size,
                       r.duration, r.user_agent
                {joins}

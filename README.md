@@ -17,3 +17,7 @@ when a new request from that actor is imported.
 
 GeoLite2 files must be obtained under MaxMind's terms; they are local data files
 and are excluded from version control.
+
+The collector only imports globally routable client IP addresses. Requests with
+private, loopback, link-local, reserved, or invalid addresses are skipped and
+removed from the processed log prefix.

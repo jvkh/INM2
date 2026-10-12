@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from threading import RLock
 from typing import Any, Sequence
 
 
@@ -30,6 +31,7 @@ class Database:
     ) -> None:
         self.database_path = Path(database_path).expanduser().resolve()
         self.schema_path = Path(schema_path).expanduser().resolve()
+        self._lock = RLock()
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         # Scheduled importer callbacks run on the scheduler thread.
         self.connection = sqlite3.connect(self.database_path, check_same_thread=False)
@@ -42,8 +44,9 @@ class Database:
         """Create missing tables and indexes using the schema SQL file."""
         if not self.schema_path.is_file():
             raise FileNotFoundError(f"Database schema not found: {self.schema_path}")
-        self.connection.executescript(self.schema_path.read_text(encoding="utf-8"))
-        self.connection.commit()
+        with self._lock:
+            self.connection.executescript(self.schema_path.read_text(encoding="utf-8"))
+            self.connection.commit()
 
     def execute(
         self,
@@ -51,9 +54,21 @@ class Database:
         parameters: Sequence[Any] | dict[str, Any] = (),
     ) -> sqlite3.Cursor:
         """Execute an INSERT, UPDATE, DELETE, or other SQL statement."""
-        cursor = self.connection.execute(sql, parameters)
-        self.connection.commit()
-        return cursor
+        with self._lock:
+            cursor = self.connection.execute(sql, parameters)
+            self.connection.commit()
+            return cursor
+
+    def execute_many(
+        self,
+        sql: str,
+        parameters: Sequence[Sequence[Any]],
+    ) -> sqlite3.Cursor:
+        """Execute a batch of writes atomically against the shared connection."""
+        with self._lock:
+            cursor = self.connection.executemany(sql, parameters)
+            self.connection.commit()
+            return cursor
 
     def query(
         self,
@@ -61,12 +76,14 @@ class Database:
         parameters: Sequence[Any] | dict[str, Any] = (),
     ) -> list[dict[str, Any]]:
         """Execute a query and return its rows as a list of dictionaries."""
-        cursor = self.connection.execute(sql, parameters)
-        return [dict(row) for row in cursor.fetchall()]
+        with self._lock:
+            cursor = self.connection.execute(sql, parameters)
+            return [dict(row) for row in cursor.fetchall()]
 
     def close(self) -> None:
         """Close the underlying database connection."""
-        self.connection.close()
+        with self._lock:
+            self.connection.close()
 
     def __enter__(self) -> Database:
         return self

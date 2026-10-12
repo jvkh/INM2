@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import ipaddress
 import re
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -102,27 +103,34 @@ class Importer:
             if on_file_start is not None:
                 on_file_start(path)
 
-            def import_and_report(record: dict[str, Any]) -> None:
-                self.import_request(record)
-                if on_record_imported is not None:
+            def import_and_report(record: dict[str, Any]) -> bool:
+                imported = self.import_request(record)
+                if imported and on_record_imported is not None:
                     on_record_imported()
+                return imported
 
-            count = reader_factory(path).read(import_and_report)
+            reader = reader_factory(path)
+            count = reader.read(import_and_report)
             total += count
             logger.info("Imported %d request(s) from %s", count, path)
+            if reader.skipped_count:
+                logger.info("Skipped %d request(s) with non-public client IPs", reader.skipped_count)
         return total
 
     def _create_traefik_reader(self, path: str) -> TraefikReader:
         return TraefikReader(path, self.config.input_save_margin_characters)
 
-    def import_request(self, record: dict[str, Any]) -> None:
-        """Persist one Traefik record and update its category and burst."""
+    def import_request(self, record: dict[str, Any]) -> bool:
+        """Persist a public-IP Traefik record; return false for non-public IPs."""
         actor_ip = record.get("ClientHost")
         if not actor_ip:
             client_addr = record.get("ClientAddr", "")
             actor_ip = client_addr.rsplit(":", 1)[0] if client_addr else None
         if not actor_ip:
             raise ValueError("Traefik request has no ClientHost or ClientAddr")
+        actor_ip = str(actor_ip).strip()
+        if not self._is_public_ip(actor_ip):
+            return False
 
         request_host = record.get("RequestHost") or None
         timestamp = self._parse_timestamp(record.get("StartUTC") or record.get("time"))
@@ -207,6 +215,15 @@ class Importer:
                 [(request_id, category_id) for category_id in category_ids],
             )
             self._update_burst(actor_id, host_id, timestamp, request_id, request_kind)
+        return True
+
+    @staticmethod
+    def _is_public_ip(value: str) -> bool:
+        """Only import globally routable IP addresses."""
+        try:
+            return ipaddress.ip_address(value).is_global
+        except ValueError:
+            return False
 
     def _get_category_id(self, category: str) -> int:
         connection = self.database.connection

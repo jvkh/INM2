@@ -80,7 +80,9 @@ def get_bursts(
     actor: str | None = Query(default=None, min_length=1, description="Actor IP substring"),
     actor_id: int | None = Query(default=None, ge=1),
     host: str | None = Query(default=None, min_length=1),
+    host_exact: bool = Query(default=False, description="Match the host exactly"),
     country: str | None = Query(default=None, min_length=1),
+    country_exact: bool = Query(default=False, description="Match the country exactly"),
     provider: str | None = Query(default=None, min_length=1),
     asn: str | None = Query(default=None, min_length=1),
     city: str | None = Query(default=None, min_length=1),
@@ -98,10 +100,14 @@ def get_bursts(
 
     conditions = ["b.start_time >= ?", "b.start_time < ?"]
     parameters: list[Any] = [start, end]
+    if host is not None:
+        conditions.append("h.name = ?" if host_exact else "h.name LIKE ?")
+        parameters.append(host if host_exact else f"%{host}%")
+    if country is not None:
+        conditions.append("a.country = ?" if country_exact else "a.country LIKE ?")
+        parameters.append(country if country_exact else f"%{country}%")
     for column, value in (
         ("a.ip", actor),
-        ("h.name", host),
-        ("a.country", country),
         ("a.provider", provider),
         ("a.asn", asn),
         ("a.city", city),
