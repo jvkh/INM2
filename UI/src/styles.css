@@ -137,3 +137,6 @@ button { color: inherit; cursor: pointer; }
 .request-path-detail small { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
 .column-filter-marker { flex: none; color: var(--accent); stroke-width: 2.2; }
 .burst-filter-controls .filter-button { white-space: nowrap; }
+.bar-slot.current-bucket::before { content: ''; position: absolute; z-index: 1; bottom: calc(var(--bar-height, 0%) + 2px); width: 8px; height: 8px; border: 2px solid var(--accent); border-radius: 50%; background: var(--surface); }
+.current-hour-dot { width: 8px; height: 8px; border: 1.5px dashed var(--accent); background: transparent; }
+.bar-stack.zero-bar { min-height: 3px; background: var(--muted); opacity: .4; }

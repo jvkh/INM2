@@ -82,23 +82,40 @@ type PagedResponse<T> = { items: T[]; total: number; limit: number; offset: numb
 
 function makeRange(preset: RangePreset, start?: string, end?: string): TimeRange {
   const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   let from: Date
   let to = now
   if (preset === 'last24h') from = new Date(now.getTime() - 24 * 60 * 60 * 1000)
-  else if (preset === 'today') from = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  else if (preset === 'today') from = today
   else if (preset === 'yesterday') {
-    to = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    to = today
     from = new Date(to.getFullYear(), to.getMonth(), to.getDate() - 1)
   } else if (preset === 'last6h') from = new Date(now.getTime() - 6 * 60 * 60 * 1000)
-  else if (preset === 'last7d') from = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-  else if (preset === 'last30d') from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-  else if (preset === 'last90d') from = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000)
+  else if (preset === 'last7d') from = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6)
+  else if (preset === 'last30d') from = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 29)
+  else if (preset === 'last90d') from = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 89)
   else {
     from = new Date(start ?? '')
     to = new Date(end ?? '')
   }
   const query = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() }).toString()
   return { from, to, preset, query }
+}
+
+function trafficBucketOptions(range: TimeRange): Record<string, string> {
+  if (range.preset === 'custom') return { bars: '20' }
+  const minutesByPreset: Partial<Record<RangePreset, number>> = {
+    last24h: 60, today: 60, yesterday: 60, last6h: 15,
+    last7d: 480, last30d: 1440, last90d: 4320,
+  }
+  const bucketMinutes = minutesByPreset[range.preset] ?? 60
+  const anchor = new Date(range.from)
+  if (range.preset === 'last6h') anchor.setMinutes(Math.floor(anchor.getMinutes() / 15) * 15, 0, 0)
+  else if (range.preset === 'last24h') anchor.setMinutes(0, 0, 0)
+  return {
+    bars: '24', bucket_minutes: String(bucketMinutes), bucket_anchor: anchor.toISOString(),
+    bucket_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  }
 }
 
 function localDateInput(date: Date) {
@@ -646,13 +663,16 @@ type RangePageProps = { t: (key: MessageKey) => string; language: Language; rang
 
 function DashboardPage({ t, language, range, onRangeChange, lastImport, onBurstSelect }: RangePageProps & { onBurstSelect: (id: number) => void }) {
   const [burstSort, setBurstSort] = useState<BurstSort>({ column: 'requests', direction: 'desc' })
-  const counts = useApiData<ApiResult<CountItem>>(apiUrl('request_counts', range.query, { bars: '24' }))
+  const counts = useApiData<ApiResult<CountItem>>(apiUrl('request_counts', range.query, trafficBucketOptions(range)))
   const bursts = useApiData<BurstResponse>(apiUrl('bursts', range.query, { limit: '6', offset: '0', sort_by: burstSort.column, sort_order: burstSort.direction }))
   const actors = useApiData<PagedResponse<ActorItem>>(apiUrl('actors', range.query, { limit: '1', offset: '0' }))
   const newActors = useApiData<PagedResponse<ActorItem>>(apiUrl('actors', range.query, { limit: '1', offset: '0', new_only: 'true' }))
   const hosts = useApiData<ApiResult<HostItem>>(apiUrl('hosts', range.query))
   const status = useApiData<StatusData>(apiUrl('status'), 10_000, false)
   const requestRows = counts.data?.items ?? []
+  const chartRange = requestRows.length && requestRows[0].from
+    ? { ...range, from: new Date(requestRows[0].from) }
+    : range
   const requestsTotal = requestRows.reduce((sum, item) => sum + item.read_count + item.write_count + item.other_count, 0)
   const readTotal = requestRows.reduce((sum, item) => sum + item.read_count, 0)
   const writeTotal = requestRows.reduce((sum, item) => sum + item.write_count, 0)
@@ -686,9 +706,9 @@ function DashboardPage({ t, language, range, onRangeChange, lastImport, onBurstS
           <div className="chart-summary"><div><strong>{numberText(requestsTotal, language)}</strong><span>{t('requestsLabel')}</span></div></div>
           <div className="chart-wrap" role="img" aria-label={t('trafficActivity')}>
             <div className="y-labels"><span>{numberText(maxBucket, language)}</span><span>{numberText(Math.round(maxBucket * .75), language)}</span><span>{numberText(Math.round(maxBucket * .5), language)}</span><span>{numberText(Math.round(maxBucket * .25), language)}</span><span>0</span></div>
-            <div className="chart-main"><div className="grid-lines"><i /><i /><i /><i /><i /></div><div className="bars">{requestRows.map((item, index) => { const total = item.read_count + item.write_count + item.other_count; const height = total === 0 ? 1 : Math.max(2, total / maxBucket * 100); const hint = `${t('startDate')}: ${dateText(item.from, language)}\n${t('endDate')}: ${dateText(item.to, language)}\n${t('read')}: ${numberText(item.read_count, language)}\n${t('write')}: ${numberText(item.write_count, language)}\n${t('other')}: ${numberText(item.other_count, language)}`; return <div className="bar-slot" key={item.from ?? index} data-tooltip={hint} style={{ '--bar-height': `${height}%` } as CSSProperties} aria-label={hint}><div className="bar-stack" style={{ height: `${height}%` }}><i className="bar-read" style={{ height: `${total ? item.read_count / total * 100 : 0}%` }} /><i className="bar-write" style={{ height: `${total ? item.write_count / total * 100 : 0}%` }} /><i className="bar-other" style={{ height: `${total ? item.other_count / total * 100 : 0}%` }} /></div></div> })}</div><div className="x-labels"><span>{rangeTick(range, 0, language)}</span><span>{rangeTick(range, .25, language)}</span><span>{rangeTick(range, .5, language)}</span><span>{rangeTick(range, .75, language)}</span><span>{rangeTick(range, 1, language)}</span></div></div>
+            <div className="chart-main"><div className="grid-lines"><i /><i /><i /><i /><i /></div><div className="bars">{requestRows.map((item, index) => { const total = item.read_count + item.write_count + item.other_count; const height = total === 0 ? 1 : Math.max(2, total / maxBucket * 100); const hint = `${t('startDate')}: ${dateText(item.from, language)}\n${t('endDate')}: ${dateText(item.to, language)}\n${t('read')}: ${numberText(item.read_count, language)}\n${t('write')}: ${numberText(item.write_count, language)}\n${t('other')}: ${numberText(item.other_count, language)}`; const currentBucket = range.preset === 'today' && index === requestRows.length - 1; return <div className={`bar-slot${currentBucket ? ' current-bucket' : ''}`} key={item.from ?? index} data-tooltip={hint} style={{ '--bar-height': `${height}%` } as CSSProperties} aria-label={hint}><div className={`bar-stack${total === 0 ? ' zero-bar' : ''}`} style={{ height: `${height}%` }}><i className="bar-read" style={{ height: `${total ? item.read_count / total * 100 : 0}%` }} /><i className="bar-write" style={{ height: `${total ? item.write_count / total * 100 : 0}%` }} /><i className="bar-other" style={{ height: `${total ? item.other_count / total * 100 : 0}%` }} /></div></div> })}</div><div className="x-labels"><span>{rangeTick(chartRange, 0, language)}</span><span>{rangeTick(chartRange, .25, language)}</span><span>{rangeTick(chartRange, .5, language)}</span><span>{rangeTick(chartRange, .75, language)}</span><span>{rangeTick(chartRange, 1, language)}</span></div></div>
           </div>
-          <div className="chart-legend"><span><i className="legend-dot read-dot" />{t('read')} · {numberText(readTotal, language)}</span><span><i className="legend-dot write-dot" />{t('write')} · {numberText(writeTotal, language)}</span><span><i className="legend-dot other-dot" />{t('other')} · {numberText(otherTotal, language)}</span></div>
+          <div className="chart-legend"><span><i className="legend-dot read-dot" />{t('read')} · {numberText(readTotal, language)}</span><span><i className="legend-dot write-dot" />{t('write')} · {numberText(writeTotal, language)}</span><span><i className="legend-dot other-dot" />{t('other')} · {numberText(otherTotal, language)}</span>{range.preset === 'today' && <span><i className="legend-dot current-hour-dot" />{t('currentHour')}</span>}</div>
         </div>
         <div className="panel burst-panel">
           <div className="panel-header"><div><h2>{t('burstOverview')}</h2><p>{t('burstDescription')}</p></div></div>
