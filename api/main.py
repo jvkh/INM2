@@ -6,6 +6,7 @@ import logging
 from fastapi import FastAPI
 
 from common.database import Database
+from common.version import APP_VERSION
 from api.actors import router as actors_router
 from api.bursts import router as bursts_router
 from api.categories import router as categories_router
@@ -38,7 +39,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Internet Noise Monitor API",
-    version="1.0.0",
+    version=APP_VERSION,
     lifespan=lifespan,
 )
 app.include_router(requests_router, prefix="/api/v1")

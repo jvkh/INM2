@@ -1,5 +1,7 @@
 # API und Collector verwenden
 
+[English version](API.en.md) · [Installationsanleitung](../README.de.md)
+
 Diese Anleitung richtet sich an Entwickler, die Daten aus dem Internet Noise Monitor abrufen oder einen Import beziehungsweise eine Wartung auslösen möchten.
 
 ## Verbindung und interaktive Dokumentation
@@ -12,7 +14,7 @@ Beispiel für einen Aufruf:
 curl 'http://localhost:8000/api/v1/status'
 ```
 
-Die API erwartet JSON-Antworten und Query-Parameter. Bei `PUT`-Aufrufen werden die Werte ebenfalls als Query-Parameter übergeben; ein JSON-Request-Body wird dafür nicht benötigt.
+Die API liefert JSON. `GET`- und `PUT`-Aufrufe verwenden Query-Parameter; `PUT` benötigt keinen JSON-Request-Body.
 
 ## Allgemeine Regeln
 
@@ -48,7 +50,7 @@ Bei erfolgreichem Zugriff enthält die Antwort `status: "ok"`, `database: "ok"`,
 
 ### Neue Daten
 
-`GET /api/v1/notifications` liefert Requests und Bursts, deren IDs seit dem gespeicherten Gesehen-Cursor hinzugekommen sind. Die Antwort enthält die Gesamtzahlen, bis zu fünf aktuelle Einträge je Typ sowie die neuesten Cursorwerte. `PUT /api/v1/notifications/seen?request_cursor=…&burst_cursor=…` speichert diese Cursor in der Settings-Tabelle. Beim ersten Abruf werden die aktuellen Höchst-IDs als Ausgangsstand gespeichert, damit bereits vorhandene Datensätze nicht als neu gemeldet werden.
+`GET /api/v1/notifications` liefert Requests und Bursts, deren IDs neuer als die gespeicherten Gesehen-Cursor sind. Die Antwort enthält die Gesamtzahlen, bis zu fünf aktuelle Einträge je Typ sowie die neuesten Cursorwerte. `PUT /api/v1/notifications/seen?request_cursor=…&burst_cursor=…` speichert diese Cursor in der Settings-Tabelle. Beim ersten Abruf werden die aktuellen Höchst-IDs als Ausgangsstand gespeichert, damit bereits vorhandene Datensätze nicht als neu gemeldet werden.
 
 ### Requests
 

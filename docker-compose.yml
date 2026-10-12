@@ -1,8 +1,8 @@
 services:
   ui:
     build:
-      context: ./UI
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: UI/Dockerfile
     restart: unless-stopped
     depends_on:
       - api
