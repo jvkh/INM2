@@ -21,6 +21,7 @@ rsync -avz --human-readable --progress \
   --exclude='/.git/' \
   --exclude='/.env' \
   --exclude='/.env.*' \
+  --exclude='/docker-compose.yml' \
   --exclude='/databases/' \
   --exclude='/logs/' \
   --exclude='__pycache__/' \
