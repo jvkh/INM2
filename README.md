@@ -21,3 +21,9 @@ and are excluded from version control.
 The collector only imports globally routable client IP addresses. Requests with
 private, loopback, link-local, reserved, or invalid addresses are skipped and
 removed from the processed log prefix.
+
+To exclude the collector's externally reachable API routes, set
+`IGNORE_REQUEST_ROUTES` in `.env` to semicolon-separated `host/path-prefix`
+entries, for example `api.example.org/api/v1/`. The host must match Traefik's
+`RequestHost`; the path prefix matches that route and its subpaths. Use
+`api.example.org/` to ignore every request to that host.

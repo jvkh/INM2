@@ -8,7 +8,7 @@ import re
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 from common.database import Database
 from common.env import EnvConfig
@@ -76,6 +76,7 @@ class Importer:
         self.database = database
         self.geolocator = GeoLocator(config)
         self._validated_bursts: set[int] = set()
+        self.ignored_routes = self._parse_ignored_routes(config.ignore_request_routes)
         self.readers = {"traefik": self._create_traefik_reader}
 
     def close(self) -> None:
@@ -114,14 +115,16 @@ class Importer:
             total += count
             logger.info("Imported %d request(s) from %s", count, path)
             if reader.skipped_count:
-                logger.info("Skipped %d request(s) with non-public client IPs", reader.skipped_count)
+                logger.info("Skipped %d request(s) by import filters", reader.skipped_count)
         return total
 
     def _create_traefik_reader(self, path: str) -> TraefikReader:
         return TraefikReader(path, self.config.input_save_margin_characters)
 
     def import_request(self, record: dict[str, Any]) -> bool:
-        """Persist a public-IP Traefik record; return false for non-public IPs."""
+        """Persist an eligible Traefik record; return false when filtered out."""
+        if self._is_ignored_request(record):
+            return False
         actor_ip = record.get("ClientHost")
         if not actor_ip:
             client_addr = record.get("ClientAddr", "")
@@ -224,6 +227,29 @@ class Importer:
             return ipaddress.ip_address(value).is_global
         except ValueError:
             return False
+
+    @staticmethod
+    def _parse_ignored_routes(routes: list[str]) -> list[tuple[str, str]]:
+        parsed = []
+        for route in routes:
+            host, separator, path = route.partition("/")
+            if not separator or not host:
+                raise ValueError(
+                    "IGNORE_REQUEST_ROUTES entries must use 'hostname/path-prefix' format"
+                )
+            parsed.append((host.lower().rstrip("."), "/" + path.strip("/")))
+        return parsed
+
+    def _is_ignored_request(self, record: dict[str, Any]) -> bool:
+        host = str(record.get("RequestHost") or "").lower().rstrip(".")
+        path = urlsplit(str(record.get("RequestPath") or "")).path or "/"
+        for ignored_host, ignored_prefix in self.ignored_routes:
+            if host != ignored_host:
+                continue
+            prefix = ignored_prefix.rstrip("/") or "/"
+            if prefix == "/" or path == prefix or path.startswith(prefix + "/"):
+                return True
+        return False
 
     def _get_category_id(self, category: str) -> int:
         connection = self.database.connection

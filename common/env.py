@@ -24,6 +24,7 @@ class EnvConfig:
         "BURST_WINDOW_SECONDS": "60",
         "GEOLITE_CITY_DB": "/geoip/GeoLite2-City.mmdb",
         "GEOLITE_ASN_DB": "/geoip/GeoLite2-ASN.mmdb",
+        "IGNORE_REQUEST_ROUTES": "",
     }
 
     def __init__(self, environ: Mapping[str, str] | None = None) -> None:
@@ -95,3 +96,7 @@ class EnvConfig:
     @property
     def burst_window_seconds(self) -> int:
         return self.get_int("BURST_WINDOW_SECONDS")
+
+    @property
+    def ignore_request_routes(self) -> list[str]:
+        return self.get_list("IGNORE_REQUEST_ROUTES")
