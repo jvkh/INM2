@@ -74,7 +74,9 @@ The `search` parameter can be limited to a field with `field:term`, for example 
 
 `GET /api/v1/request_paths` returns the most frequent distinct request paths containing a search term. `from`, `to`, and `search` are required; `limit` is optional (default 100, maximum 500). The global search uses these results and opens the Requests page with an exact path filter.
 
-`sort_by` and `sort_order` control ordering. Supported columns are `start_utc`, `request_method`, `request_path`, `downstream_status`, `actor_ip`, `host`, `duration`, and `downstream_content_size`; direction is `asc` or `desc`.
+`sort_by` and `sort_order` control ordering. Supported columns are `start_utc`, `request_method`, `request_path`, `user_agent`, `downstream_status`, `actor_ip`, `host`, `duration`, and `downstream_content_size`; direction is `asc` or `desc`.
+
+The `actor` and `host` filters use substring matching by default. Set `actor_exact=true`, `host_exact=true`, or `category_exact=true` to match the value exactly.
 
 ```sh
 curl -G 'http://localhost:8000/api/v1/requests' \
@@ -89,7 +91,7 @@ The response contains `items`, `total`, `limit`, `offset`, `from`, and `to`. Eac
 
 ### Actors
 
-`GET /api/v1/actors` returns actors with at least one request in the selected time range. With `new_only=true`, it returns only actors whose `first_time` falls in that range. It supports `from`, `to`, substring filters `provider`, `country`, `city`, `asn`, and `ip`, plus `country_exact=true` for exact country matching. `search` searches IP, city, provider, and ASN; `global_search` searches IP, country, city, and ASN. Pagination uses `limit` and `offset`. `sort_by` supports `ip`, `first_time`, `last_time`, `provider`, `asn`, `city`, `country`, and `request_count`; `sort_order` is `asc` or `desc`.
+`GET /api/v1/actors` returns actors with at least one request in the selected time range. With `new_only=true`, it returns only actors whose `first_time` falls in that range. It supports `from`, `to`, substring filters `provider`, `country`, `city`, `asn`, and `ip`, plus `country_exact=true` and `ip_exact=true` for exact matching. `search` searches IP, city, provider, and ASN; `global_search` searches IP, country, city, and ASN. Pagination uses `limit` and `offset`. `sort_by` supports `ip`, `first_time`, `last_time`, `provider`, `asn`, `city`, `country`, and `request_count`; `sort_order` is `asc` or `desc`.
 
 `GET /api/v1/countries` returns countries with requests in the selected period. `GET /api/v1/actors/{id}` returns an actor profile, including request and burst totals over the full stored history.
 
@@ -103,7 +105,7 @@ curl -G 'http://localhost:8000/api/v1/actors' \
 
 ### Bursts
 
-`GET /api/v1/bursts` returns bursts whose start time falls in the selected time range. Filters include `actor` (IP substring), `actor_id` (exact), `host`, `country`, `provider`, `asn`, and `city` (substrings), `search` (substring in IP, provider, ASN, or city), `limit`, and `offset`. Set `host_exact=true` or `country_exact=true` for exact host or country matching. `sort_by` supports `start_time`, `actor_ip`, `host`, `country`, `duration`, `requests`, and `avg_count`; `sort_order` is `asc` or `desc`.
+`GET /api/v1/bursts` returns bursts whose start time falls in the selected time range. Filters include `actor` (IP substring), `actor_id` (exact), `host`, `country`, `provider`, `asn`, and `city` (substrings), `search` (substring in burst ID, IP, provider, ASN, or city), `limit`, and `offset`. Set `host_exact=true` or `country_exact=true` for exact host or country matching. `sort_by` supports `burst_id`, `start_time`, `actor_ip`, `host`, `country`, `duration`, `requests`, and `avg_count`; `sort_order` is `asc` or `desc`.
 
 The response contains `summary` and paginated `items`. Summary metrics include totals for bursts, actors, and requests; request method counts; and average, median, and maximum values for requests per burst, burst duration, and bursts per actor.
 

@@ -34,9 +34,12 @@ def get_request_counts(
     bucket_anchor: datetime | None = Query(default=None, description="Local interval boundary used to align fixed buckets"),
     bucket_timezone: str | None = Query(default=None, description="IANA timezone for calendar-aligned buckets"),
     host: str | None = Query(default=None, min_length=1),
+    host_exact: bool = Query(default=False, description="Match the host exactly"),
     actor_ip: str | None = Query(default=None, min_length=1, description="Actor IP substring"),
+    actor_ip_exact: bool = Query(default=False, description="Match the actor IP exactly"),
     actor_id: int | None = Query(default=None, ge=1),
     category: str | None = Query(default=None, min_length=1),
+    category_exact: bool = Query(default=False, description="Match the category name exactly"),
     path: str | None = Query(default=None, min_length=1, description="Request-path substring"),
     path_exact: bool = Query(default=False, description="Match the request path exactly"),
     burst_id: int | None = Query(default=None, ge=1),
@@ -55,14 +58,16 @@ def get_request_counts(
     filter_parameters: list[Any] = []
     if host is not None:
         filter_conditions.append(
+            "EXISTS (SELECT 1 FROM host AS fh WHERE fh.host_id = r.host_id AND fh.name = ?)" if host_exact else
             "EXISTS (SELECT 1 FROM host AS fh WHERE fh.host_id = r.host_id AND fh.name LIKE ?)"
         )
-        filter_parameters.append(f"%{host}%")
+        filter_parameters.append(host if host_exact else f"%{host}%")
     if actor_ip is not None:
         filter_conditions.append(
+            "EXISTS (SELECT 1 FROM actor AS fa WHERE fa.actor_id = r.actor_id AND fa.ip = ?)" if actor_ip_exact else
             "EXISTS (SELECT 1 FROM actor AS fa WHERE fa.actor_id = r.actor_id AND fa.ip LIKE ?)"
         )
-        filter_parameters.append(f"%{actor_ip}%")
+        filter_parameters.append(actor_ip if actor_ip_exact else f"%{actor_ip}%")
     if actor_id is not None:
         filter_conditions.append("r.actor_id = ?")
         filter_parameters.append(actor_id)
@@ -71,10 +76,16 @@ def get_request_counts(
             """EXISTS (
                    SELECT 1 FROM request_category AS rc
                    JOIN category AS c ON c.category_id = rc.category_id
+                   WHERE rc.request_id = r.request_id AND c.category_name = ?
+               )"""
+            if category_exact else
+            """EXISTS (
+                   SELECT 1 FROM request_category AS rc
+                   JOIN category AS c ON c.category_id = rc.category_id
                    WHERE rc.request_id = r.request_id AND c.category_name LIKE ?
                )"""
         )
-        filter_parameters.append(f"%{category}%")
+        filter_parameters.append(category if category_exact else f"%{category}%")
     if path is not None:
         filter_conditions.append("r.request_path = ?" if path_exact else "r.request_path LIKE ?")
         filter_parameters.append(path if path_exact else f"%{path}%")

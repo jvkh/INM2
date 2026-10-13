@@ -57,7 +57,9 @@ def get_requests(
     from_: datetime = Query(alias="from", description="Start time, inclusive (ISO 8601)"),
     to: datetime = Query(description="End time, exclusive (ISO 8601)"),
     host: str | None = Query(default=None, min_length=1),
+    host_exact: bool = Query(default=False, description="Match the host exactly"),
     actor: str | None = Query(default=None, min_length=1, description="Actor IP address"),
+    actor_exact: bool = Query(default=False, description="Match the actor IP exactly"),
     ip: str | None = Query(default=None, min_length=1, description="Actor IP address"),
     actor_id: int | None = Query(default=None, ge=1),
     country: str | None = Query(default=None, min_length=1),
@@ -65,12 +67,13 @@ def get_requests(
     provider: str | None = Query(default=None, min_length=1),
     asn: str | None = Query(default=None, min_length=1),
     category: str | None = Query(default=None, min_length=1, description="Category-name substring"),
+    category_exact: bool = Query(default=False, description="Match the category name exactly"),
     path: str | None = Query(default=None, min_length=1, description="Request-path substring"),
     path_exact: bool = Query(default=False, description="Match the request path exactly"),
     search: str | None = Query(default=None, min_length=1, description="Search across request fields; qualify with field:value such as host:example.org or pfad:/login"),
     status_class: Literal["2xx", "3xx", "4xx", "5xx"] | None = Query(default=None),
     burst_id: int | None = Query(default=None, ge=1, description="Return requests associated with this burst"),
-    sort_by: Literal["start_utc", "request_method", "request_path", "downstream_status", "actor_ip", "host", "duration", "downstream_content_size"] = Query(default="start_utc"),
+    sort_by: Literal["start_utc", "request_method", "request_path", "user_agent", "downstream_status", "actor_ip", "host", "duration", "downstream_content_size"] = Query(default="start_utc"),
     sort_order: Literal["asc", "desc"] = Query(default="asc"),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
@@ -97,24 +100,25 @@ def get_requests(
         parameters.append(burst_id)
     if category is not None:
         conditions.append(
+            "EXISTS (SELECT 1 FROM request_category AS rc JOIN category AS c ON c.category_id = rc.category_id WHERE rc.request_id = r.request_id AND c.category_name = ?)" if category_exact else
             "EXISTS (SELECT 1 FROM request_category AS rc JOIN category AS c ON c.category_id = rc.category_id WHERE rc.request_id = r.request_id AND c.category_name LIKE ?)"
         )
-        parameters.append(f"%{category}%")
+        parameters.append(category if category_exact else f"%{category}%")
     if path is not None:
         conditions.append("r.request_path = ?" if path_exact else "r.request_path LIKE ?")
         parameters.append(path if path_exact else f"%{path}%")
-    for column, value in (
-        ("h.name", host),
-        ("a.ip", actor),
-        ("a.ip", ip),
-        ("a.actor_id", actor_id),
-        ("a.country", country),
-        ("a.city", city),
-        ("a.provider", provider),
-        ("a.asn", asn),
+    for column, value, exact in (
+        ("h.name", host, host_exact),
+        ("a.ip", actor, actor_exact),
+        ("a.ip", ip, False),
+        ("a.actor_id", actor_id, True),
+        ("a.country", country, False),
+        ("a.city", city, False),
+        ("a.provider", provider, False),
+        ("a.asn", asn, False),
     ):
         if value is not None:
-            if column == "a.actor_id":
+            if exact:
                 conditions.append(f"{column} = ?")
                 parameters.append(value)
             else:
@@ -149,7 +153,7 @@ def get_requests(
     joins = """FROM request AS r
                JOIN actor AS a ON a.actor_id = r.actor_id
                LEFT JOIN host AS h ON h.host_id = r.host_id"""
-    sort_expressions = {"start_utc": "r.start_utc", "request_method": "r.request_method", "request_path": "r.request_path", "downstream_status": "r.downstream_status", "actor_ip": "a.ip", "host": "h.name", "duration": "r.duration", "downstream_content_size": "r.downstream_content_size"}
+    sort_expressions = {"start_utc": "r.start_utc", "request_method": "r.request_method", "request_path": "r.request_path", "user_agent": "r.user_agent", "downstream_status": "r.downstream_status", "actor_ip": "a.ip", "host": "h.name", "duration": "r.duration", "downstream_content_size": "r.downstream_content_size"}
     order_by = f"{sort_expressions[sort_by]} {sort_order.upper()}, r.start_utc DESC, r.request_id DESC"
     total_rows = database.query(
         f"SELECT COUNT(*) AS total {joins} WHERE {where_clause}", parameters

@@ -21,7 +21,8 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
                     host: str | None, host_exact: bool, country: str | None,
                     country_exact: bool, status_class: str | None,
                     burst_id: int | None, actor_ip: str | None,
-                    category: str | None, path: str | None,
+                    actor_ip_exact: bool,
+                    category: str | None, category_exact: bool, path: str | None,
                     path_exact: bool) -> dict[str, float]:
     request_conditions = ["r.start_utc >= ?", "r.start_utc < ?"]
     request_params: list[Any] = [start, end]
@@ -83,14 +84,14 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
             request_conditions.append("r.downstream_status >= ? AND r.downstream_status < ?")
             request_params.extend([status_start, status_start + 100])
         if actor_ip:
-            request_conditions.append("a.ip LIKE ?")
-            request_params.append(f"%{actor_ip}%")
+            request_conditions.append("a.ip = ?" if actor_ip_exact else "a.ip LIKE ?")
+            request_params.append(actor_ip if actor_ip_exact else f"%{actor_ip}%")
         if host:
             request_conditions.append("h.name LIKE ?")
             request_params.append(f"%{host}%")
         if category:
-            request_conditions.append("EXISTS (SELECT 1 FROM request_category AS xrc JOIN category AS xc ON xc.category_id=xrc.category_id WHERE xrc.request_id=r.request_id AND xc.category_name LIKE ?)")
-            request_params.append(f"%{category}%")
+            request_conditions.append("EXISTS (SELECT 1 FROM request_category AS xrc JOIN category AS xc ON xc.category_id=xrc.category_id WHERE xrc.request_id=r.request_id AND xc.category_name = ?)" if category_exact else "EXISTS (SELECT 1 FROM request_category AS xrc JOIN category AS xc ON xc.category_id=xrc.category_id WHERE xrc.request_id=r.request_id AND xc.category_name LIKE ?)")
+            request_params.append(category if category_exact else f"%{category}%")
         if path:
             request_conditions.append("r.request_path = ?" if path_exact else "r.request_path LIKE ?")
             request_params.append(path if path_exact else f"%{path}%")
@@ -112,8 +113,8 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
             if not term:
                 burst_conditions.append("0")
             elif field is None:
-                burst_conditions.append("(a.ip LIKE ? OR COALESCE(a.provider,'') LIKE ? OR COALESCE(a.asn,'') LIKE ? OR COALESCE(a.city,'') LIKE ?)")
-                burst_params.extend([f"%{term}%"] * 4)
+                burst_conditions.append("(CAST(b.burst_id AS TEXT) LIKE ? OR a.ip LIKE ? OR COALESCE(a.provider,'') LIKE ? OR COALESCE(a.asn,'') LIKE ? OR COALESCE(a.city,'') LIKE ?)")
+                burst_params.extend([f"%{term}%"] * 5)
             elif field in {"ip", "host", "country", "city", "provider", "asn"}:
                 column = {"ip": "a.ip", "host": "h.name", "country": "a.country", "city": "a.city", "provider": "a.provider", "asn": "a.asn"}[field]
                 burst_conditions.append(f"COALESCE({column},'') LIKE ?")
@@ -175,7 +176,9 @@ def get_metric_trends(
     status_class: Literal["2xx", "3xx", "4xx", "5xx"] | None = Query(default=None),
     burst_id: int | None = Query(default=None, ge=1),
     actor_ip: str | None = Query(default=None, min_length=1),
+    actor_ip_exact: bool = Query(default=False),
     category: str | None = Query(default=None, min_length=1),
+    category_exact: bool = Query(default=False),
     path: str | None = Query(default=None, min_length=1),
     path_exact: bool = Query(default=False),
 ) -> dict[str, Any]:
@@ -188,8 +191,8 @@ def get_metric_trends(
     current_start, current_end = _utc_text(start_dt), _utc_text(end_dt)
     previous_start_text, previous_end_text = _utc_text(previous_start), current_start
     database = get_database(request)
-    previous = _period_metrics(database, previous_start_text, previous_end_text, page, search, host, host_exact, country, country_exact, status_class, burst_id, actor_ip, category, path, path_exact)
-    current = _period_metrics(database, current_start, current_end, page, search, host, host_exact, country, country_exact, status_class, burst_id, actor_ip, category, path, path_exact)
+    previous = _period_metrics(database, previous_start_text, previous_end_text, page, search, host, host_exact, country, country_exact, status_class, burst_id, actor_ip, actor_ip_exact, category, category_exact, path, path_exact)
+    current = _period_metrics(database, current_start, current_end, page, search, host, host_exact, country, country_exact, status_class, burst_id, actor_ip, actor_ip_exact, category, category_exact, path, path_exact)
     keys = current.keys()
     result = {}
     for key in keys:

@@ -104,6 +104,7 @@ def get_actors(
     city: str | None = Query(default=None, min_length=1),
     asn: str | None = Query(default=None, min_length=1),
     ip: str | None = Query(default=None, min_length=1),
+    ip_exact: bool = Query(default=False, description="Match the actor IP exactly"),
     search: str | None = Query(default=None, min_length=1, description="Search actor fields; qualify with field:value such as ip: or provider:"),
     global_search: str | None = Query(default=None, min_length=1, description="Search actor fields; qualify with field:value such as country: or asn:"),
     sort_by: Literal["ip", "first_time", "last_time", "provider", "asn", "city", "country", "request_count"] = Query(default="first_time"),
@@ -132,8 +133,8 @@ def get_actors(
         ("a.ip", ip),
     ):
         if value is not None:
-            conditions.append(f"{column} LIKE ?")
-            parameters.append(f"%{value}%")
+            conditions.append(f"{column} = ?" if column == "a.ip" and ip_exact else f"{column} LIKE ?")
+            parameters.append(value if column == "a.ip" and ip_exact else f"%{value}%")
     if search is not None:
         _append_actor_search(search, conditions, parameters, include_country=False)
     if global_search is not None:

@@ -88,7 +88,7 @@ def get_bursts(
     asn: str | None = Query(default=None, min_length=1),
     city: str | None = Query(default=None, min_length=1),
     search: str | None = Query(default=None, min_length=1, description="Search burst fields; qualify with field:value such as host: or ip:"),
-    sort_by: Literal["start_time", "actor_ip", "host", "country", "duration", "requests", "avg_count"] = Query(default="start_time"),
+    sort_by: Literal["burst_id", "start_time", "actor_ip", "host", "country", "duration", "requests", "avg_count"] = Query(default="start_time"),
     sort_order: Literal["asc", "desc"] = Query(default="asc"),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
@@ -121,8 +121,8 @@ def get_bursts(
         if not term:
             conditions.append("0")
         elif field is None:
-            conditions.append("(a.ip LIKE ? OR COALESCE(a.provider, '') LIKE ? OR COALESCE(a.asn, '') LIKE ? OR COALESCE(a.city, '') LIKE ?)")
-            parameters.extend([f"%{term}%"] * 4)
+            conditions.append("(CAST(b.burst_id AS TEXT) LIKE ? OR a.ip LIKE ? OR COALESCE(a.provider, '') LIKE ? OR COALESCE(a.asn, '') LIKE ? OR COALESCE(a.city, '') LIKE ?)")
+            parameters.extend([f"%{term}%"] * 5)
         elif field in {"ip", "host", "country", "city", "provider", "asn"}:
             column = {"ip": "a.ip", "host": "h.name", "country": "a.country", "city": "a.city", "provider": "a.provider", "asn": "a.asn"}[field]
             conditions.append(f"COALESCE({column}, '') LIKE ?")
@@ -181,6 +181,7 @@ def get_bursts(
     )
 
     sort_expressions = {
+        "burst_id": "b.burst_id",
         "start_time": "b.start_time",
         "actor_ip": "a.ip",
         "host": "h.name",

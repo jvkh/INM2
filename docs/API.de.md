@@ -78,7 +78,9 @@ Bei `search` kann das Feld mit `feld:begriff` eingeschränkt werden, zum Beispie
 
 `GET /api/v1/request_paths` liefert die häufigsten unterschiedlichen Request-Pfade, die einen Suchbegriff enthalten. Erforderlich sind `from`, `to` und `search`; `limit` ist optional (Standard 100, maximal 500). Die globale Suche nutzt diese Treffer und öffnet den Requests-Bildschirm mit einem exakten Pfadfilter.
 
-Zusätzlich steuern `sort_by` und `sort_order` die Sortierung. Unterstützte Spalten: `start_utc`, `request_method`, `request_path`, `downstream_status`, `actor_ip`, `host`, `duration` und `downstream_content_size`; Richtung: `asc` oder `desc`.
+Zusätzlich steuern `sort_by` und `sort_order` die Sortierung. Unterstützte Spalten: `start_utc`, `request_method`, `request_path`, `user_agent`, `downstream_status`, `actor_ip`, `host`, `duration` und `downstream_content_size`; Richtung: `asc` oder `desc`.
+
+Die Filter `actor` und `host` suchen standardmäßig nach Teilzeichenfolgen. Mit `actor_exact=true`, `host_exact=true` beziehungsweise `category_exact=true` wird exakt verglichen.
 
 ```sh
 curl -G 'http://localhost:8000/api/v1/requests' \
@@ -99,7 +101,7 @@ curl 'http://localhost:8000/api/v1/requests/123'
 
 ### Akteure
 
-`GET /api/v1/actors` liefert Akteure mit mindestens einem Request im gewählten Zeitraum. Mit `new_only=true` werden nur Akteure aufgenommen, deren `first_time` im Zeitraum liegt. Neben `from` und `to` sind `provider`, `country`, `city`, `asn` und `ip` als Teilzeichenfolgenfilter möglich; `country_exact=true` schaltet den Länderfilter auf exakte Übereinstimmung um. `search` sucht zugleich in IP, Stadt, Provider und ASN. `global_search` durchsucht IP, Land, Stadt und ASN. Dazu kommen `limit` und `offset`. `sort_by` unterstützt `ip`, `first_time`, `last_time`, `provider`, `asn`, `city`, `country` und `request_count`; `sort_order` ist `asc` oder `desc`.
+`GET /api/v1/actors` liefert Akteure mit mindestens einem Request im gewählten Zeitraum. Mit `new_only=true` werden nur Akteure aufgenommen, deren `first_time` im Zeitraum liegt. Neben `from` und `to` sind `provider`, `country`, `city`, `asn` und `ip` als Teilzeichenfolgenfilter möglich; `country_exact=true` und `ip_exact=true` schalten den jeweiligen Filter auf exakte Übereinstimmung um. `search` sucht zugleich in IP, Stadt, Provider und ASN. `global_search` durchsucht IP, Land, Stadt und ASN. Dazu kommen `limit` und `offset`. `sort_by` unterstützt `ip`, `first_time`, `last_time`, `provider`, `asn`, `city`, `country` und `request_count`; `sort_order` ist `asc` oder `desc`.
 
 `GET /api/v1/countries` liefert die Länder mit Requests im gewählten Zeitraum und befüllt die Länder-Auswahllisten.
 
@@ -115,7 +117,7 @@ curl -G 'http://localhost:8000/api/v1/actors' \
 
 ### Bursts
 
-`GET /api/v1/bursts` fasst Bursts zusammen, deren Startzeit im Zeitraum liegt. Filter: `actor` (IP-Teilzeichenfolge), `actor_id` (exakt), `host`, `country`, `provider`, `asn` und `city` (jeweils Teilzeichenfolge), `search` (Teilzeichenfolge in IP, Provider, ASN oder Stadt), `limit` und `offset`. Mit `host_exact=true` beziehungsweise `country_exact=true` werden Host- und Länderfilter exakt ausgewertet. Mit `sort_by` (`start_time`, `actor_ip`, `host`, `country`, `duration`, `requests` oder `avg_count`) und `sort_order` (`asc` oder `desc`) lässt sich die Sortierung festlegen. Die Antwort enthält `summary` sowie die paginierte Liste `items`. Die Zusammenfassung enthält Gesamtzahlen für Bursts, Akteure und Requests, Methodenzählungen sowie Durchschnitts-, Median- und Höchstwerte für Requests, Burst-Dauer und Bursts je Akteur.
+`GET /api/v1/bursts` fasst Bursts zusammen, deren Startzeit im Zeitraum liegt. Filter: `actor` (IP-Teilzeichenfolge), `actor_id` (exakt), `host`, `country`, `provider`, `asn` und `city` (jeweils Teilzeichenfolge), `search` (Teilzeichenfolge in Burst-ID, IP, Provider, ASN oder Stadt), `limit` und `offset`. Mit `host_exact=true` beziehungsweise `country_exact=true` werden Host- und Länderfilter exakt ausgewertet. Mit `sort_by` (`burst_id`, `start_time`, `actor_ip`, `host`, `country`, `duration`, `requests` oder `avg_count`) und `sort_order` (`asc` oder `desc`) lässt sich die Sortierung festlegen. Die Antwort enthält `summary` sowie die paginierte Liste `items`. Die Zusammenfassung enthält Gesamtzahlen für Bursts, Akteure und Requests, Methodenzählungen sowie Durchschnitts-, Median- und Höchstwerte für Requests, Burst-Dauer und Bursts je Akteur.
 
 ```sh
 curl -G 'http://localhost:8000/api/v1/bursts' \
