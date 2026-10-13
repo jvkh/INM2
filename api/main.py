@@ -18,6 +18,8 @@ from api.hosts import router as hosts_router
 from api.params import router as params_router
 from api.operations import router as operations_router
 from api.notifications import router as notifications_router
+from api.metric_trends import router as metric_trends_router
+from api.request_paths import router as request_paths_router
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,8 @@ app.include_router(hosts_router, prefix="/api/v1")
 app.include_router(params_router, prefix="/api/v1")
 app.include_router(operations_router, prefix="/api/v1")
 app.include_router(notifications_router, prefix="/api/v1")
+app.include_router(metric_trends_router, prefix="/api/v1")
+app.include_router(request_paths_router, prefix="/api/v1")
 app.include_router(status_router, prefix="/api/v1")
 app.include_router(request_counts_router, prefix="/api/v1")
 register_error_handlers(app)

@@ -6,6 +6,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 
 from api.dependencies import get_database
+from common.search import parse_search
 
 router = APIRouter()
 
@@ -64,7 +65,9 @@ def get_requests(
     provider: str | None = Query(default=None, min_length=1),
     asn: str | None = Query(default=None, min_length=1),
     category: str | None = Query(default=None, min_length=1, description="Category-name substring"),
-    search: str | None = Query(default=None, min_length=1, description="Search IP, country, city, provider, ASN, or request path"),
+    path: str | None = Query(default=None, min_length=1, description="Request-path substring"),
+    path_exact: bool = Query(default=False, description="Match the request path exactly"),
+    search: str | None = Query(default=None, min_length=1, description="Search across request fields; qualify with field:value such as host:example.org or pfad:/login"),
     status_class: Literal["2xx", "3xx", "4xx", "5xx"] | None = Query(default=None),
     burst_id: int | None = Query(default=None, ge=1, description="Return requests associated with this burst"),
     sort_by: Literal["start_utc", "request_method", "request_path", "downstream_status", "actor_ip", "host", "duration", "downstream_content_size"] = Query(default="start_utc"),
@@ -97,6 +100,9 @@ def get_requests(
             "EXISTS (SELECT 1 FROM request_category AS rc JOIN category AS c ON c.category_id = rc.category_id WHERE rc.request_id = r.request_id AND c.category_name LIKE ?)"
         )
         parameters.append(f"%{category}%")
+    if path is not None:
+        conditions.append("r.request_path = ?" if path_exact else "r.request_path LIKE ?")
+        parameters.append(path if path_exact else f"%{path}%")
     for column, value in (
         ("h.name", host),
         ("a.ip", actor),
@@ -115,8 +121,24 @@ def get_requests(
                 conditions.append(f"{column} LIKE ?")
                 parameters.append(f"%{value}%")
     if search is not None:
-        conditions.append("(a.ip LIKE ? OR a.country LIKE ? OR a.city LIKE ? OR a.provider LIKE ? OR a.asn LIKE ? OR r.request_path LIKE ?)")
-        parameters.extend([f"%{search}%"] * 6)
+        field, term = parse_search(search)
+        if not term:
+            conditions.append("0")
+        elif field is None:
+            conditions.append("(a.ip LIKE ? OR h.name LIKE ? OR a.country LIKE ? OR a.city LIKE ? OR a.provider LIKE ? OR a.asn LIKE ? OR r.request_path LIKE ?)")
+            parameters.extend([f"%{term}%"] * 7)
+        elif field == "category":
+            conditions.append("EXISTS (SELECT 1 FROM request_category AS src JOIN category AS sc ON sc.category_id = src.category_id WHERE src.request_id = r.request_id AND sc.category_name LIKE ?)")
+            parameters.append(f"%{term}%")
+        elif field == "status":
+            conditions.append("CAST(r.downstream_status AS TEXT) LIKE ?")
+            parameters.append(f"%{term}%")
+        elif field in {"ip", "host", "country", "city", "provider", "asn", "path", "method", "scheme", "user_agent"}:
+            column = {"ip": "a.ip", "host": "h.name", "country": "a.country", "city": "a.city", "provider": "a.provider", "asn": "a.asn", "path": "r.request_path", "method": "r.request_method", "scheme": "r.request_scheme", "user_agent": "r.user_agent"}[field]
+            conditions.append(f"{column} LIKE ?")
+            parameters.append(f"%{term}%")
+        else:
+            conditions.append("0")
     if status_class is not None:
         status_start = int(status_class[0]) * 100
         conditions.append("r.downstream_status >= ? AND r.downstream_status < ?")

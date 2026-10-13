@@ -2,9 +2,9 @@
 
 [English version](CHANGELOG.en.md)
 
-INM2 verwendet [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`. Die maßgebliche Versionsnummer steht in [`VERSION`](VERSION). UI-Fußzeile und API-OpenAPI-Metadaten beziehen ihre Laufzeitversion von dort; `UI/package.json` muss bei einer Versionsänderung auf denselben Wert gesetzt werden.
+INM2 verwendet [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`. Die maßgebliche Versionsnummer steht in [`VERSION`](VERSION). UI-Fußzeile und API-OpenAPI-Metadaten beziehen ihre Laufzeitversion von dort; `ui/package.json` muss bei einer Versionsänderung auf denselben Wert gesetzt werden.
 
-Neue, noch nicht veröffentlichte Änderungen werden unter **Unveröffentlicht** festgehalten. Für ein Release: aktualisiere `VERSION` und `UI/package.json`, verschiebe die Einträge in einen Abschnitt `X.Y.Z — YYYY-MM-DD`, lege danach einen neuen Abschnitt **Unveröffentlicht** an und versehe den Release-Commit mit dem Git-Tag `vX.Y.Z`.
+Neue, noch nicht veröffentlichte Änderungen werden unter **Unveröffentlicht** festgehalten. Für ein Release: aktualisiere `VERSION` und `ui/package.json`, verschiebe die Einträge in einen Abschnitt `X.Y.Z — YYYY-MM-DD`, lege danach einen neuen Abschnitt **Unveröffentlicht** an und versehe den Release-Commit mit dem Git-Tag `vX.Y.Z`.
 
 Es sind bislang keine veröffentlichten Versions-Tags vorhanden. Daher werden keine früheren Releases aus Commit-Nachrichten abgeleitet. Die aktuelle Arbeitsversion ist `0.1.0`.
 

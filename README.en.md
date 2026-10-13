@@ -122,7 +122,7 @@ docker compose down
 
 ## Local UI development
 
-Node.js/npm are required for the UI. The Vite development server proxies `/api` to `http://localhost:8000`. Start the API first, for example with Compose, then run in `UI/`:
+Node.js/npm are required for the UI. The Vite development server proxies `/api` to `http://localhost:8000`. Start the API first, for example with Compose, then run in `ui/`:
 
 ```sh
 npm install

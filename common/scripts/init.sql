@@ -79,6 +79,11 @@ CREATE INDEX IF NOT EXISTS idx_request_actor_time ON request(actor_id, start_utc
 CREATE INDEX IF NOT EXISTS idx_request_host_time ON request(host_id, start_utc);
 CREATE INDEX IF NOT EXISTS idx_request_time ON request(start_utc);
 CREATE INDEX IF NOT EXISTS idx_request_status ON request(downstream_status);
+-- Burst reconstruction groups requests by actor and host inside a time range.
+CREATE INDEX IF NOT EXISTS idx_request_actor_host_time ON request(actor_id, host_id, start_utc);
+-- Maintenance removes actors by last activity; new-actor views filter by first activity.
+CREATE INDEX IF NOT EXISTS idx_actor_last_time ON actor(last_time);
+CREATE INDEX IF NOT EXISTS idx_actor_first_time ON actor(first_time);
 CREATE INDEX IF NOT EXISTS idx_burst_actor_host_start ON burst(actor_id, host_id, start_time);
 CREATE INDEX IF NOT EXISTS idx_burst_start_end ON burst(start_time, end_time);
 CREATE INDEX IF NOT EXISTS idx_request_category_category ON request_category(category_id, request_id);

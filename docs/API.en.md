@@ -34,6 +34,10 @@ Unrecognized or missing URL schemes are counted as `other_scheme_count` in HTTP/
 
 ## Endpoints
 
+### Metric trends
+
+`GET /api/v1/metric_trends` returns metrics for the selected range and the immediately preceding range of equal duration. `from` and `to` are required; `page` can be `dashboard`, `bursts`, `actors`, `hosts`, `categories`, or `requests`. List views accept their active filters so the trend reflects the same selection. Each entry in `metrics` contains current and previous values, percentage change, and direction (`up`, `down`, `steady`). Changes of up to 5% are steady. An empty comparison range returns `0%` and `steady`.
+
 ### Status
 
 `GET /api/v1/status` reports API/database health, stored collector status, and supported non-sensitive configuration values. It does not expose credentials or arbitrary process environment variables.
@@ -60,10 +64,15 @@ A healthy response includes `status: "ok"`, `database: "ok"`, `collector_status`
 | `actor_id` | Exact actor ID |
 | `country`, `city`, `provider`, `asn` | Actor metadata substring |
 | `category` | Request category substring |
-| `search` | Substring search in IP, country, city, provider, ASN, and request path |
+| `path` | Request path substring; set `path_exact=true` for an exact match |
+| `search` | Substring search in IP, host, country, city, provider, ASN, and request path |
 | `status_class` | HTTP status class: `2xx`, `3xx`, `4xx`, or `5xx` |
 | `burst_id` | Requests assigned to the burst |
 | `limit`, `offset` | Pagination |
+
+The `search` parameter can be limited to a field with `field:term`, for example `host:inm.jvkh.de`, `path:/login`, or `pfad:/login`. English field names work regardless of the interface language; German aliases such as `pfad`, `land`, `stadt`, `anbieter`, and `kategorie` are also recognized. The Requests page additionally supports `ip`, `country`, `city`, `provider`, `asn`, `category`, `method`, `status`, `scheme`, and `ua`. Unknown field names are treated as ordinary free text. New interface languages can add their field names as search aliases.
+
+`GET /api/v1/request_paths` returns the most frequent distinct request paths containing a search term. `from`, `to`, and `search` are required; `limit` is optional (default 100, maximum 500). The global search uses these results and opens the Requests page with an exact path filter.
 
 `sort_by` and `sort_order` control ordering. Supported columns are `start_utc`, `request_method`, `request_path`, `downstream_status`, `actor_ip`, `host`, `duration`, and `downstream_content_size`; direction is `asc` or `desc`.
 
@@ -110,7 +119,7 @@ curl -G 'http://localhost:8000/api/v1/bursts' \
 
 ### Request counts, hosts, and categories
 
-`GET /api/v1/request_counts` returns counts in equally sized time buckets. Required parameters: `from`, `to`, and `bars` (1–500). Optional filters: `host`, `actor_ip`, `actor_id`, `category`, `burst_id`, `search`, and `status_class`. The response includes `items` with `from`, `to`, `read_count`, `write_count`, `other_count`, and `total_count` for each bucket; empty buckets have zero counts.
+`GET /api/v1/request_counts` returns counts in equally sized time buckets. Required parameters: `from`, `to`, and `bars` (1–500). Optional filters: `host`, `actor_ip`, `actor_id`, `category`, `path`, `path_exact`, `burst_id`, `search`, and `status_class`. The response includes `items` with `from`, `to`, `read_count`, `write_count`, `other_count`, and `total_count` for each bucket; empty buckets have zero counts.
 
 `GET /api/v1/categories` requires `from` and `to`, with an optional `category` substring filter. Results are grouped by category and include read/write/other method counts and HTTP/HTTPS/other-scheme counts. `sort_by` supports `category_name`, `total_count`, `read_count`, `write_count`, `other_count`, `http_count`, `https_count`, `other_scheme_count`, `traffic_share`, and `https_share`; `sort_order` is `asc` or `desc`.
 
@@ -197,6 +206,12 @@ The collector supports these variables. The values below are code defaults from 
 | `GEOLITE_CITY_DB` | `/geoip/GeoLite2-City.mmdb` | Container path to the optional GeoLite City database |
 | `GEOLITE_ASN_DB` | `/geoip/GeoLite2-ASN.mmdb` | Container path to the optional GeoLite ASN database |
 | `IGNORE_REQUEST_ROUTES` | empty | Semicolon-separated `host/path-prefix` routes to skip |
+
+A host/path prefix is skipped only for the configured host. The path must match exactly or start at a `/` segment boundary; `assets` skips `/assets/app.js` but not `/assets-old/app.js`. Example for `.env`:
+
+```dotenv
+IGNORE_REQUEST_ROUTES=inm2.example.de/api;inm2.example.de/assets
+```
 
 In Compose, collector variables come from `.env`. `./logs` and `./databases` are mounted in the collector; `./databases/geoip` is mounted read-only. The API shares the database directory with the collector. If a GeoLite file is absent, importing continues and the corresponding fields remain empty.
 

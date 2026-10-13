@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from api.dependencies import get_database
+from common.search import parse_search
 
 
 router = APIRouter()
@@ -36,8 +37,10 @@ def get_request_counts(
     actor_ip: str | None = Query(default=None, min_length=1, description="Actor IP substring"),
     actor_id: int | None = Query(default=None, ge=1),
     category: str | None = Query(default=None, min_length=1),
+    path: str | None = Query(default=None, min_length=1, description="Request-path substring"),
+    path_exact: bool = Query(default=False, description="Match the request path exactly"),
     burst_id: int | None = Query(default=None, ge=1),
-    search: str | None = Query(default=None, min_length=1, description="Search IP, country, city, provider, ASN, or request path"),
+    search: str | None = Query(default=None, min_length=1, description="Search across request fields; qualify with field:value such as host:example.org or pfad:/login"),
     status_class: Literal["2xx", "3xx", "4xx", "5xx"] | None = Query(default=None),
 ) -> dict[str, Any]:
     """Return request counts in equal-width or fixed-duration time buckets."""
@@ -72,6 +75,9 @@ def get_request_counts(
                )"""
         )
         filter_parameters.append(f"%{category}%")
+    if path is not None:
+        filter_conditions.append("r.request_path = ?" if path_exact else "r.request_path LIKE ?")
+        filter_parameters.append(path if path_exact else f"%{path}%")
     if burst_id is not None:
         filter_conditions.append(
             """EXISTS (
@@ -85,10 +91,37 @@ def get_request_counts(
         )
         filter_parameters.append(burst_id)
     if search is not None:
-        filter_conditions.append(
-            "EXISTS (SELECT 1 FROM actor AS sa WHERE sa.actor_id = r.actor_id AND (sa.ip LIKE ? OR sa.country LIKE ? OR sa.city LIKE ? OR sa.provider LIKE ? OR sa.asn LIKE ?)) OR r.request_path LIKE ?"
-        )
-        filter_parameters.extend([f"%{search}%"] * 6)
+        field, term = parse_search(search)
+        if not term:
+            filter_conditions.append("0")
+        elif field is None:
+            filter_conditions.append(
+                "EXISTS (SELECT 1 FROM actor AS sa WHERE sa.actor_id = r.actor_id AND (sa.ip LIKE ? OR sa.country LIKE ? OR sa.city LIKE ? OR sa.provider LIKE ? OR sa.asn LIKE ?)) OR r.request_path LIKE ? OR EXISTS (SELECT 1 FROM host AS sh WHERE sh.host_id = r.host_id AND sh.name LIKE ?)"
+            )
+            filter_parameters.extend([f"%{term}%"] * 7)
+        elif field == "category":
+            filter_conditions.append("EXISTS (SELECT 1 FROM request_category AS src JOIN category AS sc ON sc.category_id = src.category_id WHERE src.request_id = r.request_id AND sc.category_name LIKE ?)")
+            filter_parameters.append(f"%{term}%")
+        elif field == "status":
+            filter_conditions.append("CAST(r.downstream_status AS TEXT) LIKE ?")
+            filter_parameters.append(f"%{term}%")
+        elif field in {"ip", "host", "country", "city", "provider", "asn", "path", "method", "scheme", "user_agent"}:
+            if field in {"ip", "country", "city", "provider", "asn"}:
+                actor_column = {"ip": "ip", "country": "country", "city": "city", "provider": "provider", "asn": "asn"}[field]
+                filter_conditions.append(f"EXISTS (SELECT 1 FROM actor AS sa WHERE sa.actor_id = r.actor_id AND sa.{actor_column} LIKE ?)")
+                filter_parameters.append(f"%{term}%")
+            elif field == "host":
+                filter_conditions.append("EXISTS (SELECT 1 FROM host AS sh WHERE sh.host_id = r.host_id AND sh.name LIKE ?)")
+                filter_parameters.append(f"%{term}%")
+            else:
+                column = {"path": "request_path", "method": "request_method", "scheme": "request_scheme", "user_agent": "user_agent"}.get(field)
+                if column is None:
+                    filter_conditions.append("0")
+                else:
+                    filter_conditions.append(f"{column} LIKE ?")
+                    filter_parameters.append(f"%{term}%")
+        else:
+            filter_conditions.append("0")
     if status_class is not None:
         status_start = int(status_class[0]) * 100
         filter_conditions.append("r.downstream_status >= ? AND r.downstream_status < ?")

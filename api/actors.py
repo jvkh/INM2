@@ -6,6 +6,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 
 from api.dependencies import get_database
+from common.search import parse_search
 
 router = APIRouter()
 
@@ -15,6 +16,34 @@ def _utc_timestamp(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _append_actor_search(value: str, conditions: list[str], parameters: list[Any], *, include_country: bool) -> None:
+    field, term = parse_search(value)
+    if not term:
+        conditions.append("0")
+    elif field is None:
+        columns = ["a.ip", "COALESCE(a.city, '')", "COALESCE(a.provider, '')", "COALESCE(a.asn, '')"]
+        if include_country:
+            columns.append("COALESCE(a.country, '')")
+        conditions.append("(" + " OR ".join(f"{column} LIKE ?" for column in columns) + ")")
+        parameters.extend([f"%{term}%"] * len(columns))
+    elif field in {"ip", "country", "city", "provider", "asn"}:
+        column = {"ip": "a.ip", "country": "a.country", "city": "a.city", "provider": "a.provider", "asn": "a.asn"}[field]
+        conditions.append(f"COALESCE({column}, '') LIKE ?")
+        parameters.append(f"%{term}%")
+    elif field in {"host", "path", "category", "method", "status", "scheme", "user_agent"}:
+        if field == "host":
+            match = "EXISTS (SELECT 1 FROM host AS sh WHERE sh.host_id = sr.host_id AND sh.name LIKE ?)"
+        elif field == "category":
+            match = "EXISTS (SELECT 1 FROM request_category AS src JOIN category AS sc ON sc.category_id = src.category_id WHERE src.request_id = sr.request_id AND sc.category_name LIKE ?)"
+        else:
+            column = {"path": "request_path", "method": "request_method", "status": "downstream_status", "scheme": "request_scheme", "user_agent": "user_agent"}[field]
+            match = f"COALESCE(sr.{column}, '') LIKE ?"
+        conditions.append(f"EXISTS (SELECT 1 FROM request AS sr WHERE sr.actor_id = a.actor_id AND {match})")
+        parameters.append(f"%{term}%")
+    else:
+        conditions.append("0")
 
 
 @router.get("/countries")
@@ -75,8 +104,8 @@ def get_actors(
     city: str | None = Query(default=None, min_length=1),
     asn: str | None = Query(default=None, min_length=1),
     ip: str | None = Query(default=None, min_length=1),
-    search: str | None = Query(default=None, min_length=1, description="Substring in actor IP or city"),
-    global_search: str | None = Query(default=None, min_length=1, description="Search actor IP, country, city, or ASN"),
+    search: str | None = Query(default=None, min_length=1, description="Search actor fields; qualify with field:value such as ip: or provider:"),
+    global_search: str | None = Query(default=None, min_length=1, description="Search actor fields; qualify with field:value such as country: or asn:"),
     sort_by: Literal["ip", "first_time", "last_time", "provider", "asn", "city", "country", "request_count"] = Query(default="first_time"),
     sort_order: Literal["asc", "desc"] = Query(default="asc"),
     limit: int = Query(default=100, ge=1, le=1000),
@@ -106,11 +135,9 @@ def get_actors(
             conditions.append(f"{column} LIKE ?")
             parameters.append(f"%{value}%")
     if search is not None:
-        conditions.append("(a.ip LIKE ? OR COALESCE(a.city, '') LIKE ? OR COALESCE(a.provider, '') LIKE ? OR COALESCE(a.asn, '') LIKE ?)")
-        parameters.extend([f"%{search}%"] * 4)
+        _append_actor_search(search, conditions, parameters, include_country=False)
     if global_search is not None:
-        conditions.append("(a.ip LIKE ? OR COALESCE(a.country, '') LIKE ? OR COALESCE(a.city, '') LIKE ? OR COALESCE(a.asn, '') LIKE ?)")
-        parameters.extend([f"%{global_search}%"] * 4)
+        _append_actor_search(global_search, conditions, parameters, include_country=True)
     where_clause = " AND ".join(conditions)
     sort_expressions = {"ip": "a.ip", "first_time": "a.first_time", "last_time": "a.last_time", "provider": "a.provider", "asn": "a.asn", "city": "a.city", "country": "a.country", "request_count": "request_count"}
     order_by = f"{sort_expressions[sort_by]} {sort_order.upper()}, a.actor_id"

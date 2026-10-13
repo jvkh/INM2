@@ -122,7 +122,7 @@ docker compose down
 
 ## Lokale UI-Entwicklung
 
-Für die Oberfläche werden Node.js/npm benötigt. Der Vite-Entwicklungsserver leitet `/api` an `http://localhost:8000` weiter. Starte zunächst die API, zum Beispiel über Compose, und führe dann in `UI/` aus:
+Für die Oberfläche werden Node.js/npm benötigt. Der Vite-Entwicklungsserver leitet `/api` an `http://localhost:8000` weiter. Starte zunächst die API, zum Beispiel über Compose, und führe dann in `ui/` aus:
 
 ```sh
 npm install

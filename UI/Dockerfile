@@ -1,13 +1,13 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY VERSION ./VERSION
-COPY UI/package*.json ./UI/
-WORKDIR /app/UI
+COPY ui/package*.json ./ui/
+WORKDIR /app/ui
 RUN npm install
-COPY UI/ ./
+COPY ui/ ./
 RUN npm run build
 
 FROM nginx:1.27-alpine
-COPY UI/nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/UI/dist /usr/share/nginx/html
+COPY ui/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/ui/dist /usr/share/nginx/html
 EXPOSE 80

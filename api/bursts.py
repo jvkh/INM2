@@ -6,6 +6,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 
 from api.dependencies import get_database
+from common.search import parse_search
 
 
 router = APIRouter()
@@ -86,7 +87,7 @@ def get_bursts(
     provider: str | None = Query(default=None, min_length=1),
     asn: str | None = Query(default=None, min_length=1),
     city: str | None = Query(default=None, min_length=1),
-    search: str | None = Query(default=None, min_length=1, description="Substring in actor IP, provider, ASN, or city"),
+    search: str | None = Query(default=None, min_length=1, description="Search burst fields; qualify with field:value such as host: or ip:"),
     sort_by: Literal["start_time", "actor_ip", "host", "country", "duration", "requests", "avg_count"] = Query(default="start_time"),
     sort_order: Literal["asc", "desc"] = Query(default="asc"),
     limit: int = Query(default=100, ge=1, le=1000),
@@ -116,8 +117,18 @@ def get_bursts(
             conditions.append(f"{column} LIKE ?")
             parameters.append(f"%{value}%")
     if search is not None:
-        conditions.append("(a.ip LIKE ? OR COALESCE(a.provider, '') LIKE ? OR COALESCE(a.asn, '') LIKE ? OR COALESCE(a.city, '') LIKE ?)")
-        parameters.extend([f"%{search}%"] * 4)
+        field, term = parse_search(search)
+        if not term:
+            conditions.append("0")
+        elif field is None:
+            conditions.append("(a.ip LIKE ? OR COALESCE(a.provider, '') LIKE ? OR COALESCE(a.asn, '') LIKE ? OR COALESCE(a.city, '') LIKE ?)")
+            parameters.extend([f"%{term}%"] * 4)
+        elif field in {"ip", "host", "country", "city", "provider", "asn"}:
+            column = {"ip": "a.ip", "host": "h.name", "country": "a.country", "city": "a.city", "provider": "a.provider", "asn": "a.asn"}[field]
+            conditions.append(f"COALESCE({column}, '') LIKE ?")
+            parameters.append(f"%{term}%")
+        else:
+            conditions.append("0")
     if actor_id is not None:
         conditions.append("b.actor_id = ?")
         parameters.append(actor_id)

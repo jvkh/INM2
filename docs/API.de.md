@@ -38,6 +38,10 @@ Bei HTTP-/HTTPS-Zählungen werden nicht erkannte oder fehlende Schemes separat a
 
 ## Endpunkte
 
+### Kacheltrends
+
+`GET /api/v1/metric_trends` liefert Kennzahlen für den ausgewählten Zeitraum und den unmittelbar davorliegenden Zeitraum gleicher Länge. Erforderlich sind `from` und `to`; `page` kann `dashboard`, `bursts`, `actors`, `hosts`, `categories` oder `requests` sein. Die Listenansichten akzeptieren ihre jeweiligen aktiven Filter, damit die Tendenz dieselbe Auswahl berücksichtigt. `metrics` enthält je Kennzahl aktuelle und vorherige Werte, Prozentänderung und Richtung (`up`, `down`, `steady`). Änderungen bis einschließlich 5 % gelten als gleichbleibend. Bei einem leeren Vergleichszeitraum wird `0 %` und `steady` zurückgegeben.
+
 ### Status
 
 `GET /api/v1/status` meldet den API-/Datenbankstatus, den gespeicherten Collector-Status und die unterstützten, unkritischen Konfigurationswerte. Die Umgebungsvariablen werden mit ihren wirksamen Werten zurückgegeben; Zugangsdaten oder beliebige Prozessvariablen sind nicht Teil dieser Ausgabe.
@@ -64,10 +68,15 @@ Bei erfolgreichem Zugriff enthält die Antwort `status: "ok"`, `database: "ok"`,
 | `actor_id` | Akteur-ID, exakt |
 | `country`, `city`, `provider`, `asn` | Akteur-Metadaten, Teilzeichenfolge |
 | `category` | Request-Kategoriename, Teilzeichenfolge |
-| `search` | Teilzeichenfolgensuche in IP, Land, Stadt, Provider, ASN und Request-Pfad |
+| `path` | Request-Pfad, Teilzeichenfolge; mit `path_exact=true` exakt |
+| `search` | Teilzeichenfolgensuche in IP, Host, Land, Stadt, Provider, ASN und Request-Pfad |
 | `status_class` | HTTP-Statusklasse: `2xx`, `3xx`, `4xx` oder `5xx` |
 | `burst_id` | Requests, die dem Burst zugeordnet sind |
 | `limit`, `offset` | Seitennavigation |
+
+Bei `search` kann das Feld mit `feld:begriff` eingeschränkt werden, zum Beispiel `host:inm.jvkh.de`, `path:/login` oder `pfad:/login`. Die englischen Feldnamen funktionieren unabhängig von der Sprache der Oberfläche; zusätzlich werden deutsche Namen wie `pfad`, `land`, `stadt`, `anbieter` und `kategorie` erkannt. Auf der Requests-Seite sind außerdem `ip`, `country`, `city`, `provider`, `asn`, `category`, `method`, `status`, `scheme` und `ua` verfügbar. Unbekannte Feldnamen werden als normale Freitextsuche behandelt. Weitere Oberflächensprachen können ihre Bezeichnungen als Suchalias ergänzen.
+
+`GET /api/v1/request_paths` liefert die häufigsten unterschiedlichen Request-Pfade, die einen Suchbegriff enthalten. Erforderlich sind `from`, `to` und `search`; `limit` ist optional (Standard 100, maximal 500). Die globale Suche nutzt diese Treffer und öffnet den Requests-Bildschirm mit einem exakten Pfadfilter.
 
 Zusätzlich steuern `sort_by` und `sort_order` die Sortierung. Unterstützte Spalten: `start_utc`, `request_method`, `request_path`, `downstream_status`, `actor_ip`, `host`, `duration` und `downstream_content_size`; Richtung: `asc` oder `desc`.
 
@@ -126,7 +135,7 @@ curl 'http://localhost:8000/api/v1/burst_requests/42'
 
 ### Zeitreihe der Requestzahlen
 
-`GET /api/v1/request_counts` liefert gleich breite Zeitintervalle für Diagramme. Pflichtparameter: `from`, `to` und `bars` (1 bis 500). Optionale Filter: `host`, `actor_ip`, `actor_id`, `category`, `burst_id`, `search` und `status_class`.
+`GET /api/v1/request_counts` liefert gleich breite Zeitintervalle für Diagramme. Pflichtparameter: `from`, `to` und `bars` (1 bis 500). Optionale Filter: `host`, `actor_ip`, `actor_id`, `category`, `path`, `path_exact`, `burst_id`, `search` und `status_class`.
 
 ```sh
 curl -G 'http://localhost:8000/api/v1/request_counts' \
@@ -245,6 +254,13 @@ Die folgenden Variablen werden vom Collector unterstützt und erscheinen mit ihr
 | `BURST_WINDOW_SECONDS` | `60` | Zeitfenster für die Burst-Erkennung |
 | `GEOLITE_CITY_DB` | `/geoip/GeoLite2-City.mmdb` | Pfad zur GeoLite City-Datenbank im Container |
 | `GEOLITE_ASN_DB` | `/geoip/GeoLite2-ASN.mmdb` | Pfad zur GeoLite ASN-Datenbank im Container |
+| `IGNORE_REQUEST_ROUTES` | leer | Semikolongetrennte Host-/Pfadpräfixe, die beim Import ausgeschlossen werden |
+
+Ein Host-/Pfadpräfix wird nur für den angegebenen Host ausgeschlossen. Der Pfad muss exakt passen oder mit einem `/`-Segment beginnen; `assets` schließt also `/assets/app.js`, aber nicht `/assets-old/app.js` aus. Beispiel für `.env`:
+
+```dotenv
+IGNORE_REQUEST_ROUTES=inm2.example.de/api;inm2.example.de/assets
+```
 
 Im Compose-Setup kommen die Collector-Variablen aus `.env`. Die Verzeichnisse `./logs` und `./databases` werden in den Collector-Container eingebunden; die GeoIP-Dateien unter `./databases/geoip` werden schreibgeschützt eingebunden. Die API teilt sich das Datenbankverzeichnis mit dem Collector.
 

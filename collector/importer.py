@@ -28,15 +28,32 @@ class Importer:
             r"(?:^|/)(?:\.env(?:\.[^/]*)?|\.git(?:/|$)|\.svn(?:/|$)|"
             r"\.htaccess|\.htpasswd|\.ds_store|id_rsa|authorized_keys|"
             r"wp-config\.php|config(?:uration)?\.(?:php|ya?ml|json)|"
-            r"(?:backup|dump|database|db)\.(?:zip|sql|gz|tar)(?:$|/))",
+            r"(?:backup|dump|database|db)\.(?:zip|sql|gz|tar|7z|rar)(?:$|/)|"
+            r"[^/]+\.(?:bak|backup|old|orig|save|swp)(?:$|/))",
             re.IGNORECASE,
         ),
         "Webshell": re.compile(
-            r"(?:^|/)(?:c99|r57|wso|alfa|b374k|shell|cmd|mini)\w*\.php(?:$|/)",
+            r"(?:^|/)(?:php|c99|r57|wso|alfa|b374k|shell|cmd|mini|"
+            r"uploader?|filemanager|filesman|marij|indoxploit|xleet|symlink)"
+            r"\w*\.(?:php\d*|phtml|phar)(?:$|/)",
+            re.IGNORECASE,
+        ),
+        "Datenbank-Dienste": re.compile(
+            r"(?:^|/)(?:phpmyadmin|pma|adminer(?:\.php)?|phpminiadmin|"
+            r"pgadmin(?:4)?|mongo-express|redis-commander)(?:/|$)",
+            re.IGNORECASE,
+        ),
+        "Monitoring-Dienste": re.compile(
+            r"(?:^|/)(?:grafana|prometheus|alertmanager|metrics|actuator/health|"
+            r"healthz?|readyz?|livez?)(?:/|$)",
+            re.IGNORECASE,
+        ),
+        "Container-Dienste": re.compile(
+            r"(?:^|/)(?:docker|containers?|kubernetes|k8s|portainer|rancher)(?:/|$)",
             re.IGNORECASE,
         ),
         "CMS-Aufrufe": re.compile(
-            r"(?:^|/)(?:wp-(?:admin|login(?:\.php)?|content|includes)|wordpress|xmlrpc\.php|"
+            r"(?:^|/)(?:wp-(?:admin|login(?:\.php)?|content|includes|json|cron\.php)|wordpress|xmlrpc\.php|"
             r"joomla|administrator/index\.php|drupal|sites/default|typo3|magento|"
             r"prestashop)(?:/|$)",
             re.IGNORECASE,
@@ -237,12 +254,14 @@ class Importer:
                 raise ValueError(
                     "IGNORE_REQUEST_ROUTES entries must use 'hostname/path-prefix' format"
                 )
-            parsed.append((host.lower().rstrip("."), "/" + path.strip("/")))
+            normalized_host = urlsplit(f"//{host.strip().lower()}").hostname or host
+            parsed.append((normalized_host.lower().rstrip("."), "/" + path.strip("/")))
         return parsed
 
     def _is_ignored_request(self, record: dict[str, Any]) -> bool:
-        host = str(record.get("RequestHost") or "").lower().rstrip(".")
-        path = urlsplit(str(record.get("RequestPath") or "")).path or "/"
+        raw_host = str(record.get("RequestHost") or "").strip().lower()
+        host = (urlsplit(f"//{raw_host}").hostname or raw_host).rstrip(".")
+        path = unquote(urlsplit(str(record.get("RequestPath") or "")).path) or "/"
         for ignored_host, ignored_prefix in self.ignored_routes:
             if host != ignored_host:
                 continue
@@ -449,7 +468,9 @@ class Importer:
 
     @classmethod
     def _categories_for_record(cls, record: dict[str, Any]) -> list[str]:
-        path = unquote(str(record.get("RequestPath") or "")).lower()
+        # Match only the URL path; query strings should not hide a known target
+        # (for example, ``/php.php?cmd=id``).
+        path = unquote(urlsplit(str(record.get("RequestPath") or "")).path).lower()
         user_agent = str(record.get("request_User-Agent") or "")
         categories = [
             name for name, pattern in cls.CATEGORY_PATTERNS.items()
@@ -464,7 +485,7 @@ class Importer:
 
         # Keep every request visible in category summaries, including requests
         # that did not match a known probe pattern.
-        return categories or ["andere"]
+        return categories or ["Andere Dienste"]
 
     @staticmethod
     def _optional_int(value: Any) -> int | None:

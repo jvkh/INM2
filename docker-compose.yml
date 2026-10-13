@@ -2,7 +2,7 @@ services:
   ui:
     build:
       context: .
-      dockerfile: UI/Dockerfile
+      dockerfile: ui/Dockerfile
     restart: unless-stopped
     depends_on:
       - api
