@@ -17,14 +17,14 @@ Compose builds the images from the Dockerfiles in the repository. The UI and API
 ## Data flow
 
 1. The collector reads files configured in `LOG_FILES`. The supported reader type is `traefik`, which expects one JSON object per line.
-2. Complete, processable lines are converted into requests, actors, hosts, categories, and bursts. Only globally routable client IP addresses are imported; private, loopback, link-local, reserved, and invalid addresses are skipped.
+2. Complete, processable lines are converted into requests, actors, hosts, and categories. Burst detection processes new requests incrementally and extends the previous import's last burst when the gap allows it. It rebuilds the full history only once when migrating existing data, or for an actor/host pair that receives a backdated request. Only globally routable client IP addresses are imported; private, loopback, link-local, reserved, and invalid addresses are skipped.
 3. When available, the collector adds city/country and ASN/provider data from local GeoLite2 MMDB files. This enrichment is optional.
 4. The collector and API use the same SQLite file at `databases/inm2.sqlite3`. The UI accesses data only through HTTP requests to the API.
 5. Scheduled and manually triggered imports and maintenance share a lock. Manual jobs run in the background; if the collector is busy, the API returns `409`.
 
 ## Import behavior and log files
 
-`INPUT_SAVE_MARGIN_CHARACTERS` leaves a buffer at the end of the file so incomplete log lines are not processed. After successful storage, the reader removes the processed prefix from the input file and moves the remainder to the beginning. A configured log file is therefore a mutable working file, not an archive. Configure rotation or archival so the collector and rotation process do not modify the same file concurrently.
+`INPUT_SAVE_MARGIN_CHARACTERS` leaves a buffer at the end of the active file so incomplete log lines are not processed. The collector also discovers matching rotated segments (`access.log.*`, including `.gz`) and reads them in time order through EOF. Positions are keyed by device/inode identity and therefore follow renamed segments. A SHA-256 fingerprint of the first complete log line (up to 64 KiB) detects a new file if an inode is reused. The fingerprint, offset, and request are committed together. The collector never changes or deletes log files; rotation and retention remain the responsibility of logrotate.
 
 In Compose, `./logs` is mounted at `/logs`. Example:
 
@@ -32,7 +32,9 @@ In Compose, `./logs` is mounted at `/logs`. Example:
 LOG_FILES=traefik:/logs/access.log
 ```
 
-Multiple entries can be separated with semicolons. `IGNORE_REQUEST_ROUTES` can skip requests for configured host/path prefixes.
+Multiple entries can be separated with semicolons. `IGNORE_REQUEST_ROUTES` can skip requests for configured host/path prefixes. `KNOWN_HOSTS` lists host names belonging to this installation; the collector syncs them to the `known_host` table at startup. Only known-host matching and its summary treat `www.example.org` and `example.org` as the same entry. Stored hosts and their bursts remain separate.
+
+Burst detection splits a sequence when the gap between requests exceeds `BURST_MAX_GAP_SECONDS`. A sequence qualifies once at least `BURST_MIN_REQUESTS` requests fall within `BURST_WINDOW_SECONDS`; from its first qualifying request, the sequence continues until the next gap. Normal imports process only new requests and the short qualification window, extending the last burst for that actor/host pair when appropriate. The `burst_request` table stores exact membership, and its unique request ID prevents one request from belonging to multiple bursts. Existing data is rebuilt once on the first collector start with this schema; a backdated request triggers a full rebuild only for its affected actor/host pair.
 
 ## Scheduling and maintenance
 

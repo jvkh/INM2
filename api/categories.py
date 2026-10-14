@@ -67,4 +67,15 @@ def get_categories(
             ORDER BY {order_by}""",
         parameters,
     )
-    return {"items": items, "total": len(items), "from": start, "to": end, "category": category}
+    request_conditions = ["r.start_utc >= ?", "r.start_utc < ?", "EXISTS (SELECT 1 FROM request_category AS rc JOIN category AS c ON c.category_id = rc.category_id WHERE rc.request_id = r.request_id" + (" AND c.category_name LIKE ?" if category is not None else "") + ")"]
+    request_parameters: list[Any] = [start, end]
+    if category is not None:
+        request_parameters.append(f"%{category}%")
+    summary = database.query(
+        f"""SELECT COUNT(*) AS request_count,
+                   COALESCE(SUM(CASE WHEN LOWER(COALESCE(r.request_scheme, '')) = 'https' THEN 1 ELSE 0 END), 0) AS https_count
+            FROM request AS r
+            WHERE {' AND '.join(request_conditions)}""",
+        request_parameters,
+    )[0]
+    return {"items": items, "total": len(items), "summary": summary, "from": start, "to": end, "category": category}

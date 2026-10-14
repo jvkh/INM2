@@ -20,6 +20,11 @@ CREATE TABLE IF NOT EXISTS host (
     known   INTEGER NOT NULL DEFAULT 0 CHECK (known IN (0, 1))
 );
 
+-- Configured hostnames that belong to this installation (case-insensitive).
+CREATE TABLE IF NOT EXISTS known_host (
+    name TEXT PRIMARY KEY COLLATE NOCASE
+);
+
 CREATE TABLE IF NOT EXISTS request (
     request_id              INTEGER PRIMARY KEY,
     actor_id                INTEGER NOT NULL REFERENCES actor(actor_id) ON DELETE CASCADE,
@@ -68,6 +73,12 @@ CREATE TABLE IF NOT EXISTS burst_category (
     PRIMARY KEY (burst_id, category_id)
 );
 
+-- A request can be assigned to at most one burst.
+CREATE TABLE IF NOT EXISTS burst_request (
+    request_id INTEGER PRIMARY KEY REFERENCES request(request_id) ON DELETE CASCADE,
+    burst_id   INTEGER NOT NULL REFERENCES burst(burst_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     group_name TEXT NOT NULL,
     name       TEXT NOT NULL,
@@ -88,3 +99,4 @@ CREATE INDEX IF NOT EXISTS idx_burst_actor_host_start ON burst(actor_id, host_id
 CREATE INDEX IF NOT EXISTS idx_burst_start_end ON burst(start_time, end_time);
 CREATE INDEX IF NOT EXISTS idx_request_category_category ON request_category(category_id, request_id);
 CREATE INDEX IF NOT EXISTS idx_burst_category_category ON burst_category(category_id, burst_id);
+CREATE INDEX IF NOT EXISTS idx_burst_request_burst ON burst_request(burst_id, request_id);

@@ -129,7 +129,7 @@ curl -G 'http://localhost:8000/api/v1/bursts' \
 
 `GET /api/v1/bursts/{id}` liefert die Burstinformationen. `GET /api/v1/burst_requests/{id}` liefert zusätzlich die zugeordneten Requests und deren Anzahl (`total`).
 
-`GET /api/v1/hosts` akzeptiert `host` als Teilzeichenfolgenfilter sowie `sort_by` für `host`, `total_count`, `read_count`, `write_count`, `other_count`, `http_count`, `https_count`, `other_scheme_count` und `https_share`. `sort_order` nimmt `asc` oder `desc` an. `GET /api/v1/categories` akzeptiert `category` als Teilzeichenfolgenfilter; `sort_by` unterstützt `category_name`, `total_count`, `read_count`, `write_count`, `other_count`, `http_count`, `https_count`, `other_scheme_count`, `traffic_share` und `https_share`. `sort_order` nimmt `asc` oder `desc` an.
+`GET /api/v1/hosts` akzeptiert `host` als Teilzeichenfolgenfilter sowie `known=own|foreign`, um auf konfigurierte eigene bzw. fremde Hosts einzuschränken. Die Antwort enthält außerdem `known` je Host und `known_count` für die konfigurierte Anzahl. `sort_by` unterstützt `host`, `total_count`, `read_count`, `write_count`, `other_count`, `http_count`, `https_count`, `other_scheme_count` und `https_share`; `sort_order` nimmt `asc` oder `desc` an. `GET /api/v1/categories` akzeptiert `category` als Teilzeichenfolgenfilter; `sort_by` unterstützt `category_name`, `total_count`, `read_count`, `write_count`, `other_count`, `http_count`, `https_count`, `other_scheme_count`, `traffic_share` und `https_share`. `sort_order` nimmt `asc` oder `desc` an.
 
 ```sh
 curl 'http://localhost:8000/api/v1/burst_requests/42'
@@ -238,7 +238,7 @@ Die geplanten Import- und Wartungsläufe teilen sich eine Sperre mit den manuell
 LOG_FILES=traefik:/logs/access.log
 ```
 
-Der Traefik-Reader verarbeitet nur vollständige JSON-Zeilen, die vor dem durch `INPUT_SAVE_MARGIN_CHARACTERS` definierten Dateiende-Puffer liegen. Der Wert muss größer als 0 sein. Nach erfolgreichem Speichern entfernt der Collector den verarbeiteten Präfix aus der Eingabedatei und verschiebt den noch nicht verarbeiteten Rest an den Dateianfang. Die konfigurierte Logdatei ist deshalb eine Arbeitsdatei und kein Archiv. Logs, die dauerhaft aufbewahrt werden müssen, sind zusätzlich außerhalb dieses Importpfads zu archivieren.
+Der Traefik-Reader verarbeitet in der aktiven Datei nur vollständige JSON-Zeilen vor dem durch `INPUT_SAVE_MARGIN_CHARACTERS` definierten Dateiende-Puffer. Der Wert muss größer als 0 sein. Zusätzlich werden passende rotierte Segmente (`access.log.*`, auch `.gz`) automatisch in zeitlicher Reihenfolge gelesen; bei diesen wird bis zum Ende gelesen. Positionen sind an Geräte- und Inode-Identität gebunden und folgen daher umbenannten Segmenten. Ein SHA-256-Fingerabdruck der ersten vollständigen Logzeile (maximal 64 KiB) erkennt eine neue Datei, falls eine Inode-Kennung wiederverwendet wird. Fingerabdruck, Position und Request werden gemeinsam gespeichert. Der Collector verändert und löscht keine Logdateien. Rotation und Aufbewahrung übernimmt logrotate.
 
 ### Konfiguration
 
@@ -257,6 +257,7 @@ Die folgenden Variablen werden vom Collector unterstützt und erscheinen mit ihr
 | `GEOLITE_CITY_DB` | `/geoip/GeoLite2-City.mmdb` | Pfad zur GeoLite City-Datenbank im Container |
 | `GEOLITE_ASN_DB` | `/geoip/GeoLite2-ASN.mmdb` | Pfad zur GeoLite ASN-Datenbank im Container |
 | `IGNORE_REQUEST_ROUTES` | leer | Semikolongetrennte Host-/Pfadpräfixe, die beim Import ausgeschlossen werden |
+| `KNOWN_HOSTS` | leer | Semikolongetrennte Liste eigener Hostnamen |
 
 Ein Host-/Pfadpräfix wird nur für den angegebenen Host ausgeschlossen. Der Pfad muss exakt passen oder mit einem `/`-Segment beginnen; `assets` schließt also `/assets/app.js`, aber nicht `/assets-old/app.js` aus. Beispiel für `.env`:
 

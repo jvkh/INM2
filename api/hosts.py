@@ -24,6 +24,7 @@ def get_hosts(
     from_: datetime = Query(alias="from", description="Start time, inclusive (ISO 8601)"),
     to: datetime = Query(description="End time, exclusive (ISO 8601)"),
     host: str | None = Query(default=None, min_length=1, description="Host-name substring"),
+    known: Literal["own", "foreign"] | None = Query(default=None, description="Limit to configured or foreign hosts"),
     sort_by: Literal["host", "total_count", "read_count", "write_count", "other_count", "http_count", "https_count", "other_scheme_count", "https_share"] = Query(default="total_count"),
     sort_order: Literal["asc", "desc"] = Query(default="desc"),
 ) -> dict[str, Any]:
@@ -38,12 +39,19 @@ def get_hosts(
     if host is not None:
         conditions.append("h.name LIKE ?")
         parameters.append(f"%{host}%")
+    normalized_host = "CASE WHEN lower(rtrim(h.name, '.')) LIKE 'www.%' THEN substr(lower(rtrim(h.name, '.')), 5) ELSE lower(rtrim(h.name, '.')) END"
+    known_match = f"EXISTS (SELECT 1 FROM known_host kh WHERE kh.name = {normalized_host})"
+    if known == "own":
+        conditions.append(known_match)
+    elif known == "foreign":
+        conditions.append(f"NOT {known_match}")
 
     database = get_database(request)
     sort_expressions = {"host": "h.name", "total_count": "total_count", "read_count": "read_count", "write_count": "write_count", "other_count": "other_count", "http_count": "http_count", "https_count": "https_count", "other_scheme_count": "other_scheme_count", "https_share": "(CAST(SUM(CASE WHEN LOWER(COALESCE(r.request_scheme, '')) = 'https' THEN 1 ELSE 0 END) AS REAL) / NULLIF(COUNT(*), 0))"}
     order_by = f"{sort_expressions[sort_by]} {sort_order.upper()}, h.name ASC, h.host_id"
     items = database.query(
         f"""SELECT h.host_id, h.name AS host,
+                   CASE WHEN {known_match} THEN 1 ELSE 0 END AS known,
                    COUNT(*) AS total_count,
                    SUM(CASE WHEN UPPER(COALESCE(r.request_method, ''))
                                  IN ('GET', 'HEAD', 'OPTIONS') THEN 1 ELSE 0 END) AS read_count,
@@ -66,4 +74,5 @@ def get_hosts(
             ORDER BY {order_by}""",
         parameters,
     )
-    return {"items": items, "total": len(items), "from": start, "to": end, "host": host}
+    known_count = database.query("SELECT COUNT(*) AS count FROM known_host")[0]["count"]
+    return {"items": items, "total": len(items), "known_count": known_count, "from": start, "to": end, "host": host, "known": known}

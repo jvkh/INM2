@@ -24,11 +24,12 @@ def get_burst_requests(
     request: Request,
     id: int = Path(ge=1, description="Burst ID"),
 ) -> dict[str, Any]:
-    """Return a burst and its requests, matched by actor, host, and time."""
+    """Return a burst and its exactly assigned requests."""
     database = get_database(request)
     burst_rows = database.query(
         """SELECT b.*, a.ip AS actor_ip, a.country, a.provider, a.asn, a.city,
-                  h.name AS host
+                  h.name AS host,
+                  CASE WHEN EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = CASE WHEN lower(rtrim(h.name, '.')) LIKE 'www.%' THEN substr(lower(rtrim(h.name, '.')), 5) ELSE lower(rtrim(h.name, '.')) END) THEN 1 ELSE 0 END AS known
            FROM burst AS b
            JOIN actor AS a ON a.actor_id = b.actor_id
            LEFT JOIN host AS h ON h.host_id = b.host_id
@@ -41,13 +42,11 @@ def get_burst_requests(
     burst = burst_rows[0]
     requests = database.query(
         """SELECT r.*
-           FROM request AS r
-           WHERE r.actor_id = ?
-             AND r.host_id IS ?
-             AND r.start_utc >= ?
-             AND r.start_utc <= ?
+           FROM burst_request AS br
+           JOIN request AS r ON r.request_id = br.request_id
+           WHERE br.burst_id = ?
            ORDER BY r.start_utc, r.request_id""",
-        (burst["actor_id"], burst["host_id"], burst["start_time"], burst["end_time"]),
+        (id,),
     )
     return {"burst": burst, "requests": requests, "total": len(requests)}
 
@@ -61,7 +60,8 @@ def get_burst_requests(
     database = get_database(request)
     burst_rows = database.query(
         """SELECT b.*, a.ip AS actor_ip, a.country, a.provider, a.asn, a.city,
-                  h.name AS host
+                  h.name AS host,
+                  CASE WHEN EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = CASE WHEN lower(rtrim(h.name, '.')) LIKE 'www.%' THEN substr(lower(rtrim(h.name, '.')), 5) ELSE lower(rtrim(h.name, '.')) END) THEN 1 ELSE 0 END AS known
            FROM burst AS b
            JOIN actor AS a ON a.actor_id = b.actor_id
            LEFT JOIN host AS h ON h.host_id = b.host_id
@@ -82,6 +82,7 @@ def get_bursts(
     actor_id: int | None = Query(default=None, ge=1),
     host: str | None = Query(default=None, min_length=1),
     host_exact: bool = Query(default=False, description="Match the host exactly"),
+    known: Literal["own", "foreign"] | None = Query(default=None, description="Limit to known or unknown hosts"),
     country: str | None = Query(default=None, min_length=1),
     country_exact: bool = Query(default=False, description="Match the country exactly"),
     provider: str | None = Query(default=None, min_length=1),
@@ -104,6 +105,11 @@ def get_bursts(
     if host is not None:
         conditions.append("h.name = ?" if host_exact else "h.name LIKE ?")
         parameters.append(host if host_exact else f"%{host}%")
+    normalized_host = "CASE WHEN lower(rtrim(h.name, '.')) LIKE 'www.%' THEN substr(lower(rtrim(h.name, '.')), 5) ELSE lower(rtrim(h.name, '.')) END"
+    if known == "own":
+        conditions.append(f"EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = {normalized_host})")
+    elif known == "foreign":
+        conditions.append(f"NOT EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = {normalized_host})")
     if country is not None:
         conditions.append("a.country = ?" if country_exact else "a.country LIKE ?")
         parameters.append(country if country_exact else f"%{country}%")
@@ -138,12 +144,14 @@ def get_bursts(
     from_clause = """FROM burst AS b
                      JOIN actor AS a ON a.actor_id = b.actor_id
                      LEFT JOIN host AS h ON h.host_id = b.host_id"""
-    filtered = f"SELECT b.*, a.ip AS actor_ip, a.country, a.provider, a.asn, a.city, h.name AS host {from_clause} WHERE {where_clause}"
+    known_expression = f"CASE WHEN EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = {normalized_host}) THEN 1 ELSE 0 END AS known"
+    filtered = f"SELECT b.*, a.ip AS actor_ip, a.country, a.provider, a.asn, a.city, a.first_time AS actor_first_time, h.name AS host, {known_expression} {from_clause} WHERE {where_clause}"
 
     aggregate_rows = database.query(
         f"""WITH filtered AS ({filtered})
             SELECT COUNT(*) AS burst_count,
                    COUNT(DISTINCT actor_id) AS actor_count,
+                   COUNT(DISTINCT CASE WHEN actor_first_time >= ? AND actor_first_time < ? THEN actor_id END) AS new_actor_count,
                    COALESCE(SUM(read_count + write_count + other_count), 0) AS request_count,
                    COALESCE(SUM(read_count), 0) AS read_count,
                    COALESCE(SUM(write_count), 0) AS write_count,
@@ -155,7 +163,7 @@ def get_bursts(
                    MAX((julianday(end_time) - julianday(start_time)) * 86400.0) AS max_duration_seconds,
                    AVG(avg_count) AS avg_requests_per_second
             FROM filtered""",
-        parameters,
+        [*parameters, start, end],
     )
     summary = aggregate_rows[0]
     burst_count = summary["burst_count"]

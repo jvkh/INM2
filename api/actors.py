@@ -18,7 +18,15 @@ def _utc_timestamp(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
-def _append_actor_search(value: str, conditions: list[str], parameters: list[Any], *, include_country: bool) -> None:
+def _append_actor_search(
+    value: str,
+    conditions: list[str],
+    parameters: list[Any],
+    *,
+    include_country: bool,
+    start: str,
+    end: str,
+) -> None:
     field, term = parse_search(value)
     if not term:
         conditions.append("0")
@@ -40,8 +48,11 @@ def _append_actor_search(value: str, conditions: list[str], parameters: list[Any
         else:
             column = {"path": "request_path", "method": "request_method", "status": "downstream_status", "scheme": "request_scheme", "user_agent": "user_agent"}[field]
             match = f"COALESCE(sr.{column}, '') LIKE ?"
-        conditions.append(f"EXISTS (SELECT 1 FROM request AS sr WHERE sr.actor_id = a.actor_id AND {match})")
-        parameters.append(f"%{term}%")
+        conditions.append(
+            f"EXISTS (SELECT 1 FROM request AS sr WHERE sr.actor_id = a.actor_id "
+            f"AND sr.start_utc >= ? AND sr.start_utc < ? AND {match})"
+        )
+        parameters.extend([start, end, f"%{term}%"])
     else:
         conditions.append("0")
 
@@ -136,9 +147,9 @@ def get_actors(
             conditions.append(f"{column} = ?" if column == "a.ip" and ip_exact else f"{column} LIKE ?")
             parameters.append(value if column == "a.ip" and ip_exact else f"%{value}%")
     if search is not None:
-        _append_actor_search(search, conditions, parameters, include_country=False)
+        _append_actor_search(search, conditions, parameters, include_country=False, start=start, end=end)
     if global_search is not None:
-        _append_actor_search(global_search, conditions, parameters, include_country=True)
+        _append_actor_search(global_search, conditions, parameters, include_country=True, start=start, end=end)
     where_clause = " AND ".join(conditions)
     sort_expressions = {"ip": "a.ip", "first_time": "a.first_time", "last_time": "a.last_time", "provider": "a.provider", "asn": "a.asn", "city": "a.city", "country": "a.country", "request_count": "request_count"}
     order_by = f"{sort_expressions[sort_by]} {sort_order.upper()}, a.actor_id"

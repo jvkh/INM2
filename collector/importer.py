@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 import ipaddress
+import json
 import re
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
@@ -21,6 +23,7 @@ logger = logging.getLogger(__name__)
 class Importer:
     """Import log records, classify requests, and keep burst summaries current."""
 
+    BURST_ASSIGNMENT_VERSION = "1"
     READ_METHODS = {"GET", "HEAD", "OPTIONS"}
     WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
     CATEGORY_PATTERNS = {
@@ -92,9 +95,35 @@ class Importer:
         self.config = config
         self.database = database
         self.geolocator = GeoLocator(config)
-        self._validated_bursts: set[int] = set()
+        self._pending_burst_watermarks: dict[tuple[int, int | None], int] = {}
+        self._pending_burst_latest: dict[tuple[int, int | None], str | None] = {}
+        self._pending_full_burst_rebuilds: set[tuple[int, int | None]] = set()
+        self._out_of_order_burst_keys: set[tuple[int, int | None]] = set()
         self.ignored_routes = self._parse_ignored_routes(config.ignore_request_routes)
         self.readers = {"traefik": self._create_traefik_reader}
+        self._sync_known_hosts()
+        self._migrate_burst_assignments()
+
+    @staticmethod
+    def _canonical_host_name(value: str) -> str:
+        """Normalize DNS case/trailing dots and treat one leading www as optional."""
+        name = value.strip().lower().rstrip(".")
+        return name[4:] if name.startswith("www.") else name
+
+    def _sync_known_hosts(self) -> None:
+        """Replace the cached known-host list from the collector environment."""
+        names = {
+            self._canonical_host_name(item)
+            for item in self.config.known_hosts
+            if item.strip().strip(".")
+        }
+        connection = self.database.connection
+        with connection:
+            connection.execute("DELETE FROM known_host")
+            connection.executemany(
+                "INSERT INTO known_host (name) VALUES (?)",
+                [(name,) for name in sorted(names)],
+            )
 
     def close(self) -> None:
         """Release GeoLite database readers."""
@@ -105,42 +134,175 @@ class Importer:
         on_file_start: Callable[[str], None] | None = None,
         on_record_imported: Callable[[], None] | None = None,
     ) -> int:
-        """Process each ``type:path`` entry in ``LOG_FILES`` in order."""
+        """Process configured files and their rotated segments, oldest first."""
         total = 0
-        for entry in self.config.log_files:
-            reader_type, separator, path = entry.partition(":")
-            reader_type = reader_type.strip().lower()
-            path = path.strip()
-            if not separator or not path:
-                raise ValueError(f"Invalid LOG_FILES entry {entry!r}; expected type:path")
-            try:
-                reader_factory = self.readers[reader_type]
-            except KeyError as exc:
-                raise ValueError(f"Unsupported log reader {reader_type!r} in {entry!r}") from exc
+        try:
+            for entry in self.config.log_files:
+                reader_type, separator, path = entry.partition(":")
+                reader_type = reader_type.strip().lower()
+                path = path.strip()
+                if not separator or not path:
+                    raise ValueError(f"Invalid LOG_FILES entry {entry!r}; expected type:path")
+                try:
+                    reader_factory = self.readers[reader_type]
+                except KeyError as exc:
+                    raise ValueError(f"Unsupported log reader {reader_type!r} in {entry!r}") from exc
 
-            if on_file_start is not None:
-                on_file_start(path)
+                configured_path = Path(path).expanduser()
+                rotated_paths = [
+                    candidate for candidate in configured_path.parent.glob(configured_path.name + ".*")
+                    if candidate.is_file()
+                ] if configured_path.parent.exists() else []
+                # Numeric logrotate suffixes count down from newest (.1), so
+                # sort by modification time to consume old segments first.
+                rotated_paths.sort(key=lambda item: (item.stat().st_mtime_ns, item.name))
+                inputs = [(item, True) for item in rotated_paths]
+                if configured_path.is_file():
+                    inputs.append((configured_path, False))
+                if not inputs:
+                    raise FileNotFoundError(f"No log file or rotated segment found for {path}")
 
-            def import_and_report(record: dict[str, Any]) -> bool:
-                imported = self.import_request(record)
-                if imported and on_record_imported is not None:
-                    on_record_imported()
-                return imported
+                for input_path, sealed in inputs:
+                    input_name = str(input_path.absolute())
+                    if on_file_start is not None:
+                        on_file_start(input_name)
+                    reader = reader_factory(str(input_path))
+                    # Key cursors by device/inode, not filename: logrotate
+                    # renames each segment when advancing .1 to .2 etc.
+                    current_identity = reader.identity(input_path)
+                    current_fingerprint = reader.fingerprint(input_path)
+                    position_name = f"inode:{current_identity}"
+                    position = self._get_log_position(position_name)
+                    if position is None:
+                        # Migrate cursors written by earlier versions under a
+                        # path key, including a path that logrotate renamed.
+                        position = self._get_log_position_for_identity(current_identity)
 
-            reader = reader_factory(path)
-            count = reader.read(import_and_report)
-            total += count
-            logger.info("Imported %d request(s) from %s", count, path)
-            if reader.skipped_count:
-                logger.info("Skipped %d request(s) by import filters", reader.skipped_count)
+                    # Upgrade pre-fingerprint cursors once, preserving their
+                    # offset while protecting subsequent runs against inode reuse.
+                    if position is not None and not position.get("fingerprint"):
+                        self._save_log_position(
+                            position_name,
+                            current_identity,
+                            position["offset"],
+                            current_fingerprint,
+                        )
+                        position["fingerprint"] = current_fingerprint
+
+                    def save_reset_position(file_identity: str, fingerprint: str | None) -> None:
+                        self._save_log_position(
+                            f"inode:{file_identity}", file_identity, 0, fingerprint
+                        )
+
+                    def import_and_report(
+                        record: dict[str, Any],
+                        next_offset: int,
+                        file_identity: str,
+                        fingerprint: str | None,
+                    ) -> bool:
+                        imported = self.import_request(
+                            record,
+                            defer_burst_rebuild=True,
+                            log_position=(
+                                f"inode:{file_identity}",
+                                file_identity,
+                                next_offset,
+                                fingerprint,
+                            ),
+                        )
+                        if imported and on_record_imported is not None:
+                            on_record_imported()
+                        return imported
+
+                    count = reader.read(
+                        import_and_report,
+                        start_offset=position["offset"] if position else 0,
+                        file_identity=position["identity"] if position else None,
+                        file_fingerprint=position.get("fingerprint") if position else None,
+                        on_position_reset=save_reset_position,
+                        sealed=sealed,
+                    )
+                    total += count
+                    logger.info("Imported %d request(s) from %s", count, input_name)
+                    if reader.skipped_count:
+                        logger.info("Skipped %d request(s) by import filters", reader.skipped_count)
+        finally:
+            # Assign imported rows once, preserving the prior import's open tail.
+            self._rebuild_pending_bursts()
         return total
 
     def _create_traefik_reader(self, path: str) -> TraefikReader:
         return TraefikReader(path, self.config.input_save_margin_characters)
 
-    def import_request(self, record: dict[str, Any]) -> bool:
+    def _get_log_position(self, path: str) -> dict[str, Any] | None:
+        rows = self.database.query(
+            "SELECT value FROM settings WHERE group_name = 'collector_log_position' AND name = ?",
+            (path,),
+        )
+        if not rows or not rows[0]["value"]:
+            return None
+        try:
+            value = json.loads(rows[0]["value"])
+            if isinstance(value, dict) and isinstance(value.get("identity"), str) and isinstance(value.get("offset"), int):
+                return value
+        except (TypeError, ValueError):
+            logger.warning("Ignoring invalid saved log position for %s", path)
+        return None
+
+    def _get_log_position_for_identity(self, identity: str) -> dict[str, Any] | None:
+        rows = self.database.query(
+            "SELECT value FROM settings WHERE group_name = 'collector_log_position'"
+        )
+        for row in rows:
+            try:
+                value = json.loads(row["value"])
+                if isinstance(value, dict) and value.get("identity") == identity and isinstance(value.get("offset"), int):
+                    return value
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    @staticmethod
+    def _write_log_position(
+        connection: Any,
+        path: str,
+        file_identity: str,
+        offset: int,
+        fingerprint: str | None = None,
+    ) -> None:
+        connection.execute(
+            """INSERT INTO settings (group_name, name, value)
+               VALUES ('collector_log_position', ?, ?)
+               ON CONFLICT(group_name, name) DO UPDATE SET value = excluded.value""",
+            (
+                path,
+                json.dumps({
+                    "identity": file_identity,
+                    "offset": offset,
+                    "fingerprint": fingerprint,
+                }),
+            ),
+        )
+
+    def _save_log_position(
+        self, path: str, file_identity: str, offset: int, fingerprint: str | None = None
+    ) -> None:
+        with self.database.connection:
+            self._write_log_position(
+                self.database.connection, path, file_identity, offset, fingerprint
+            )
+
+    def import_request(
+        self,
+        record: dict[str, Any],
+        *,
+        defer_burst_rebuild: bool = False,
+        log_position: tuple[str, str, int, str | None] | None = None,
+    ) -> bool:
         """Persist an eligible Traefik record; return false when filtered out."""
         if self._is_ignored_request(record):
+            if log_position is not None:
+                self._save_log_position(*log_position)
             return False
         actor_ip = record.get("ClientHost")
         if not actor_ip:
@@ -150,6 +312,8 @@ class Importer:
             raise ValueError("Traefik request has no ClientHost or ClientAddr")
         actor_ip = str(actor_ip).strip()
         if not self._is_public_ip(actor_ip):
+            if log_position is not None:
+                self._save_log_position(*log_position)
             return False
 
         request_host = record.get("RequestHost") or None
@@ -157,10 +321,11 @@ class Importer:
         timestamp_text = timestamp.isoformat(timespec="microseconds").replace("+00:00", "Z")
         method = str(record.get("RequestMethod") or "").upper()
         categories = self._categories_for_record(record)
-        request_kind = self._request_kind(method)
 
         # Keep each record's related rows atomic: the reader only consumes its
         # line after this transaction commits successfully.
+        key: tuple[int, int | None]
+        latest_before: str | None
         with self.database.connection:
             connection = self.database.connection
             actor = connection.execute(
@@ -208,6 +373,14 @@ class Importer:
                     "SELECT host_id FROM host WHERE name = ?", (request_host,)
                 ).fetchone()[0]
 
+            latest = connection.execute(
+                """SELECT start_utc FROM request
+                   WHERE actor_id = ? AND host_id IS ?
+                   ORDER BY start_utc DESC, request_id DESC LIMIT 1""",
+                (actor_id, host_id),
+            ).fetchone()
+            latest_before = latest["start_utc"] if latest else None
+
             category_ids = [self._get_category_id(category) for category in categories]
             cursor = connection.execute(
                 """INSERT INTO request (
@@ -230,12 +403,33 @@ class Importer:
                 ),
             )
             request_id = cursor.lastrowid
+            key = (actor_id, host_id)
             connection.executemany(
                 "INSERT INTO request_category (request_id, category_id) VALUES (?, ?)",
                 [(request_id, category_id) for category_id in category_ids],
             )
-            self._update_burst(actor_id, host_id, timestamp, request_id, request_kind)
+            if log_position is not None:
+                self._write_log_position(connection, *log_position)
+        self._queue_burst_request(key, request_id, timestamp_text, latest_before)
+        if not defer_burst_rebuild:
+            self._rebuild_pending_bursts()
         return True
+
+    def _queue_burst_request(
+        self,
+        key: tuple[int, int | None],
+        request_id: int,
+        timestamp: str,
+        latest_before: str | None,
+    ) -> None:
+        if key not in self._pending_burst_watermarks:
+            self._pending_burst_watermarks[key] = request_id - 1
+            self._pending_burst_latest[key] = latest_before
+        latest = self._pending_burst_latest.get(key)
+        if latest is not None and timestamp < latest:
+            self._out_of_order_burst_keys.add(key)
+        if latest is None or timestamp > latest:
+            self._pending_burst_latest[key] = timestamp
 
     @staticmethod
     def _is_public_ip(value: str) -> bool:
@@ -277,186 +471,276 @@ class Importer:
             "SELECT category_id FROM category WHERE category_name = ?", (category,)
         ).fetchone()[0]
 
-    def _update_burst(
-        self,
-        actor_id: int,
-        host_id: int | None,
-        timestamp: datetime,
-        request_id: int,
-        request_kind: str,
-    ) -> None:
-        connection = self.database.connection
-        max_gap = self.config.burst_max_gap_seconds
-        min_requests = self.config.burst_min_requests
-        window_seconds = self.config.burst_window_seconds
-        if max_gap < 0:
-            raise ValueError("BURST_MAX_GAP_SECONDS must not be negative")
-        if min_requests < 1:
-            raise ValueError("BURST_MIN_REQUESTS must be at least 1")
-        if window_seconds < 1:
-            raise ValueError("BURST_WINDOW_SECONDS must be greater than zero")
+    def _migrate_burst_assignments(self) -> None:
+        """Rebuild legacy bursts once and initialize exact request membership."""
+        rows = self.database.query(
+            "SELECT value FROM settings WHERE group_name = 'collector' AND name = 'burst_assignment_version'"
+        )
+        if rows and rows[0]["value"] == self.BURST_ASSIGNMENT_VERSION:
+            return
+        keys = self.database.query(
+            """SELECT actor_id, host_id FROM request
+               UNION SELECT actor_id, host_id FROM burst
+               ORDER BY actor_id, host_id"""
+        )
+        for row in keys:
+            key = (row["actor_id"], row["host_id"])
+            self._pending_burst_watermarks[key] = 0
+            self._pending_full_burst_rebuilds.add(key)
+        self._rebuild_pending_bursts()
+        self.database.execute(
+            """INSERT INTO settings (group_name, name, value)
+               VALUES ('collector', 'burst_assignment_version', ?)
+               ON CONFLICT(group_name, name) DO UPDATE SET value = excluded.value""",
+            (self.BURST_ASSIGNMENT_VERSION,),
+        )
 
-        previous = connection.execute(
+    def _rebuild_pending_bursts(self) -> None:
+        if self.config.burst_max_gap_seconds < 0:
+            raise ValueError("BURST_MAX_GAP_SECONDS must not be negative")
+        if self.config.burst_min_requests < 1:
+            raise ValueError("BURST_MIN_REQUESTS must be at least 1")
+        if self.config.burst_window_seconds < 1:
+            raise ValueError("BURST_WINDOW_SECONDS must be greater than zero")
+        pending = sorted(self._pending_burst_watermarks, key=lambda key: (key[0], key[1] or 0))
+        for key in pending:
+            actor_id, host_id = key
+            if key in self._pending_full_burst_rebuilds or key in self._out_of_order_burst_keys:
+                self._rebuild_actor_host_bursts(actor_id, host_id)
+            else:
+                watermark = self._pending_burst_watermarks[key]
+                rows = self.database.query(
+                    """SELECT request_id, start_utc, request_method FROM request
+                       WHERE actor_id = ? AND host_id IS ? AND request_id > ?
+                       ORDER BY start_utc, request_id""",
+                    (actor_id, host_id, watermark),
+                )
+                for request in rows:
+                    self._assign_incremental_burst_request(actor_id, host_id, request)
+            self._pending_burst_watermarks.pop(key, None)
+            self._pending_burst_latest.pop(key, None)
+            self._pending_full_burst_rebuilds.discard(key)
+            self._out_of_order_burst_keys.discard(key)
+
+    def _assign_incremental_burst_request(
+        self, actor_id: int, host_id: int | None, request: Any
+    ) -> None:
+        """Assign one new request, reading only its actor/host's short tail."""
+        connection = self.database.connection
+        timestamp = self._parse_timestamp(request["start_utc"])
+        latest_burst = connection.execute(
             """SELECT burst_id, start_time, end_time, read_count, write_count, other_count
                FROM burst WHERE actor_id = ? AND host_id IS ?
-               ORDER BY end_time DESC LIMIT 1""",
+               ORDER BY end_time DESC, burst_id DESC LIMIT 1""",
             (actor_id, host_id),
         ).fetchone()
-        if previous is not None:
-            previous_end = self._parse_timestamp(previous["end_time"])
-            gap = (timestamp - previous_end).total_seconds()
-        else:
-            gap = max_gap + 1
-
-        if previous is not None and 0 <= gap <= max_gap:
-            burst_id = previous["burst_id"]
-            counts = {
-                "read_count": previous["read_count"],
-                "write_count": previous["write_count"],
-                "other_count": previous["other_count"],
-            }
-            # Bursts created before the minimum threshold was introduced may
-            # still be present. Do not extend one until it qualifies.
-            needs_validation = burst_id not in self._validated_bursts
-            if sum(counts.values()) < min_requests or (
-                needs_validation and not self._burst_has_qualifying_window(
-                    actor_id, host_id, previous["start_time"], previous["end_time"],
-                    min_requests, window_seconds, max_gap,
-                )
-            ):
-                connection.execute("DELETE FROM burst WHERE burst_id = ?", (burst_id,))
-                self._validated_bursts.discard(burst_id)
-                previous = None
-            else:
-                self._validated_bursts.add(burst_id)
-                count_column = {
-                    "read": "read_count", "write": "write_count", "other": "other_count"
-                }[request_kind]
-                counts[count_column] += 1
-                start_time = previous["start_time"]
-                elapsed = max(0.0, (timestamp - self._parse_timestamp(start_time)).total_seconds())
-                total_count = sum(counts.values())
-                average = total_count / max(elapsed, 1.0)
-                connection.execute(
-                    """UPDATE burst SET end_time = ?, read_count = ?, write_count = ?,
-                       other_count = ?, avg_count = ? WHERE burst_id = ?""",
-                    (timestamp.isoformat(timespec="microseconds").replace("+00:00", "Z"),
-                     counts["read_count"], counts["write_count"], counts["other_count"],
-                     average, burst_id),
-                )
-                self._increment_burst_categories(burst_id, request_id)
+        if latest_burst is not None:
+            gap = (timestamp - self._parse_timestamp(latest_burst["end_time"])).total_seconds()
+            if 0 <= gap <= self.config.burst_max_gap_seconds:
+                self._extend_burst(latest_burst, request)
                 return
 
-        # No qualified active burst: examine the latest request sequence in
-        # the configured window. A gap larger than max_gap starts a new sequence.
-        window_start = timestamp - timedelta(seconds=window_seconds)
-        rows = connection.execute(
-            """SELECT request_id, start_utc, request_method FROM request
-               WHERE actor_id = ? AND host_id IS ? AND start_utc >= ? AND start_utc <= ?
-               ORDER BY start_utc, request_id""",
-            (
-                actor_id,
-                host_id,
-                window_start.isoformat(timespec="microseconds").replace("+00:00", "Z"),
-                timestamp.isoformat(timespec="microseconds").replace("+00:00", "Z"),
-            ),
-        ).fetchall()
-        sequence = []
-        for row in rows:
-            if sequence:
-                gap = (self._parse_timestamp(row["start_utc"])
-                       - self._parse_timestamp(sequence[-1]["start_utc"])).total_seconds()
-                if gap < 0 or gap > max_gap:
-                    sequence = []
-            sequence.append(row)
-
-        if len(sequence) < min_requests or sequence[-1]["request_id"] != request_id:
-            return
-
-        start_time = sequence[0]["start_utc"]
-        end_time = sequence[-1]["start_utc"]
-        counts = {"read_count": 0, "write_count": 0, "other_count": 0}
-        for row in sequence:
-            counts[self._request_kind(str(row["request_method"] or "").upper()) + "_count"] += 1
-        total_count = sum(counts.values())
-        elapsed = max(
-            0.0,
-            (self._parse_timestamp(end_time) - self._parse_timestamp(start_time)).total_seconds(),
-        )
-        cursor = connection.execute(
-            """INSERT INTO burst (
-                   actor_id, host_id, start_time, end_time, avg_count,
-                   read_count, write_count, other_count
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                actor_id, host_id, start_time, end_time, total_count / max(elapsed, 1.0),
-                counts["read_count"], counts["write_count"], counts["other_count"],
-            ),
-        )
-        burst_id = cursor.lastrowid
-        self._validated_bursts.add(burst_id)
-        category_counts = connection.execute(
-            """SELECT rc.category_id, count(*) AS request_count
-               FROM request_category AS rc
-               JOIN request AS r ON r.request_id = rc.request_id
+        window_start = (timestamp - timedelta(seconds=self.config.burst_window_seconds)).isoformat(
+            timespec="microseconds"
+        ).replace("+00:00", "Z")
+        tail = connection.execute(
+            """SELECT r.request_id, r.start_utc, r.request_method, br.burst_id
+               FROM request AS r
+               LEFT JOIN burst_request AS br ON br.request_id = r.request_id
                WHERE r.actor_id = ? AND r.host_id IS ?
                  AND r.start_utc >= ? AND r.start_utc <= ?
-               GROUP BY rc.category_id""",
-            (actor_id, host_id, start_time, end_time),
+               ORDER BY r.start_utc, r.request_id""",
+            (actor_id, host_id, window_start, request["start_utc"]),
         ).fetchall()
-        connection.executemany(
-            """INSERT INTO burst_category (burst_id, category_id, request_count)
-               VALUES (?, ?, ?)""",
-            [(burst_id, row["category_id"], row["request_count"]) for row in category_counts],
-        )
+        sequence: list[Any] = []
+        previous: Any | None = None
+        for item in tail:
+            if item["burst_id"] is not None:
+                sequence = []
+                previous = None
+                continue
+            if previous is not None and (
+                self._parse_timestamp(item["start_utc"])
+                - self._parse_timestamp(previous["start_utc"])
+            ).total_seconds() > self.config.burst_max_gap_seconds:
+                sequence = []
+            sequence.append(item)
+            previous = item
+        if len(sequence) >= self.config.burst_min_requests:
+            self._create_incremental_burst(actor_id, host_id, sequence)
 
-    def _burst_has_qualifying_window(
-        self,
-        actor_id: int,
-        host_id: int | None,
-        start_time: str,
-        end_time: str,
-        min_requests: int,
-        window_seconds: int,
-        max_gap: int,
-    ) -> bool:
-        window_end = min(
-            self._parse_timestamp(end_time),
-            self._parse_timestamp(start_time) + timedelta(seconds=window_seconds),
-        )
-        rows = self.database.connection.execute(
-            """SELECT start_utc FROM request
-               WHERE actor_id = ? AND host_id IS ? AND start_utc >= ? AND start_utc <= ?
-               ORDER BY start_utc, request_id""",
-            (
-                actor_id,
-                host_id,
-                start_time,
-                window_end.isoformat(timespec="microseconds").replace("+00:00", "Z"),
-            ),
-        ).fetchall()
-        sequence_length = 0
-        previous_time: datetime | None = None
-        for row in rows:
-            current_time = self._parse_timestamp(row["start_utc"])
-            if previous_time is None or (current_time - previous_time).total_seconds() > max_gap:
-                sequence_length = 1
-            else:
-                sequence_length += 1
-            if sequence_length >= min_requests:
-                return True
-            previous_time = current_time
-        return False
-
-    def _increment_burst_categories(self, burst_id: int, request_id: int) -> None:
+    def _extend_burst(self, burst: Any, request: Any) -> None:
         connection = self.database.connection
-        connection.execute(
-            """INSERT INTO burst_category (burst_id, category_id, request_count)
-               SELECT ?, category_id, 1 FROM request_category WHERE request_id = ?
-               ON CONFLICT(burst_id, category_id) DO UPDATE
-               SET request_count = request_count + 1""",
-            (burst_id, request_id),
+        counts = {
+            "read": burst["read_count"],
+            "write": burst["write_count"],
+            "other": burst["other_count"],
+        }
+        counts[self._request_kind(str(request["request_method"] or "").upper())] += 1
+        elapsed = max(
+            0.0,
+            (self._parse_timestamp(request["start_utc"])
+             - self._parse_timestamp(burst["start_time"])).total_seconds(),
         )
+        total = sum(counts.values())
+        with connection:
+            connection.execute(
+                """UPDATE burst SET end_time = ?, avg_count = ?, read_count = ?,
+                   write_count = ?, other_count = ? WHERE burst_id = ?""",
+                (request["start_utc"], total / max(elapsed, 1.0), counts["read"],
+                 counts["write"], counts["other"], burst["burst_id"]),
+            )
+            connection.execute(
+                "INSERT INTO burst_request (request_id, burst_id) VALUES (?, ?)",
+                (request["request_id"], burst["burst_id"]),
+            )
+            connection.execute(
+                """INSERT INTO burst_category (burst_id, category_id, request_count)
+                   SELECT ?, category_id, 1 FROM request_category WHERE request_id = ?
+                   ON CONFLICT(burst_id, category_id) DO UPDATE
+                   SET request_count = request_count + 1""",
+                (burst["burst_id"], request["request_id"]),
+            )
+
+    def _create_incremental_burst(
+        self, actor_id: int, host_id: int | None, requests: list[Any]
+    ) -> None:
+        connection = self.database.connection
+        start_time, end_time = requests[0]["start_utc"], requests[-1]["start_utc"]
+        counts = {"read": 0, "write": 0, "other": 0}
+        for request in requests:
+            counts[self._request_kind(str(request["request_method"] or "").upper())] += 1
+        elapsed = max(0.0, (self._parse_timestamp(end_time) - self._parse_timestamp(start_time)).total_seconds())
+        with connection:
+            cursor = connection.execute(
+                """INSERT INTO burst (actor_id, host_id, start_time, end_time, avg_count,
+                   read_count, write_count, other_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (actor_id, host_id, start_time, end_time, len(requests) / max(elapsed, 1.0),
+                 counts["read"], counts["write"], counts["other"]),
+            )
+            burst_id = cursor.lastrowid
+            connection.executemany(
+                "INSERT INTO burst_request (request_id, burst_id) VALUES (?, ?)",
+                [(item["request_id"], burst_id) for item in requests],
+            )
+            connection.execute(
+                """INSERT INTO burst_category (burst_id, category_id, request_count)
+                   SELECT ?, rc.category_id, COUNT(*) FROM burst_request br
+                   JOIN request_category rc ON rc.request_id = br.request_id
+                   WHERE br.burst_id = ? GROUP BY rc.category_id""",
+                (burst_id, burst_id),
+            )
+
+    def _rebuild_actor_host_bursts(self, actor_id: int, host_id: int | None) -> None:
+        """Reconstruct one actor/host's bursts from its full chronological history."""
+        connection = self.database.connection
+        with connection:
+            requests = connection.execute(
+                """SELECT request_id, start_utc, request_method FROM request
+                   WHERE actor_id = ? AND host_id IS ?
+                   ORDER BY start_utc, request_id""",
+                (actor_id, host_id),
+            ).fetchall()
+            old_bursts = connection.execute(
+                """SELECT burst_id, start_time, end_time FROM burst
+                   WHERE actor_id = ? AND host_id IS ?
+                   ORDER BY start_time, burst_id""",
+                (actor_id, host_id),
+            ).fetchall()
+            segments = self._qualified_burst_segments(requests)
+            old_ids = {row["burst_id"] for row in old_bursts}
+            for burst_id in old_ids:
+                connection.execute("DELETE FROM burst_request WHERE burst_id = ?", (burst_id,))
+                connection.execute("DELETE FROM burst_category WHERE burst_id = ?", (burst_id,))
+
+            kept_ids: set[int] = set()
+            for segment in segments:
+                start_time = segment[0]["start_utc"]
+                end_time = segment[-1]["start_utc"]
+                overlapping = [
+                    row for row in old_bursts
+                    if row["burst_id"] not in kept_ids
+                    and row["end_time"] >= start_time
+                    and row["start_time"] <= end_time
+                ]
+                matching = next((row for row in overlapping if row["start_time"] == start_time), None)
+                existing = matching or (overlapping[0] if overlapping else None)
+                counts = {"read": 0, "write": 0, "other": 0}
+                for item in segment:
+                    counts[self._request_kind(str(item["request_method"] or "").upper())] += 1
+                total_count = len(segment)
+                elapsed = max(
+                    0.0,
+                    (self._parse_timestamp(end_time) - self._parse_timestamp(start_time)).total_seconds(),
+                )
+                values = (
+                    actor_id, host_id, start_time, end_time, total_count / max(elapsed, 1.0),
+                    counts["read"], counts["write"], counts["other"],
+                )
+                if existing is not None:
+                    burst_id = existing["burst_id"]
+                    connection.execute(
+                        """UPDATE burst SET start_time = ?, end_time = ?, avg_count = ?,
+                           read_count = ?, write_count = ?, other_count = ? WHERE burst_id = ?""",
+                        (*values[2:], burst_id),
+                    )
+                else:
+                    cursor = connection.execute(
+                        """INSERT INTO burst (actor_id, host_id, start_time, end_time, avg_count,
+                           read_count, write_count, other_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        values,
+                    )
+                    burst_id = cursor.lastrowid
+                kept_ids.add(burst_id)
+                connection.executemany(
+                    "INSERT INTO burst_request (request_id, burst_id) VALUES (?, ?)",
+                    [(item["request_id"], burst_id) for item in segment],
+                )
+                categories = connection.execute(
+                    """SELECT rc.category_id, COUNT(*) AS request_count
+                       FROM burst_request AS br
+                       JOIN request_category AS rc ON rc.request_id = br.request_id
+                       WHERE br.burst_id = ? GROUP BY rc.category_id""",
+                    (burst_id,),
+                ).fetchall()
+                connection.executemany(
+                    """INSERT INTO burst_category (burst_id, category_id, request_count)
+                       VALUES (?, ?, ?)""",
+                    [(burst_id, row["category_id"], row["request_count"]) for row in categories],
+                )
+
+            for burst_id in old_ids - kept_ids:
+                connection.execute("DELETE FROM burst WHERE burst_id = ?", (burst_id,))
+
+    def _qualified_burst_segments(self, requests: list[Any]) -> list[list[Any]]:
+        """Split requests by max gap, retaining only runs that qualify in-window."""
+        segments: list[list[Any]] = []
+        run: list[Any] = []
+        for request in requests:
+            if run:
+                gap = (
+                    self._parse_timestamp(request["start_utc"])
+                    - self._parse_timestamp(run[-1]["start_utc"])
+                ).total_seconds()
+                if gap > self.config.burst_max_gap_seconds:
+                    self._append_qualified_run(run, segments)
+                    run = []
+            run.append(request)
+        if run:
+            self._append_qualified_run(run, segments)
+        return segments
+
+    def _append_qualified_run(self, run: list[Any], segments: list[list[Any]]) -> None:
+        first_candidate = 0
+        for end_index, request in enumerate(run):
+            end_time = self._parse_timestamp(request["start_utc"])
+            while first_candidate <= end_index and (
+                end_time - self._parse_timestamp(run[first_candidate]["start_utc"])
+            ).total_seconds() > self.config.burst_window_seconds:
+                first_candidate += 1
+            if end_index - first_candidate + 1 >= self.config.burst_min_requests:
+                segments.append(run[first_candidate:])
+                return
 
     @classmethod
     def _request_kind(cls, method: str) -> str:

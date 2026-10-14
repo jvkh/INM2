@@ -125,7 +125,7 @@ curl -G 'http://localhost:8000/api/v1/bursts' \
 
 `GET /api/v1/categories` requires `from` and `to`, with an optional `category` substring filter. Results are grouped by category and include read/write/other method counts and HTTP/HTTPS/other-scheme counts. `sort_by` supports `category_name`, `total_count`, `read_count`, `write_count`, `other_count`, `http_count`, `https_count`, `other_scheme_count`, `traffic_share`, and `https_share`; `sort_order` is `asc` or `desc`.
 
-`GET /api/v1/hosts` has the same time range and count breakdown, grouped by host, with an optional `host` substring filter. `sort_by` supports `host`, `total_count`, `read_count`, `write_count`, `other_count`, `http_count`, `https_count`, `other_scheme_count`, and `https_share`; `sort_order` is `asc` or `desc`.
+`GET /api/v1/hosts` has the same time range and count breakdown, grouped by host, with an optional `host` substring filter and `known=own|foreign` filter. Each host includes a `known` flag; `known_count` reports the configured number of known hosts. `sort_by` supports `host`, `total_count`, `read_count`, `write_count`, `other_count`, `http_count`, `https_count`, `other_scheme_count`, and `https_share`; `sort_order` is `asc` or `desc`.
 
 ### Read and change stored settings
 
@@ -189,7 +189,7 @@ Scheduled and manual operations share a lock. If the collector is busy, a manual
 LOG_FILES=traefik:/logs/access.log
 ```
 
-The Traefik reader processes complete JSON lines before the end-of-file buffer configured by `INPUT_SAVE_MARGIN_CHARACTERS`. The value must be greater than zero. After successful storage, the collector removes the processed prefix and moves the unprocessed remainder to the beginning of the input file. The configured log is a working file, not an archive; archive logs separately if they must be retained.
+The Traefik reader processes complete JSON lines before the end-of-file buffer configured by `INPUT_SAVE_MARGIN_CHARACTERS` in the active file. The value must be greater than zero. Matching rotated segments (`access.log.*`, including `.gz`) are discovered automatically and read through EOF in time order. Positions are keyed by device/inode identity and follow renamed segments. A SHA-256 fingerprint of the first complete log line (up to 64 KiB) detects a new file if an inode is reused. The fingerprint, position, and request are committed together. The collector never changes or deletes log files; logrotate handles rotation and retention.
 
 ### Configuration reference
 
@@ -208,6 +208,7 @@ The collector supports these variables. The values below are code defaults from 
 | `GEOLITE_CITY_DB` | `/geoip/GeoLite2-City.mmdb` | Container path to the optional GeoLite City database |
 | `GEOLITE_ASN_DB` | `/geoip/GeoLite2-ASN.mmdb` | Container path to the optional GeoLite ASN database |
 | `IGNORE_REQUEST_ROUTES` | empty | Semicolon-separated `host/path-prefix` routes to skip |
+| `KNOWN_HOSTS` | empty | Semicolon-separated list of host names belonging to this installation |
 
 A host/path prefix is skipped only for the configured host. The path must match exactly or start at a `/` segment boundary; `assets` skips `/assets/app.js` but not `/assets-old/app.js`. Example for `.env`:
 

@@ -23,7 +23,7 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
                     burst_id: int | None, actor_ip: str | None,
                     actor_ip_exact: bool,
                     category: str | None, category_exact: bool, path: str | None,
-                    path_exact: bool) -> dict[str, float]:
+                    path_exact: bool, known: str | None) -> dict[str, float]:
     request_conditions = ["r.start_utc >= ?", "r.start_utc < ?"]
     request_params: list[Any] = [start, end]
     if page == "actors" and country:
@@ -56,6 +56,11 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
     if page == "hosts" and search:
         request_conditions.append("h.name LIKE ?")
         request_params.append(f"%{search}%")
+    normalized_host = "CASE WHEN lower(rtrim(h.name, '.')) LIKE 'www.%' THEN substr(lower(rtrim(h.name, '.')), 5) ELSE lower(rtrim(h.name, '.')) END"
+    if page == "hosts" and known == "own":
+        request_conditions.append(f"EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = {normalized_host})")
+    elif page == "hosts" and known == "foreign":
+        request_conditions.append(f"NOT EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = {normalized_host})")
     if page == "categories" and search:
         request_conditions.append("EXISTS (SELECT 1 FROM request_category AS xrc JOIN category AS xc ON xc.category_id=xrc.category_id WHERE xrc.request_id=r.request_id AND xc.category_name LIKE ?)")
         request_params.append(f"%{search}%")
@@ -87,8 +92,8 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
             request_conditions.append("a.ip = ?" if actor_ip_exact else "a.ip LIKE ?")
             request_params.append(actor_ip if actor_ip_exact else f"%{actor_ip}%")
         if host:
-            request_conditions.append("h.name LIKE ?")
-            request_params.append(f"%{host}%")
+            request_conditions.append("h.name = ?" if host_exact else "h.name LIKE ?")
+            request_params.append(host if host_exact else f"%{host}%")
         if category:
             request_conditions.append("EXISTS (SELECT 1 FROM request_category AS xrc JOIN category AS xc ON xc.category_id=xrc.category_id WHERE xrc.request_id=r.request_id AND xc.category_name = ?)" if category_exact else "EXISTS (SELECT 1 FROM request_category AS xrc JOIN category AS xc ON xc.category_id=xrc.category_id WHERE xrc.request_id=r.request_id AND xc.category_name LIKE ?)")
             request_params.append(category if category_exact else f"%{category}%")
@@ -96,7 +101,7 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
             request_conditions.append("r.request_path = ?" if path_exact else "r.request_path LIKE ?")
             request_params.append(path if path_exact else f"%{path}%")
         if burst_id:
-            request_conditions.append("EXISTS (SELECT 1 FROM burst AS xb WHERE xb.burst_id=? AND xb.actor_id=r.actor_id AND xb.host_id IS r.host_id AND r.start_utc>=xb.start_time AND r.start_utc<=xb.end_time)")
+            request_conditions.append("EXISTS (SELECT 1 FROM burst_request AS xb WHERE xb.burst_id=? AND xb.request_id=r.request_id)")
             request_params.append(burst_id)
 
     burst_conditions = ["b.start_time >= ?", "b.start_time < ?"]
@@ -105,6 +110,10 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
         if host:
             burst_conditions.append("h.name = ?" if host_exact else "h.name LIKE ?")
             burst_params.append(host if host_exact else f"%{host}%")
+        if known == "own":
+            burst_conditions.append("EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = CASE WHEN lower(rtrim(h.name, '.')) LIKE 'www.%' THEN substr(lower(rtrim(h.name, '.')), 5) ELSE lower(rtrim(h.name, '.')) END)")
+        elif known == "foreign":
+            burst_conditions.append("NOT EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = CASE WHEN lower(rtrim(h.name, '.')) LIKE 'www.%' THEN substr(lower(rtrim(h.name, '.')), 5) ELSE lower(rtrim(h.name, '.')) END)")
         if country:
             burst_conditions.append("a.country = ?" if country_exact else "a.country LIKE ?")
             burst_params.append(country if country_exact else f"%{country}%")
@@ -122,7 +131,6 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
             else:
                 burst_conditions.append("0")
 
-    request_count_expression = "(SELECT COALESCE(SUM(request_count),0) FROM category_traffic)" if page == "categories" else "(SELECT COUNT(*) FROM filtered_requests)"
     sql = f"""WITH filtered_requests AS (
             SELECT r.*, a.country, a.first_time, a.ip, a.city, a.provider, a.asn, h.name AS host_name
             FROM request AS r JOIN actor AS a ON a.actor_id=r.actor_id
@@ -141,7 +149,7 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
             WHERE host_id IS NOT NULL GROUP BY host_id
         )
         SELECT
-            {request_count_expression} AS request_count,
+            (SELECT COUNT(*) FROM filtered_requests) AS request_count,
             (SELECT COUNT(*) FROM filtered_requests WHERE downstream_status >= 400) AS error_request_count,
             (SELECT COUNT(*) FROM filtered_requests WHERE UPPER(COALESCE(request_method,'')) IN ('POST','PUT','PATCH','DELETE')) AS write_request_count,
             (SELECT COUNT(DISTINCT actor_id) FROM filtered_requests) AS actor_count,
@@ -181,6 +189,7 @@ def get_metric_trends(
     category_exact: bool = Query(default=False),
     path: str | None = Query(default=None, min_length=1),
     path_exact: bool = Query(default=False),
+    known: Literal["own", "foreign"] | None = Query(default=None),
 ) -> dict[str, Any]:
     """Return values for the selected range and its immediately preceding equal-length range."""
     start_dt = from_ if from_.tzinfo else from_.replace(tzinfo=timezone.utc)
@@ -191,8 +200,8 @@ def get_metric_trends(
     current_start, current_end = _utc_text(start_dt), _utc_text(end_dt)
     previous_start_text, previous_end_text = _utc_text(previous_start), current_start
     database = get_database(request)
-    previous = _period_metrics(database, previous_start_text, previous_end_text, page, search, host, host_exact, country, country_exact, status_class, burst_id, actor_ip, actor_ip_exact, category, category_exact, path, path_exact)
-    current = _period_metrics(database, current_start, current_end, page, search, host, host_exact, country, country_exact, status_class, burst_id, actor_ip, actor_ip_exact, category, category_exact, path, path_exact)
+    previous = _period_metrics(database, previous_start_text, previous_end_text, page, search, host, host_exact, country, country_exact, status_class, burst_id, actor_ip, actor_ip_exact, category, category_exact, path, path_exact, known)
+    current = _period_metrics(database, current_start, current_end, page, search, host, host_exact, country, country_exact, status_class, burst_id, actor_ip, actor_ip_exact, category, category_exact, path, path_exact, known)
     keys = current.keys()
     result = {}
     for key in keys:

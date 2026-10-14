@@ -25,6 +25,7 @@ class EnvConfig:
         "GEOLITE_CITY_DB": "/geoip/GeoLite2-City.mmdb",
         "GEOLITE_ASN_DB": "/geoip/GeoLite2-ASN.mmdb",
         "IGNORE_REQUEST_ROUTES": "",
+        "KNOWN_HOSTS": "",
     }
 
     def __init__(self, environ: Mapping[str, str] | None = None) -> None:
@@ -100,3 +101,8 @@ class EnvConfig:
     @property
     def ignore_request_routes(self) -> list[str]:
         return self.get_list("IGNORE_REQUEST_ROUTES")
+
+    @property
+    def known_hosts(self) -> list[str]:
+        """Configured host names considered part of this installation."""
+        return self.get_list("KNOWN_HOSTS")

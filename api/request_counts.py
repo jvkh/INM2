@@ -91,14 +91,7 @@ def get_request_counts(
         filter_parameters.append(path if path_exact else f"%{path}%")
     if burst_id is not None:
         filter_conditions.append(
-            """EXISTS (
-                   SELECT 1 FROM burst AS fb
-                   WHERE fb.burst_id = ?
-                     AND fb.actor_id = r.actor_id
-                     AND fb.host_id IS r.host_id
-                     AND r.start_utc >= fb.start_time
-                     AND r.start_utc <= fb.end_time
-               )"""
+            "EXISTS (SELECT 1 FROM burst_request AS br WHERE br.burst_id = ? AND br.request_id = r.request_id)"
         )
         filter_parameters.append(burst_id)
     if search is not None:
@@ -186,35 +179,19 @@ def get_request_counts(
         bucket_count = len(fixed_buckets)
     else:
         bucket_count = bars
-        bucket_days = duration.total_seconds() / 86_400 / bars
+        for index in range(bucket_count):
+            bucket_start = start_dt + timedelta(microseconds=total_microseconds * index // bucket_count)
+            bucket_end = end_dt if index + 1 == bucket_count else start_dt + timedelta(microseconds=total_microseconds * (index + 1) // bucket_count)
+            fixed_buckets.append((bucket_start, bucket_end))
+
     database = get_database(request)
-    if bucket_microseconds:
-        bucket_values = ", ".join("(?, julianday(?), julianday(?))" for _ in fixed_buckets)
-        bucket_cte = f"buckets(bucket_index, start_jd, end_jd) AS (VALUES {bucket_values})"
-        bucket_parameters = [
-            value
-            for index, (bucket_start, bucket_end) in enumerate(fixed_buckets)
-            for value in (index, _utc_text(bucket_start), _utc_text(bucket_end))
-        ]
-    else:
-        bucket_cte = """RECURSIVE
-            params(start_jd, end_jd, bucket_count, bucket_days) AS (
-                SELECT julianday(?), julianday(?), ?, ?
-            ),
-            bucket_starts(bucket_index, start_jd) AS (
-                SELECT 0, start_jd FROM params
-                UNION ALL
-                SELECT bucket_index + 1,
-                       p.start_jd + p.bucket_days * (bucket_index + 1)
-                FROM bucket_starts CROSS JOIN params AS p
-                WHERE bucket_index + 1 < p.bucket_count
-            ),
-            buckets AS (
-                SELECT s.bucket_index, s.start_jd,
-                       MIN(p.start_jd + p.bucket_days * (s.bucket_index + 1), p.end_jd) AS end_jd
-                FROM bucket_starts AS s CROSS JOIN params AS p
-            )"""
-        bucket_parameters = [_utc_text(start_dt), end, bucket_count, bucket_days]
+    bucket_values = ", ".join("(?, ?, ?)" for _ in fixed_buckets)
+    bucket_cte = f"buckets(bucket_index, start_utc, end_utc) AS (VALUES {bucket_values})"
+    bucket_parameters = [
+        value
+        for index, (bucket_start, bucket_end) in enumerate(fixed_buckets)
+        for value in (index, _utc_text(bucket_start), _utc_text(bucket_end))
+    ]
     rows = database.query(
         f"""WITH {bucket_cte}
             SELECT b.bucket_index,
@@ -228,22 +205,17 @@ def get_request_counts(
                             THEN 1 ELSE 0 END) AS other_count
             FROM buckets AS b
             LEFT JOIN request AS r
-              ON julianday(r.start_utc) >= b.start_jd
-             AND julianday(r.start_utc) < b.end_jd
-             AND r.start_utc >= ? AND r.start_utc < ?{extra_filters}
+              ON r.start_utc >= b.start_utc
+             AND r.start_utc < b.end_utc{extra_filters}
             GROUP BY b.bucket_index
             ORDER BY b.bucket_index""",
-        [*bucket_parameters, start, end, *filter_parameters],
+        [*bucket_parameters, *filter_parameters],
     )
 
     items = []
     for row in rows:
         index = row["bucket_index"]
-        if bucket_microseconds is not None:
-            bucket_start, bucket_end = fixed_buckets[index]
-        else:
-            bucket_start = start_dt + timedelta(microseconds=total_microseconds * index // bars)
-            bucket_end = end_dt if index + 1 == bars else start_dt + timedelta(microseconds=total_microseconds * (index + 1) // bars)
+        bucket_start, bucket_end = fixed_buckets[index]
         read_count = row["read_count"] or 0
         write_count = row["write_count"] or 0
         other_count = row["other_count"] or 0

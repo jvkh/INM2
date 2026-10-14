@@ -28,7 +28,8 @@ def get_request(
     rows = database.query(
         """SELECT r.*, a.ip AS actor_ip, a.first_time AS actor_first_time,
                   a.last_time AS actor_last_time, a.provider, a.asn, a.city, a.country,
-                  h.name AS host
+                  h.name AS host,
+                  CASE WHEN EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = CASE WHEN lower(rtrim(h.name, '.')) LIKE 'www.%' THEN substr(lower(rtrim(h.name, '.')), 5) ELSE lower(rtrim(h.name, '.')) END) THEN 1 ELSE 0 END AS host_known
            FROM request AS r
            JOIN actor AS a ON a.actor_id = r.actor_id
            LEFT JOIN host AS h ON h.host_id = r.host_id
@@ -88,14 +89,7 @@ def get_requests(
     parameters: list[Any] = [start, end]
     if burst_id is not None:
         conditions.append(
-            """EXISTS (
-                   SELECT 1 FROM burst AS b
-                   WHERE b.burst_id = ?
-                     AND b.actor_id = r.actor_id
-                     AND b.host_id IS r.host_id
-                     AND r.start_utc >= b.start_time
-                     AND r.start_utc <= b.end_time
-               )"""
+            "EXISTS (SELECT 1 FROM burst_request AS br WHERE br.burst_id = ? AND br.request_id = r.request_id)"
         )
         parameters.append(burst_id)
     if category is not None:
@@ -161,6 +155,7 @@ def get_requests(
     items = database.query(
         f"""SELECT r.request_id, r.start_utc, r.actor_id, a.ip AS actor_ip,
                       a.provider, a.country, a.city, a.asn, r.host_id, h.name AS host,
+                      CASE WHEN EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = CASE WHEN lower(rtrim(h.name, '.')) LIKE 'www.%' THEN substr(lower(rtrim(h.name, '.')), 5) ELSE lower(rtrim(h.name, '.')) END) THEN 1 ELSE 0 END AS host_known,
                       r.request_method, r.request_path, r.request_scheme,
                       (SELECT GROUP_CONCAT(c.category_name, ', ')
                        FROM request_category AS rc
