@@ -97,7 +97,7 @@ The response contains `items`, `total`, `limit`, `offset`, `from`, and `to`. Eac
 
 `GET /api/v1/actors` returns actors with at least one request in the selected time range. With `new_only=true`, it returns only actors whose `first_time` falls in that range. It supports `from`, `to`, substring filters `provider`, `country`, `city`, `asn`, and `ip`, plus `country_exact=true` and `ip_exact=true` for exact matching. `search` searches IP, city, provider, and ASN; `global_search` searches IP, country, city, and ASN. Pagination uses `limit` and `offset`. `sort_by` supports `ip`, `first_time`, `last_time`, `provider`, `asn`, `city`, `country`, and `request_count`; `sort_order` is `asc` or `desc`.
 
-`GET /api/v1/countries` returns countries with requests in the selected period. `GET /api/v1/actors/{id}` returns an actor profile, including request and burst totals over the full stored history.
+`GET /api/v1/countries` returns countries with requests in the selected period. `GET /api/v1/actors/{id}` returns an actor profile, including request and burst totals over the full stored history. `DELETE /api/v1/actors/{id}` deletes an actor and its requests and bursts through foreign-key cascades. The response includes the IP and deleted request and burst counts; the action is recorded in the API log.
 
 ```sh
 curl -G 'http://localhost:8000/api/v1/actors' \

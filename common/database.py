@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock
-from typing import Any, Sequence
+from typing import Any, Iterator, Sequence
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -90,6 +91,19 @@ class Database:
         with self._lock:
             cursor = self.connection.execute(sql, parameters)
             return [dict(row) for row in cursor.fetchall()]
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Run a multi-statement transaction while holding this connection lock."""
+        with self._lock:
+            self.connection.execute("BEGIN IMMEDIATE")
+            try:
+                yield self.connection
+            except BaseException:
+                self.connection.rollback()
+                raise
+            else:
+                self.connection.commit()
 
     def close(self) -> None:
         """Close the underlying database connection."""

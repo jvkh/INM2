@@ -1,6 +1,7 @@
 """Actor listing endpoint."""
 
 from datetime import datetime, timezone
+import logging
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request
@@ -9,6 +10,7 @@ from api.dependencies import get_database
 from common.search import parse_search
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _utc_timestamp(value: datetime) -> str:
@@ -103,6 +105,40 @@ def get_actor(
     return rows[0]
 
 
+@router.delete("/actors/{id}")
+def delete_actor(
+    request: Request,
+    id: int = Path(ge=1, description="Actor ID"),
+) -> dict[str, Any]:
+    """Delete one actor and all requests and bursts owned by that actor."""
+    database = get_database(request)
+    with database.transaction() as connection:
+        actor = connection.execute(
+            "SELECT ip FROM actor WHERE actor_id = ?", (id,)
+        ).fetchone()
+        if actor is None:
+            raise HTTPException(status_code=404, detail="Actor not found")
+        request_count = connection.execute(
+            "SELECT COUNT(*) FROM request WHERE actor_id = ?", (id,)
+        ).fetchone()[0]
+        burst_count = connection.execute(
+            "SELECT COUNT(*) FROM burst WHERE actor_id = ?", (id,)
+        ).fetchone()[0]
+        connection.execute("DELETE FROM actor WHERE actor_id = ?", (id,))
+
+    logger.info(
+        "Actor deleted: actor_id=%d ip=%s requests=%d bursts=%d",
+        id, actor["ip"], request_count, burst_count,
+    )
+    return {
+        "deleted": True,
+        "actor_id": id,
+        "ip": actor["ip"],
+        "request_count": request_count,
+        "burst_count": burst_count,
+    }
+
+
 @router.get("/actors")
 def get_actors(
     request: Request,
@@ -164,7 +200,11 @@ def get_actors(
     items = database.query(
         f"""SELECT a.actor_id, a.ip, a.first_time, a.last_time,
                       a.provider, a.asn, a.city, a.country,
-                      COUNT(r.request_id) AS request_count
+                      COUNT(r.request_id) AS request_count,
+                      (SELECT COUNT(*) FROM request AS all_requests WHERE all_requests.actor_id = a.actor_id)
+                          AS total_request_count,
+                      (SELECT COUNT(*) FROM burst AS b WHERE b.actor_id = a.actor_id)
+                          AS burst_count
                {joins}
                WHERE {where_clause}
                GROUP BY a.actor_id

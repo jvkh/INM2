@@ -2,13 +2,13 @@ import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, 
 import {
   Activity, ArrowDown, ArrowDownRight, ArrowRight, ArrowUp, ArrowUpRight, Bell, Blocks, BookOpenText, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CircleHelp,
   Clock3, Command, Database, FileText, Filter, Globe2, LayoutDashboard, List, LockKeyhole, LockOpen, Menu,
-  Network, Search, Settings2, ShieldAlert, SkipBack, SkipForward, Sun, Users, X,
+  Network, Search, Settings2, ShieldAlert, SkipBack, SkipForward, Sun, Trash2, Users, X,
 } from 'lucide-react'
 import { messages, type Language, type MessageKey } from './i18n'
 
 type Theme = 'auto' | 'cloud' | 'midnight' | 'moss'
-type PageKey = 'dashboard' | 'bursts' | 'actors' | 'hosts' | 'categories' | 'requests' | 'administration' | 'categoryGuide' | 'logging'
-const pageKeys: PageKey[] = ['dashboard', 'bursts', 'actors', 'hosts', 'categories', 'requests', 'administration', 'categoryGuide', 'logging']
+type PageKey = 'dashboard' | 'bursts' | 'actors' | 'hosts' | 'categories' | 'requests' | 'administration' | 'categoryGuide' | 'burstGuide' | 'countGuide' | 'hostGuide' | 'logging'
+const pageKeys: PageKey[] = ['dashboard', 'bursts', 'actors', 'hosts', 'categories', 'requests', 'administration', 'categoryGuide', 'burstGuide', 'countGuide', 'hostGuide', 'logging']
 function pageFromUrl(): PageKey | null {
   const value = new URLSearchParams(window.location.search).get('page')
   return value && pageKeys.includes(value as PageKey) ? value as PageKey : null
@@ -78,7 +78,7 @@ type TimeRange = { from: Date; to: Date; preset: RangePreset; query: string }
 type TrafficBucket = { from: string; to: string }
 type UiPreferences = { language?: Language; theme?: Theme; lastPage?: PageKey; sidebarCollapsed?: boolean; timeRange?: { preset: RangePreset; from?: string; to?: string }; tablePageSizes?: Partial<Record<TableKey, PageSize>>; burstSort?: BurstSort; burstFilters?: BurstFilters; actorSort?: ActorSort; actorFilters?: ActorFilters; hostSort?: HostSort; hostFilters?: HostFilters; categorySort?: CategorySort; categoryFilters?: CategoryFilters; requestSort?: RequestSort; requestFilters?: RequestFilters }
 type ApiResult<T> = { items: T[]; total?: number; known_count?: number; summary?: Record<string, number | null> }
-type ActorItem = { actor_id: number; ip: string; first_time: string; last_time: string; provider: string | null; asn: string | null; city: string | null; country: string | null; request_count: number }
+type ActorItem = { actor_id: number; ip: string; first_time: string; last_time: string; provider: string | null; asn: string | null; city: string | null; country: string | null; request_count: number; total_request_count: number; burst_count: number }
 type BurstItem = { burst_id: number; actor_ip: string; country: string | null; provider: string | null; asn: string | null; city: string | null; host: string | null; known: number; start_time: string; end_time: string; avg_count: number; read_count: number; write_count: number; other_count: number }
 type HostItem = { host_id: number; host: string; known: number; total_count: number; read_count: number; write_count: number; other_count: number; http_count: number; https_count: number; other_scheme_count: number }
 type CategoryItem = { category_id: number; category_name: string; total_count: number; read_count: number; write_count: number; other_count: number; http_count: number; https_count: number; other_scheme_count: number }
@@ -172,11 +172,11 @@ function countryFlag(country: string | null | undefined) {
     china: 'CN', colombia: 'CO', croatia: 'HR', cyprus: 'CY', czechia: 'CZ', 'czech republic': 'CZ',
     denmark: 'DK', egypt: 'EG', finland: 'FI', france: 'FR', germany: 'DE', greece: 'GR',
     hungary: 'HU', india: 'IN', indonesia: 'ID', ireland: 'IE', israel: 'IL', italy: 'IT', japan: 'JP',
-    malaysia: 'MY', mexico: 'MX', netherlands: 'NL', norway: 'NO', pakistan: 'PK', poland: 'PL',
+    lithuania: 'LT', luxembourg: 'LU', malaysia: 'MY', mexico: 'MX', netherlands: 'NL', nigeria: 'NG', norway: 'NO', pakistan: 'PK', panama: 'PA', poland: 'PL',
     portugal: 'PT', romania: 'RO', russia: 'RU', singapore: 'SG', slovakia: 'SK', slovenia: 'SI',
-    'south africa': 'ZA', 'south korea': 'KR', spain: 'ES', sweden: 'SE', switzerland: 'CH',
+    seychelles: 'SC', 'south africa': 'ZA', 'south korea': 'KR', spain: 'ES', sweden: 'SE', switzerland: 'CH',
     taiwan: 'TW', thailand: 'TH', turkey: 'TR', ukraine: 'UA', 'united kingdom': 'GB',
-    'united states': 'US', 'united states of america': 'US', vietnam: 'VN',
+    'united arab emirates': 'AE', 'united states': 'US', 'united states of america': 'US', vietnam: 'VN',
     'russian federation': 'RU', turkiye: 'TR', 'viet nam': 'VN', 'north korea': 'KP',
     'democratic people s republic of korea': 'KP', 'republic of korea': 'KR',
     'iran islamic republic of': 'IR', iran: 'IR', 'syrian arab republic': 'SY', syria: 'SY',
@@ -281,6 +281,7 @@ function useMetricTrends(range: TimeRange, page: string, filters: Record<string,
   const url = apiUrl('metric_trends', range.query, extras)
   const [result, setResult] = useState<{ url: string; data: MetricTrendResponse } | null>(null)
   const [loading, setLoading] = useState(true)
+  const [reloadKey, setReloadKey] = useState(0)
   useEffect(() => {
     const controller = new AbortController()
     setLoading(true)
@@ -293,8 +294,8 @@ function useMetricTrends(range: TimeRange, page: string, filters: Record<string,
       .catch((error: unknown) => { if (!controller.signal.aborted) console.error('Could not load metric trends', error) })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [url])
-  return { data: result?.url === url ? result.data : undefined, loading }
+  }, [url, reloadKey])
+  return { data: result?.url === url ? result.data : undefined, loading, reload: () => setReloadKey((key) => key + 1) }
 }
 
 const preferenceGroup = 'ui_preferences'
@@ -783,6 +784,9 @@ function App() {
           <a href="#" title={sidebarCollapsed ? t('administration') : undefined} className={`nav-link ${activePage === 'administration' ? 'active' : ''}`} aria-current={activePage === 'administration' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('administration'); setMenuOpen(false) }}><Settings2 size={18} /><span>{t('administration')}</span></a>
           <a href="#" title={sidebarCollapsed ? t('logging') : undefined} className={`nav-link ${activePage === 'logging' ? 'active' : ''}`} aria-current={activePage === 'logging' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('logging'); setMenuOpen(false) }}><FileText size={18} /><span>{t('logging')}</span></a>
           <a href="#" title={sidebarCollapsed ? t('categoryGuide') : undefined} className={`nav-link ${activePage === 'categoryGuide' ? 'active' : ''}`} aria-current={activePage === 'categoryGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('categoryGuide'); setMenuOpen(false) }}><BookOpenText size={18} /><span>{t('categoryGuide')}</span></a>
+          <a href="#" title={sidebarCollapsed ? t('burstGuide') : undefined} className={`nav-link ${activePage === 'burstGuide' ? 'active' : ''}`} aria-current={activePage === 'burstGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('burstGuide'); setMenuOpen(false) }}><Activity size={18} /><span>{t('burstGuide')}</span></a>
+          <a href="#" title={sidebarCollapsed ? t('countGuide') : undefined} className={`nav-link ${activePage === 'countGuide' ? 'active' : ''}`} aria-current={activePage === 'countGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('countGuide'); setMenuOpen(false) }}><Database size={18} /><span>{t('countGuide')}</span></a>
+          <a href="#" title={sidebarCollapsed ? t('hostGuide') : undefined} className={`nav-link ${activePage === 'hostGuide' ? 'active' : ''}`} aria-current={activePage === 'hostGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('hostGuide'); setMenuOpen(false) }}><Globe2 size={18} /><span>{t('hostGuide')}</span></a>
         </div>
         <div className="sidebar-spacer" />
       </aside>
@@ -804,7 +808,7 @@ function App() {
         </header>
 
         <div className="content-wrap">
-          {activePage === 'bursts' ? <BurstsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.bursts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('bursts', size)} sort={burstSort} onSortChange={updateBurstSort} filters={burstFilters} onFiltersChange={updateBurstFilters} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'actors' ? <ActorsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.actors ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('actors', size)} sort={actorSort} onSortChange={updateActorSort} filters={actorFilters} onFiltersChange={updateActorFilters} onActorSelect={(ip) => { setSelectedTrafficBucket(null); setSelectedActorIp(ip); setSelectedBurstId(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'hosts' ? <HostsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.hosts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('hosts', size)} sort={hostSort} onSortChange={updateHostSort} filters={hostFilters} onFiltersChange={updateHostFilters} onHostSelect={(host) => { setSelectedTrafficBucket(null); setSelectedHost(host); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'categories' ? <CategoriesPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.categories ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('categories', size)} sort={categorySort} onSortChange={updateCategorySort} filters={categoryFilters} onFiltersChange={updateCategoryFilters} onCategorySelect={(category) => { setSelectedTrafficBucket(null); setSelectedCategory(category); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'requests' ? <RequestsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.requests ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('requests', size)} burstId={selectedBurstId} actorIp={selectedActorIp} host={selectedHost} category={selectedCategory} path={selectedPath} trafficBucket={selectedTrafficBucket} onTrafficBucketClear={() => setSelectedTrafficBucket(null)} filters={requestFilters} onFiltersChange={updateRequestFilters} sort={requestSort} onSortChange={updateRequestSort} onBurstClear={() => setSelectedBurstId(null)} onActorClear={() => setSelectedActorIp(null)} onHostClear={() => setSelectedHost(null)} onCategoryClear={() => setSelectedCategory(null)} onPathClear={() => setSelectedPath(null)} /> : activePage === 'administration' ? <AdministrationPage t={t} language={language} /> : activePage === 'categoryGuide' ? <CategoryGuidePage t={t} /> : activePage === 'logging' ? <LoggingPage t={t} /> : <DashboardPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} onBucketSelect={(bucket) => { setSelectedTrafficBucket(bucket); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} />}
+          {activePage === 'bursts' ? <BurstsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.bursts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('bursts', size)} sort={burstSort} onSortChange={updateBurstSort} filters={burstFilters} onFiltersChange={updateBurstFilters} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'actors' ? <ActorsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.actors ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('actors', size)} sort={actorSort} onSortChange={updateActorSort} filters={actorFilters} onFiltersChange={updateActorFilters} onActorSelect={(ip) => { setSelectedTrafficBucket(null); setSelectedActorIp(ip); setSelectedBurstId(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'hosts' ? <HostsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.hosts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('hosts', size)} sort={hostSort} onSortChange={updateHostSort} filters={hostFilters} onFiltersChange={updateHostFilters} onHostSelect={(host) => { setSelectedTrafficBucket(null); setSelectedHost(host); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'categories' ? <CategoriesPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.categories ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('categories', size)} sort={categorySort} onSortChange={updateCategorySort} filters={categoryFilters} onFiltersChange={updateCategoryFilters} onCategorySelect={(category) => { setSelectedTrafficBucket(null); setSelectedCategory(category); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'requests' ? <RequestsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.requests ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('requests', size)} burstId={selectedBurstId} actorIp={selectedActorIp} host={selectedHost} category={selectedCategory} path={selectedPath} trafficBucket={selectedTrafficBucket} onTrafficBucketClear={() => setSelectedTrafficBucket(null)} filters={requestFilters} onFiltersChange={updateRequestFilters} sort={requestSort} onSortChange={updateRequestSort} onBurstClear={() => setSelectedBurstId(null)} onActorClear={() => setSelectedActorIp(null)} onHostClear={() => setSelectedHost(null)} onCategoryClear={() => setSelectedCategory(null)} onPathClear={() => setSelectedPath(null)} /> : activePage === 'administration' ? <AdministrationPage t={t} language={language} /> : activePage === 'categoryGuide' ? <CategoryGuidePage t={t} /> : activePage === 'burstGuide' ? <BurstGuidePage t={t} /> : activePage === 'countGuide' ? <CountGuidePage t={t} /> : activePage === 'hostGuide' ? <HostGuidePage t={t} /> : activePage === 'logging' ? <LoggingPage t={t} /> : <DashboardPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} onBucketSelect={(bucket) => { setSelectedTrafficBucket(bucket); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} />}
 
           <footer className="page-footer"><span>INM2 <b>·</b> Internet Noise Monitor</span><div className="footer-controls">{preferencesError && <span className="preferences-error">{t('preferencesError')}</span>}<label><span>{t('theme')}</span><select value={theme} onChange={(event) => updateTheme(event.target.value as Theme)} aria-label={t('theme')}><option value="auto">{t('themeAuto')}</option><option value="cloud">{t('themeCloud')}</option><option value="midnight">{t('themeMidnight')}</option><option value="moss">{t('themeMoss')}</option></select><Sun size={14} /></label><label><span>{t('language')}</span><select value={language} onChange={(event) => updateLanguage(event.target.value as Language)} aria-label={t('language')}><option value="de">DE</option><option value="en">EN</option></select></label><span className="version-label">v{__APP_VERSION__}</span></div></footer>
         </div>
@@ -1042,6 +1046,9 @@ function ActorsPage({ t, language, range, onRangeChange, lastImport, sort, onSor
   const trends = useMetricTrends(range, 'actors', { search: filters.search.trim(), country: filters.country, country_exact: filters.country ? 'true' : '' })
   const [pageIndex, setPageIndex] = useState(0)
   const [draftFilters, setDraftFilters] = useState<ActorFilters>(filters)
+  const [actorToDelete, setActorToDelete] = useState<ActorItem | null>(null)
+  const [deletingActor, setDeletingActor] = useState(false)
+  const [deleteActorError, setDeleteActorError] = useState('')
   const countryOptions = useApiData<ApiResult<{ country: string }>>(apiUrl('countries', range.query))
   const actorParams = Object.fromEntries(Object.entries({ search: filters.search.trim(), country: filters.country, country_exact: filters.country ? 'true' : '', sort_by: sort.column, sort_order: sort.direction, limit: String(pageSize), offset: String(pageIndex * pageSize) }).filter(([, value]) => value))
   const result = useApiData<PagedResponse<ActorItem>>(apiUrl('actors', range.query, actorParams))
@@ -1055,6 +1062,26 @@ function ActorsPage({ t, language, range, onRangeChange, lastImport, sort, onSor
   const applyFilters = () => { setPageIndex(0); onFiltersChange(draftFilters) }
   const resetFilters = () => { const empty = { ...defaultActorFilters }; setDraftFilters(empty); setPageIndex(0); onFiltersChange(empty) }
   const changeSort = (column: ActorSortColumn) => { setPageIndex(0); onSortChange({ column, direction: sort.column === column && sort.direction === 'asc' ? 'desc' : 'asc' }) }
+  const deleteSelectedActor = async () => {
+    if (!actorToDelete) return
+    setDeletingActor(true)
+    setDeleteActorError('')
+    try {
+      const response = await fetch(apiUrl(`actors/${actorToDelete.actor_id}`), { method: 'DELETE', headers: { Accept: 'application/json' } })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      setActorToDelete(null)
+      if (actors.length === 1 && pageIndex > 0) setPageIndex((value) => Math.max(0, value - 1))
+      else result.reload()
+      newActors.reload()
+      countryOptions.reload()
+      trends.reload()
+    } catch (error) {
+      console.error('Could not delete actor', error)
+      setDeleteActorError(t('deleteActorFailed'))
+    } finally {
+      setDeletingActor(false)
+    }
+  }
   return <>
     <PageHeading title={t('actors')} subtitle={t('actorPageSubtitle')} t={t} language={language} range={range} onRangeChange={onRangeChange} lastImport={lastImport} />
     <PageDataState loading={result.loading || newActors.loading} error={result.error ?? newActors.error} retry={retry} t={t} />
@@ -1063,10 +1090,11 @@ function ActorsPage({ t, language, range, onRangeChange, lastImport, sort, onSor
       <div className="metric-grid"><MetricCard t={t} language={language} label={t('uniqueActors')} value={numberText(result.data?.total, language)} icon={Users} iconClass="violet" trend={trends.data?.metrics.actor_count} trendLoading={trends.loading} trendAbsoluteUnit={t('actors')} /><MetricCard t={t} language={language} label={t('newActors')} value={numberText(newActors.data?.total, language)} icon={ArrowUpRight} iconClass="blue" trend={trends.data?.metrics.new_actor_count} trendLoading={trends.loading} trendAbsoluteUnit={t('actors')} /><MetricCard t={t} language={language} label={t('countriesSeen')} value={numberText(trends.data?.metrics.country_count?.current ?? countries, language)} icon={Globe2} iconClass="green" trend={trends.data?.metrics.country_count} trendLoading={trends.loading} trendAbsoluteUnit={t('countries')} /><MetricCard t={t} language={language} label={t('avgRequestsActor')} value={numberText(trends.data?.metrics.avg_requests_per_actor?.current ?? (actors.length ? totalRequests / actors.length : 0), language)} icon={Activity} iconClass="amber" trend={trends.data?.metrics.avg_requests_per_actor} trendLoading={trends.loading} trendAbsoluteUnit={t('requestsPerActor')} trendAbsoluteDecimals={1} /></div>
       <div className="panel data-list-panel"><ListHeading title={t('actors')} />
         <Paginator total={result.data?.total ?? 0} pageIndex={pageIndex} pageSize={pageSize} onPageChange={setPageIndex} onPageSizeChange={onPageSizeChange} t={t} language={language} />
-        <TableScroller t={t}><table className="actor-table"><thead><tr><SortableHeader column="ip" label={t('ipAddress')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim())} filterLabel={t('filteredColumn')} /><SortableHeader column="country" label={t('location')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.country)} filterLabel={t('filteredColumn')} /><SortableHeader column="first_time" label={t('firstSeen')} sort={sort} onSort={changeSort} /><SortableHeader column="last_time" label={t('lastSeen')} sort={sort} onSort={changeSort} /><SortableHeader column="request_count" label={t('requestsLabel')} sort={sort} onSort={changeSort} /><th /></tr></thead><tbody>{actors.length ? actors.map((actor) => <tr key={actor.actor_id}><td><span className="actor-detail"><button type="button" className="table-link primary-cell" onClick={() => onActorSelect(actor.ip)}>{actor.ip}</button>{(actor.provider || actor.asn) && <small>{[actor.provider, actor.asn].filter(Boolean).join(' · ')}</small>}</span></td><td><span className="actor-detail"><span className="country-cell"><span className="country-flag" title={actor.country || ''}>{countryFlag(actor.country)}</span>{actor.country || '—'}</span>{actor.city && <small>{actor.city}</small>}</span></td><td>{dateText(actor.first_time, language)}</td><td>{dateText(actor.last_time, language)}</td><td><span className="request-count">{numberText(actor.request_count, language)}</span></td><td><button type="button" className="icon-button row-more" aria-label={t('viewActorRequests')} title={t('viewActorRequests')} onClick={() => onActorSelect(actor.ip)}><ArrowUpRight size={15} /></button></td></tr>) : <EmptyRows t={t} columns={6} />}</tbody></table></TableScroller>
+        <TableScroller t={t}><table className="actor-table"><thead><tr><SortableHeader column="ip" label={t('ipAddress')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim())} filterLabel={t('filteredColumn')} /><SortableHeader column="country" label={t('location')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.country)} filterLabel={t('filteredColumn')} /><SortableHeader column="first_time" label={t('firstSeen')} sort={sort} onSort={changeSort} /><SortableHeader column="last_time" label={t('lastSeen')} sort={sort} onSort={changeSort} /><SortableHeader column="request_count" label={t('requestsLabel')} sort={sort} onSort={changeSort} /><th /></tr></thead><tbody>{actors.length ? actors.map((actor) => <tr key={actor.actor_id}><td><span className="actor-detail"><button type="button" className="table-link primary-cell" onClick={() => onActorSelect(actor.ip)}>{actor.ip}</button><small>{actor.provider || '—'} · {actor.asn || '—'}</small></span></td><td><span className="actor-detail"><span className="country-cell"><span className="country-flag" title={actor.country || ''}>{countryFlag(actor.country)}</span>{actor.country || '—'}</span><small>{actor.city || '—'}</small></span></td><td>{dateText(actor.first_time, language)}</td><td>{dateText(actor.last_time, language)}</td><td><span className="request-count">{numberText(actor.request_count, language)}</span></td><td><span className="actor-row-actions"><button type="button" className="icon-button row-more" aria-label={t('viewActorRequests')} title={t('viewActorRequests')} onClick={() => onActorSelect(actor.ip)}><ArrowUpRight size={15} /></button><button type="button" className="icon-button row-more actor-delete-button" aria-label={t('deleteActor')} title={t('deleteActor')} onClick={() => { setDeleteActorError(''); setActorToDelete(actor) }}><Trash2 size={15} /></button></span></td></tr>) : <EmptyRows t={t} columns={6} />}</tbody></table></TableScroller>
         <Paginator total={result.data?.total ?? 0} pageIndex={pageIndex} pageSize={pageSize} onPageChange={setPageIndex} onPageSizeChange={onPageSizeChange} t={t} language={language} />
       </div>
     </>}
+    {actorToDelete && <div className="actor-delete-backdrop"><section className="actor-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="actor-delete-title"><h2 id="actor-delete-title">{t('deleteActor')}</h2><p>{t('confirmDeleteActor').replace('{ip}', actorToDelete.ip).replace('{requests}', numberText(actorToDelete.total_request_count, language)).replace('{bursts}', numberText(actorToDelete.burst_count, language))}</p><dl className="actor-delete-details"><div><dt>{t('provider')}</dt><dd>{actorToDelete.provider || '—'}</dd></div><div><dt>{t('asn')}</dt><dd>{actorToDelete.asn || '—'}</dd></div><div><dt>{t('city')}</dt><dd>{actorToDelete.city || '—'}</dd></div><div><dt>{t('country')}</dt><dd><span className="country-flag" title={actorToDelete.country || ''}>{countryFlag(actorToDelete.country)}</span>{actorToDelete.country || '—'}</dd></div></dl><p className="actor-delete-warning">{t('deleteActorIrreversible')}</p>{deleteActorError && <p className="actor-delete-error" role="alert">{deleteActorError}</p>}<div className="actor-delete-actions"><button type="button" className="filter-button" disabled={deletingActor} onClick={() => setActorToDelete(null)}>{t('cancel')}</button><button type="button" className="primary-button actor-delete-confirm" disabled={deletingActor} onClick={deleteSelectedActor}><Trash2 size={15} />{deletingActor ? t('deletingActor') : t('deleteActor')}</button></div></section></div>}
   </>
 }
 
@@ -1296,17 +1324,53 @@ function CategoryGuidePage({ t }: { t: (key: MessageKey) => string }) {
     { title: 'guideLegacyOther', description: 'guideLegacyOtherDescription', example: 'Kategorie: andere' },
   ]
 
+  return <InfoGuidePage t={t} title="categoryGuideTitle" subtitle="categoryGuideSubtitle" entries={entries} note="guideMultipleCategories" />
+}
+
+function BurstGuidePage({ t }: { t: (key: MessageKey) => string }) {
+  const entries: GuideEntry[] = [
+    { title: 'burstGuideGroupingTitle', description: 'burstGuideGroupingBody', exampleKey: 'burstGuideGroupingExample' },
+    { title: 'burstGuideRuleTitle', description: 'burstGuideRuleBody', exampleKey: 'burstGuideRuleExample' },
+    { title: 'burstGuideMeaningTitle', description: 'burstGuideMeaningBody', exampleKey: 'burstGuideMeaningExample' },
+    { title: 'burstGuideLimitsTitle', description: 'burstGuideLimitsBody', exampleKey: 'burstGuideLimitsExample' },
+  ]
+  return <InfoGuidePage t={t} title="burstGuideTitle" subtitle="burstGuideSubtitle" entries={entries} note="burstGuideCaveat" />
+}
+
+type GuideEntry = { title: MessageKey; description: MessageKey; example?: string; exampleKey?: MessageKey }
+function InfoGuidePage({ t, title, subtitle, entries, note }: { t: (key: MessageKey) => string; title: MessageKey; subtitle: MessageKey; entries: GuideEntry[]; note: MessageKey }) {
   return <>
-    <div className="page-heading"><div><h1>{t('categoryGuideTitle')}</h1><p>{t('categoryGuideSubtitle')}</p></div></div>
+    <div className="page-heading"><div><h1>{t(title)}</h1><p>{t(subtitle)}</p></div></div>
     <div className="category-guide-grid">
       {entries.map((entry) => <article className="panel category-guide-card" key={entry.title}>
         <h2>{t(entry.title)}</h2>
         <p>{t(entry.description)}</p>
-        <div className="category-guide-example"><strong>{t('guideExamples')}</strong><code>{entry.example}</code></div>
+        {(entry.example || entry.exampleKey) && <div className="category-guide-example"><strong>{t('guideExamples')}</strong><code>{entry.exampleKey ? t(entry.exampleKey) : entry.example}</code></div>}
       </article>)}
     </div>
-    <div className="category-guide-note"><CircleHelp size={16} /><span>{t('guideMultipleCategories')}</span></div>
+    <div className="category-guide-note"><CircleHelp size={16} /><span>{t(note)}</span></div>
   </>
+}
+
+function CountGuidePage({ t }: { t: (key: MessageKey) => string }) {
+  const entries: GuideEntry[] = [
+    { title: 'countGuideTimeTitle', description: 'countGuideTimeBody', exampleKey: 'countGuideTimeExample' },
+    { title: 'countGuideRequestsTitle', description: 'countGuideRequestsBody', exampleKey: 'countGuideRequestsExample' },
+    { title: 'countGuideActorsTitle', description: 'countGuideActorsBody', exampleKey: 'countGuideActorsExample' },
+    { title: 'countGuideBurstsTitle', description: 'countGuideBurstsBody', exampleKey: 'countGuideBurstsExample' },
+    { title: 'countGuideCategoriesTitle', description: 'countGuideCategoriesBody', exampleKey: 'countGuideCategoriesExample' },
+    { title: 'countGuideTrendsTitle', description: 'countGuideTrendsBody', exampleKey: 'countGuideTrendsExample' },
+  ]
+  return <InfoGuidePage t={t} title="countGuideTitle" subtitle="countGuideSubtitle" entries={entries} note="countGuideCaveat" />
+}
+
+function HostGuidePage({ t }: { t: (key: MessageKey) => string }) {
+  const entries: GuideEntry[] = [
+    { title: 'hostGuideKnownTitle', description: 'hostGuideKnownBody', exampleKey: 'hostGuideKnownExample' },
+    { title: 'hostGuideMatchingTitle', description: 'hostGuideMatchingBody', exampleKey: 'hostGuideMatchingExample' },
+    { title: 'hostGuideBurstTitle', description: 'hostGuideBurstBody', exampleKey: 'hostGuideBurstExample' },
+  ]
+  return <InfoGuidePage t={t} title="hostGuideTitle" subtitle="hostGuideSubtitle" entries={entries} note="hostGuideCaveat" />
 }
 
 function LoggingPage({ t }: { t: (key: MessageKey) => string }) {

@@ -117,7 +117,7 @@ curl -G 'http://localhost:8000/api/v1/actors' \
   --data-urlencode 'new_only=true'
 ```
 
-`GET /api/v1/actors/{id}` liefert das Akteursprofil einschließlich der Requests- und Burst-Gesamtzahlen über die gesamte gespeicherte Historie.
+`GET /api/v1/actors/{id}` liefert das Akteursprofil einschließlich der Requests- und Burst-Gesamtzahlen über die gesamte gespeicherte Historie. `DELETE /api/v1/actors/{id}` löscht einen Akteur sowie seine Requests und Bursts per Fremdschlüssel-Kaskade. Die Antwort enthält die IP und die Anzahl der gelöschten Requests und Bursts; die Aktion wird im API-Log protokolliert.
 
 ### Bursts
 
