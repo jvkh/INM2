@@ -48,6 +48,10 @@ curl http://localhost:8000/api/v1/status
 
 A healthy response includes `status: "ok"`, `database: "ok"`, `collector_status`, and `environment`. `collector_status.import_file` is populated while a file is being processed. `collector_status.last_import_file` retains the most recently started filename after an import finishes. If the status handler cannot read the database or settings, it still returns HTTP 200 with `status: "degraded"`, `database: "unavailable"`, and an unavailable collector status.
 
+### Logs
+
+`GET /api/v1/logs?service=collector` reads the latest log entries. `service` can be `collector`, `api`, `ui_access`, or `ui_error`; `limit` is optional (default 2000, maximum 10000 lines). Output is also capped at 2 MiB. `DELETE /api/v1/logs?service=collector` resets the selected log. The Logging page displays the same services in tabs and refreshes automatically. This endpoint does not require a database connection, so logs remain viewable during a database outage.
+
 ### New data notifications
 
 `GET /api/v1/notifications` returns requests and bursts whose IDs are newer than the stored seen cursors. The response includes totals, up to five recent entries of each type, and the latest cursor values. `PUT /api/v1/notifications/seen?request_cursor=…&burst_cursor=…` stores the cursors in the settings table. On the first read, current maximum IDs are saved as the starting point so existing records are not reported as new.

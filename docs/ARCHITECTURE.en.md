@@ -32,6 +32,8 @@ In Compose, `./logs` is mounted at `/logs`. Example:
 LOG_FILES=traefik:/logs/access.log
 ```
 
+Operational logs also live in `./logs`, but each service writes to separate files: `collector.log`, `api.log`, `ui-access.log`, and `ui-error.log`. A single shared file is avoided because independent containers can write concurrently and rotate it. Collector and API logs rotate; Nginx records UI request failures and Nginx errors separately. The **Logging** page shows them in tabs, refreshes automatically, and can reset the selected file. Collector and API log size is bounded by rotation; Nginx logs can be reset from the Logging page.
+
 Multiple entries can be separated with semicolons. `IGNORE_REQUEST_ROUTES` can skip requests for configured host/path prefixes. `KNOWN_HOSTS` lists host names belonging to this installation; the collector syncs them to the `known_host` table at startup. Only known-host matching and its summary treat `www.example.org` and `example.org` as the same entry. Stored hosts and their bursts remain separate.
 
 Burst detection splits a sequence when the gap between requests exceeds `BURST_MAX_GAP_SECONDS`. A sequence qualifies once at least `BURST_MIN_REQUESTS` requests fall within `BURST_WINDOW_SECONDS`; from its first qualifying request, the sequence continues until the next gap. Normal imports process only new requests and the short qualification window, extending the last burst for that actor/host pair when appropriate. The `burst_request` table stores exact membership, and its unique request ID prevents one request from belonging to multiple bursts. Existing data is rebuilt once on the first collector start with this schema; a backdated request triggers a full rebuild only for its affected actor/host pair.
@@ -43,7 +45,7 @@ The scheduler runs due jobs when the collector starts and schedules each next ru
 ## Persistence and mounts
 
 - `./databases` is mounted at `/app/databases` for the API and collector and contains the SQLite database.
-- `./logs` is mounted at `/logs` for the collector.
+- `./logs` is mounted at `/logs` for the collector, API, and UI; operational log files are kept separate by service.
 - `./databases/geoip` is mounted read-only at `/geoip`.
 
 Compose uses host bind mounts. Back up and monitor the database on the host. Because the imported log file is consumed by prefix, it is not suitable as a backup or archive.

@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import {
   Activity, ArrowDown, ArrowDownRight, ArrowRight, ArrowUp, ArrowUpRight, Bell, Blocks, BookOpenText, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CircleHelp,
-  Clock3, Command, Database, Filter, Globe2, LayoutDashboard, List, LockKeyhole, LockOpen, Menu,
+  Clock3, Command, Database, FileText, Filter, Globe2, LayoutDashboard, List, LockKeyhole, LockOpen, Menu,
   Network, Search, Settings2, ShieldAlert, SkipBack, SkipForward, Sun, Users, X,
 } from 'lucide-react'
 import { messages, type Language, type MessageKey } from './i18n'
 
 type Theme = 'auto' | 'cloud' | 'midnight' | 'moss'
-type PageKey = 'dashboard' | 'bursts' | 'actors' | 'hosts' | 'categories' | 'requests' | 'administration' | 'categoryGuide'
-const pageKeys: PageKey[] = ['dashboard', 'bursts', 'actors', 'hosts', 'categories', 'requests', 'administration', 'categoryGuide']
+type PageKey = 'dashboard' | 'bursts' | 'actors' | 'hosts' | 'categories' | 'requests' | 'administration' | 'categoryGuide' | 'logging'
+const pageKeys: PageKey[] = ['dashboard', 'bursts', 'actors', 'hosts', 'categories', 'requests', 'administration', 'categoryGuide', 'logging']
 function pageFromUrl(): PageKey | null {
   const value = new URLSearchParams(window.location.search).get('page')
   return value && pageKeys.includes(value as PageKey) ? value as PageKey : null
@@ -92,6 +92,8 @@ type NotificationRequest = { request_id: number; start_utc: string; actor_ip: st
 type NotificationBurst = { burst_id: number; start_time: string; actor_ip: string; host: string | null; request_count: number }
 type NotificationData = { request_count: number; burst_count: number; requests: NotificationRequest[]; bursts: NotificationBurst[]; request_cursor: number; burst_cursor: number }
 type StatusData = { status: string; database: string; collector_status: { available: boolean; last_import: string | null; activity: string; import_file: string; last_import_file: string; import_count: number }; environment: Record<string, string> }
+type LogService = 'collector' | 'api' | 'ui_access' | 'ui_error'
+type LogResponse = { service: LogService; content: string; truncated: boolean }
 type BurstResponse = { summary: Record<string, number | null>; items: BurstItem[]; total?: number; limit: number; offset: number }
 type CountItem = { read_count: number; write_count: number; other_count: number; total_count?: number; from?: string; to?: string }
 
@@ -778,6 +780,7 @@ function App() {
         <div className="admin-navigation">
           <div className="nav-caption">{t('systemHelp')}</div>
           <a href="#" title={sidebarCollapsed ? t('administration') : undefined} className={`nav-link ${activePage === 'administration' ? 'active' : ''}`} aria-current={activePage === 'administration' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('administration'); setMenuOpen(false) }}><Settings2 size={18} /><span>{t('administration')}</span></a>
+          <a href="#" title={sidebarCollapsed ? t('logging') : undefined} className={`nav-link ${activePage === 'logging' ? 'active' : ''}`} aria-current={activePage === 'logging' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('logging'); setMenuOpen(false) }}><FileText size={18} /><span>{t('logging')}</span></a>
           <a href="#" title={sidebarCollapsed ? t('categoryGuide') : undefined} className={`nav-link ${activePage === 'categoryGuide' ? 'active' : ''}`} aria-current={activePage === 'categoryGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('categoryGuide'); setMenuOpen(false) }}><BookOpenText size={18} /><span>{t('categoryGuide')}</span></a>
         </div>
         <div className="sidebar-spacer" />
@@ -800,7 +803,7 @@ function App() {
         </header>
 
         <div className="content-wrap">
-          {activePage === 'bursts' ? <BurstsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.bursts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('bursts', size)} sort={burstSort} onSortChange={updateBurstSort} filters={burstFilters} onFiltersChange={updateBurstFilters} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'actors' ? <ActorsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.actors ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('actors', size)} sort={actorSort} onSortChange={updateActorSort} filters={actorFilters} onFiltersChange={updateActorFilters} onActorSelect={(ip) => { setSelectedTrafficBucket(null); setSelectedActorIp(ip); setSelectedBurstId(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'hosts' ? <HostsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.hosts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('hosts', size)} sort={hostSort} onSortChange={updateHostSort} filters={hostFilters} onFiltersChange={updateHostFilters} onHostSelect={(host) => { setSelectedTrafficBucket(null); setSelectedHost(host); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'categories' ? <CategoriesPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.categories ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('categories', size)} sort={categorySort} onSortChange={updateCategorySort} filters={categoryFilters} onFiltersChange={updateCategoryFilters} onCategorySelect={(category) => { setSelectedTrafficBucket(null); setSelectedCategory(category); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'requests' ? <RequestsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.requests ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('requests', size)} burstId={selectedBurstId} actorIp={selectedActorIp} host={selectedHost} category={selectedCategory} path={selectedPath} trafficBucket={selectedTrafficBucket} onTrafficBucketClear={() => setSelectedTrafficBucket(null)} filters={requestFilters} onFiltersChange={updateRequestFilters} sort={requestSort} onSortChange={updateRequestSort} onBurstClear={() => setSelectedBurstId(null)} onActorClear={() => setSelectedActorIp(null)} onHostClear={() => setSelectedHost(null)} onCategoryClear={() => setSelectedCategory(null)} onPathClear={() => setSelectedPath(null)} /> : activePage === 'administration' ? <AdministrationPage t={t} language={language} /> : activePage === 'categoryGuide' ? <CategoryGuidePage t={t} /> : <DashboardPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); navigateToPage('requests') }} onBucketSelect={(bucket) => { setSelectedTrafficBucket(bucket); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} />}
+          {activePage === 'bursts' ? <BurstsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.bursts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('bursts', size)} sort={burstSort} onSortChange={updateBurstSort} filters={burstFilters} onFiltersChange={updateBurstFilters} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'actors' ? <ActorsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.actors ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('actors', size)} sort={actorSort} onSortChange={updateActorSort} filters={actorFilters} onFiltersChange={updateActorFilters} onActorSelect={(ip) => { setSelectedTrafficBucket(null); setSelectedActorIp(ip); setSelectedBurstId(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'hosts' ? <HostsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.hosts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('hosts', size)} sort={hostSort} onSortChange={updateHostSort} filters={hostFilters} onFiltersChange={updateHostFilters} onHostSelect={(host) => { setSelectedTrafficBucket(null); setSelectedHost(host); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'categories' ? <CategoriesPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.categories ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('categories', size)} sort={categorySort} onSortChange={updateCategorySort} filters={categoryFilters} onFiltersChange={updateCategoryFilters} onCategorySelect={(category) => { setSelectedTrafficBucket(null); setSelectedCategory(category); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'requests' ? <RequestsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.requests ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('requests', size)} burstId={selectedBurstId} actorIp={selectedActorIp} host={selectedHost} category={selectedCategory} path={selectedPath} trafficBucket={selectedTrafficBucket} onTrafficBucketClear={() => setSelectedTrafficBucket(null)} filters={requestFilters} onFiltersChange={updateRequestFilters} sort={requestSort} onSortChange={updateRequestSort} onBurstClear={() => setSelectedBurstId(null)} onActorClear={() => setSelectedActorIp(null)} onHostClear={() => setSelectedHost(null)} onCategoryClear={() => setSelectedCategory(null)} onPathClear={() => setSelectedPath(null)} /> : activePage === 'administration' ? <AdministrationPage t={t} language={language} /> : activePage === 'categoryGuide' ? <CategoryGuidePage t={t} /> : activePage === 'logging' ? <LoggingPage t={t} /> : <DashboardPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} onBucketSelect={(bucket) => { setSelectedTrafficBucket(bucket); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} />}
 
           <footer className="page-footer"><span>INM2 <b>·</b> Internet Noise Monitor</span><div className="footer-controls">{preferencesError && <span className="preferences-error">{t('preferencesError')}</span>}<label><span>{t('theme')}</span><select value={theme} onChange={(event) => updateTheme(event.target.value as Theme)} aria-label={t('theme')}><option value="auto">{t('themeAuto')}</option><option value="cloud">{t('themeCloud')}</option><option value="midnight">{t('themeMidnight')}</option><option value="moss">{t('themeMoss')}</option></select><Sun size={14} /></label><label><span>{t('language')}</span><select value={language} onChange={(event) => updateLanguage(event.target.value as Language)} aria-label={t('language')}><option value="de">DE</option><option value="en">EN</option></select></label><span className="version-label">v{__APP_VERSION__}</span></div></footer>
         </div>
@@ -1302,6 +1305,66 @@ function CategoryGuidePage({ t }: { t: (key: MessageKey) => string }) {
       </article>)}
     </div>
     <div className="category-guide-note"><CircleHelp size={16} /><span>{t('guideMultipleCategories')}</span></div>
+  </>
+}
+
+function LoggingPage({ t }: { t: (key: MessageKey) => string }) {
+  const [service, setService] = useState<LogService>('collector')
+  const services: { key: LogService; label: MessageKey }[] = [
+    { key: 'collector', label: 'logCollector' },
+    { key: 'api', label: 'logApi' },
+    { key: 'ui_access', label: 'logUiAccess' },
+    { key: 'ui_error', label: 'logUiErrors' },
+  ]
+  return <>
+    <div className="page-heading"><div><h1>{t('logging')}</h1><p>{t('loggingSubtitle')}</p></div></div>
+    <section className="panel log-panel">
+      <div className="log-tabs" role="tablist" aria-label={t('logging')}>
+        {services.map((entry) => <button key={entry.key} type="button" role="tab" aria-selected={service === entry.key} className={`log-tab${service === entry.key ? ' active' : ''}`} onClick={() => setService(entry.key)}>{t(entry.label)}</button>)}
+      </div>
+      <LogServicePanel key={service} service={service} t={t} />
+    </section>
+  </>
+}
+
+function LogServicePanel({ service, t }: { service: LogService; t: (key: MessageKey) => string }) {
+  const logs = useApiData<LogResponse>(apiUrl('logs', undefined, { service, limit: '4000' }), 5_000, false)
+  const [wrapLines, setWrapLines] = useState(false)
+  const [resetting, setResetting] = useState(false)
+  const [actionError, setActionError] = useState('')
+  const viewer = useRef<HTMLPreElement | null>(null)
+
+  useEffect(() => {
+    const element = viewer.current
+    if (element && element.scrollHeight - element.scrollTop - element.clientHeight < 100) {
+      element.scrollTop = element.scrollHeight
+    }
+  }, [logs.data?.content])
+
+  const reset = async () => {
+    if (!window.confirm(t('confirmLogReset'))) return
+    setResetting(true)
+    setActionError('')
+    try {
+      const response = await fetch(apiUrl('logs', undefined, { service }), { method: 'DELETE' })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      logs.reload()
+    } catch (reason) {
+      setActionError(reason instanceof Error ? reason.message : t('apiError'))
+    } finally {
+      setResetting(false)
+    }
+  }
+
+  return <>
+    <div className="log-options">
+      <label className="log-wrap-toggle"><input type="checkbox" checked={wrapLines} onChange={(event) => setWrapLines(event.target.checked)} />{t('logWrapLines')}</label>
+      <button type="button" className="filter-button" onClick={logs.reload}>{t('logRefresh')}</button>
+      <button type="button" className="filter-button log-reset" disabled={resetting} onClick={reset}>{resetting ? t('loadingData') : t('logReset')}</button>
+    </div>
+    {actionError && <div className="log-error" role="alert">{actionError}</div>}
+    <div className="log-status" aria-live="polite">{logs.error ? `${t('apiError')}: ${logs.error}` : logs.data?.truncated ? t('logTruncated') : ''}</div>
+    <pre ref={viewer} className={`log-viewer${wrapLines ? ' wrap-lines' : ''}`}>{logs.data?.content || (logs.loading ? t('loadingData') : t('logEmpty'))}</pre>
   </>
 }
 

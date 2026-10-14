@@ -32,6 +32,8 @@ Im Compose-Setup wird `./logs` nach `/logs` eingebunden. Beispiel:
 LOG_FILES=traefik:/logs/access.log
 ```
 
+Die Betriebsprotokolle liegen ebenfalls in `./logs`, aber in getrennten Dateien pro Dienst: `collector.log`, `api.log`, `ui-access.log` und `ui-error.log`. Eine gemeinsame Datei wird vermieden, weil unabhängige Container gleichzeitig schreiben und Rotation auslösen können. Collector und API rotieren ihre Dateien; Nginx protokolliert UI-Zugriffsfehler und Nginx-Fehler separat. Die Seite **Logging** zeigt sie in Registerkarten, aktualisiert die Anzeige automatisch und kann die ausgewählte Datei zurücksetzen. API und Collector begrenzen die Dateigröße durch Rotation; die Nginx-Dateien können über die Logging-Seite zurückgesetzt werden.
+
 Mehrere Einträge können mit Semikolon getrennt werden. `IGNORE_REQUEST_ROUTES` kann Requests für angegebene Host-/Pfadpräfixe auslassen. `KNOWN_HOSTS` enthält eigene Hostnamen; der Collector synchronisiert sie beim Start in die Tabelle `known_host`. Nur beim Abgleich und in der Bekannte-Hosts-Zusammenfassung gelten `www.example.org` und `example.org` als derselbe Eintrag. Die eigentlichen Hosts und ihre Bursts bleiben getrennt.
 
 Die Bursterkennung trennt Folgen, sobald der Abstand zwischen zwei Requests `BURST_MAX_GAP_SECONDS` überschreitet. Eine Folge gilt als Burst, sobald mindestens `BURST_MIN_REQUESTS` Requests innerhalb von `BURST_WINDOW_SECONDS` liegen; ab dem ersten qualifizierenden Request wird die Folge bis zur nächsten Lücke gezählt. Im laufenden Betrieb werden nur neue Requests und das kurze Zeitfenster zur Qualifizierung betrachtet. Passt ein neuer Request zum letzten Burst derselben Akteur-/Host-Kombination, wird dieser Burst fortgesetzt. Die Tabelle `burst_request` speichert die eindeutige Zuordnung; ihre eindeutige Request-ID verhindert, dass ein Request mehreren Bursts angehört. Vorhandene Daten werden beim ersten Collector-Start mit diesem Schema einmal neu aufgebaut; rückdatierte Requests lösen nur für die betroffene Akteur-/Host-Kombination eine vollständige Neuberechnung aus.
@@ -43,7 +45,7 @@ Der Scheduler startet fällige Jobs beim Start des Collectors und plant den näc
 ## Persistenz und Mounts
 
 - `./databases` wird für API und Collector nach `/app/databases` eingebunden und enthält die SQLite-Datenbank.
-- `./logs` wird für den Collector nach `/logs` eingebunden.
+- `./logs` wird für Collector, API und UI nach `/logs` eingebunden; Betriebsprotokolle sind je Dienst getrennt.
 - `./databases/geoip` wird schreibgeschützt nach `/geoip` eingebunden.
 
 Die Compose-Datei bindet Verzeichnisse vom Host ein. Sichern und überwachen Sie die Datenbank daher auf dem Host. Die importierte Logdatei ist wegen des Präfix-Verbrauchs nicht als Backup oder Archiv geeignet.

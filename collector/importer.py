@@ -136,6 +136,7 @@ class Importer:
     ) -> int:
         """Process configured files and their rotated segments, oldest first."""
         total = 0
+        logger.info("Import cycle started for %d configured source(s)", len(self.config.log_files))
         try:
             for entry in self.config.log_files:
                 reader_type, separator, path = entry.partition(":")
@@ -164,6 +165,7 @@ class Importer:
 
                 for input_path, sealed in inputs:
                     input_name = str(input_path.absolute())
+                    logger.info("Import source started: %s", input_name)
                     if on_file_start is not None:
                         on_file_start(input_name)
                     reader = reader_factory(str(input_path))
@@ -214,14 +216,18 @@ class Importer:
                             on_record_imported()
                         return imported
 
-                    count = reader.read(
-                        import_and_report,
-                        start_offset=position["offset"] if position else 0,
-                        file_identity=position["identity"] if position else None,
-                        file_fingerprint=position.get("fingerprint") if position else None,
-                        on_position_reset=save_reset_position,
-                        sealed=sealed,
-                    )
+                    try:
+                        count = reader.read(
+                            import_and_report,
+                            start_offset=position["offset"] if position else 0,
+                            file_identity=position["identity"] if position else None,
+                            file_fingerprint=position.get("fingerprint") if position else None,
+                            on_position_reset=save_reset_position,
+                            sealed=sealed,
+                        )
+                    except Exception:
+                        logger.exception("Import source failed: %s", input_name)
+                        raise
                     total += count
                     logger.info("Imported %d request(s) from %s", count, input_name)
                     if reader.skipped_count:
@@ -229,6 +235,7 @@ class Importer:
         finally:
             # Assign imported rows once, preserving the prior import's open tail.
             self._rebuild_pending_bursts()
+        logger.info("Import cycle completed: %d request(s) imported", total)
         return total
 
     def _create_traefik_reader(self, path: str) -> TraefikReader:

@@ -6,6 +6,8 @@ services:
     restart: unless-stopped
     depends_on:
       - api
+    volumes:
+      - ./logs:/logs
     ports:
       - "3000:80"
 
@@ -19,6 +21,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      INM2_LOG_DIR: /logs
     volumes:
       - ./databases:/app/databases
       - ./logs:/logs
@@ -31,8 +35,10 @@ services:
     command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       COLLECTOR_CONTROL_URL: http://collector:8001
+      INM2_LOG_DIR: /logs
     restart: unless-stopped
     volumes:
       - ./databases:/app/databases
+      - ./logs:/logs
     ports:
       - "8000:8000"

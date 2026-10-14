@@ -3,7 +3,7 @@ export type Language = 'de' | 'en'
 export const messages = {
   de: {
     product: 'INTERNET NOISE MONITOR', dashboard: 'Dashboard', bursts: 'Bursts', actors: 'Akteure',
-    hosts: 'Hosts', categories: 'Kategorien', requests: 'Requests', administration: 'Verwaltung', systemHelp: 'System & Hilfe', categoryGuide: 'Kategorien verstehen',
+    hosts: 'Hosts', categories: 'Kategorien', requests: 'Requests', administration: 'Verwaltung', systemHelp: 'System & Hilfe', categoryGuide: 'Kategorien verstehen', logging: 'Logging',
     overview: 'Übersicht', subtitle: 'Ein ruhiger Blick auf den eingehenden Traffic.', period: 'Zeitraum',
     last24h: 'Letzte 24h', liveMonitoring: 'Live-Überwachung', export: 'Exportieren', totalRequests: 'Requests gesamt',
     detectedBursts: 'Erkannte Bursts', uniqueActors: 'Akteure', monitoredHosts: 'Erkannte Hosts', detectedHosts: 'Erkannte Hosts', knownHosts: 'Bekannte Hosts',
@@ -50,6 +50,7 @@ export const messages = {
     provider: 'Provider', filterCategory: 'Kategorie suchen …', showingHosts: '1–4 von 8 Hosts',
     showingCategories: '1–6 von 18 Kategorien',
     adminSubtitle: 'Collector-Betrieb und wirksame Systemkonfiguration.',
+    loggingSubtitle: 'Protokolle der Containerdienste. Die Anzeige wird automatisch aktualisiert.', logCollector: 'Collector', logApi: 'API', logUiAccess: 'UI-Zugriffsfehler', logUiErrors: 'UI-Fehler', logWrapLines: 'Zeilen umbrechen', logReset: 'Logdatei zurücksetzen', confirmLogReset: 'Die Protokolldatei dieses Dienstes wirklich leeren?', logRefresh: 'Aktualisieren', logEmpty: 'Noch keine Logeinträge.', logTruncated: 'Es werden nur die letzten Einträge angezeigt.',
     categoryGuideTitle: 'Kategorien verstehen', categoryGuideSubtitle: 'Die Einordnung beschreibt, wonach ein Request aussieht – sie ist ein Hinweis auf mögliche Absichten und kein Beleg für einen erfolgreichen Zugriff.',
     guideSensitiveFiles: 'Sensible Dateien', guideSensitiveFilesDescription: 'Zugriffe auf Konfigurationsdateien, Zugangsdaten, Versionsverwaltung oder Sicherungskopien. Solche Dateien können interne Informationen oder Geheimnisse enthalten.',
     guideWebshell: 'Webshell', guideWebshellDescription: 'Zugriffe auf typische serverseitige Skripte, die als Kommando- oder Dateiverwaltung missbraucht werden können. Die Kategorie beschreibt den angefragten Pfad, nicht ob dort tatsächlich eine Shell liegt.',
@@ -98,7 +99,7 @@ export const messages = {
   },
   en: {
     product: 'INTERNET NOISE MONITOR', dashboard: 'Dashboard', bursts: 'Bursts', actors: 'Actors',
-    hosts: 'Hosts', categories: 'Categories', requests: 'Requests', administration: 'Administration', systemHelp: 'System & help', categoryGuide: 'Understanding categories',
+    hosts: 'Hosts', categories: 'Categories', requests: 'Requests', administration: 'Administration', systemHelp: 'System & help', categoryGuide: 'Understanding categories', logging: 'Logging',
     overview: 'Overview', subtitle: 'A clear view of incoming traffic.', period: 'Time range',
     last24h: 'Last 24h', liveMonitoring: 'Live monitoring', export: 'Export', totalRequests: 'Total requests',
     detectedBursts: 'Detected bursts', uniqueActors: 'Actors', monitoredHosts: 'Detected hosts', detectedHosts: 'Detected hosts', knownHosts: 'Known hosts',
@@ -145,6 +146,7 @@ export const messages = {
     provider: 'Provider', filterCategory: 'Search categories …', showingHosts: '1–4 of 8 hosts',
     showingCategories: '1–6 of 18 categories',
     adminSubtitle: 'Collector operations and effective system configuration.',
+    loggingSubtitle: 'Container service logs. The view refreshes automatically.', logCollector: 'Collector', logApi: 'API', logUiAccess: 'UI HTTP errors', logUiErrors: 'UI errors', logWrapLines: 'Wrap lines', logReset: 'Reset log file', confirmLogReset: 'Clear this service log file?', logRefresh: 'Refresh', logEmpty: 'No log entries yet.', logTruncated: 'Only the most recent entries are shown.',
     categoryGuideTitle: 'Understanding categories', categoryGuideSubtitle: 'Classification describes what a request resembles. It suggests possible intent; it does not prove that access succeeded.',
     guideSensitiveFiles: 'Sensitive files', guideSensitiveFilesDescription: 'Requests for configuration files, credentials, version-control metadata, or backups. These files may expose internal information or secrets.',
     guideWebshell: 'Webshell', guideWebshellDescription: 'Requests for server-side scripts commonly abused for command execution or file management. This label describes the requested path, not whether a shell is actually present.',

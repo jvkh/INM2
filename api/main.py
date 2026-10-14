@@ -6,6 +6,7 @@ import logging
 from fastapi import FastAPI
 
 from common.database import Database
+from common.logging_setup import configure_file_logging
 from common.version import APP_VERSION
 from api.actors import router as actors_router
 from api.bursts import router as bursts_router
@@ -20,6 +21,9 @@ from api.operations import router as operations_router
 from api.notifications import router as notifications_router
 from api.metric_trends import router as metric_trends_router
 from api.request_paths import router as request_paths_router
+from api.logging_view import router as logging_router
+
+configure_file_logging("api")
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +31,11 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Try to open the database without preventing the API from starting."""
+    logger.info("API started; opening database connection")
     app.state.database = None
     try:
         app.state.database = Database()
+        logger.info("API database connection ready")
     except Exception:
         logger.exception("Could not open the API database")
     try:
@@ -37,6 +43,7 @@ async def lifespan(app: FastAPI):
     finally:
         if app.state.database is not None:
             app.state.database.close()
+        logger.info("API stopped")
 
 
 app = FastAPI(
@@ -54,6 +61,7 @@ app.include_router(operations_router, prefix="/api/v1")
 app.include_router(notifications_router, prefix="/api/v1")
 app.include_router(metric_trends_router, prefix="/api/v1")
 app.include_router(request_paths_router, prefix="/api/v1")
+app.include_router(logging_router, prefix="/api/v1")
 app.include_router(status_router, prefix="/api/v1")
 app.include_router(request_counts_router, prefix="/api/v1")
 register_error_handlers(app)

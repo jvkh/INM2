@@ -52,6 +52,10 @@ curl 'http://localhost:8000/api/v1/status'
 
 Bei erfolgreichem Zugriff enthält die Antwort `status: "ok"`, `database: "ok"`, `collector_status` und `environment`. `collector_status.import_file` enthält die gerade verarbeitete Datei; `collector_status.last_import_file` behält den zuletzt begonnenen Dateinamen auch nach Abschluss des Imports bei. Kann die Statusabfrage die Datenbank oder die Einstellungen nicht lesen, liefert sie weiterhin HTTP 200 mit `status: "degraded"`, `database: "unavailable"` und einem nicht verfügbaren Collector-Status.
 
+### Protokolle
+
+`GET /api/v1/logs?service=collector` liest die letzten Protokolleinträge. `service` ist `collector`, `api`, `ui_access` oder `ui_error`; `limit` ist optional (Standard 2000, maximal 10000 Zeilen). Die Ausgabe ist zusätzlich auf 2 MiB begrenzt. `DELETE /api/v1/logs?service=collector` setzt die ausgewählte Protokolldatei zurück. Die Logging-Seite zeigt dieselben Dienste in Registerkarten und aktualisiert die Anzeige automatisch. Der Endpunkt benötigt keine Datenbankverbindung, damit Protokolle auch bei einem Datenbankausfall angezeigt werden können.
+
 ### Neue Daten
 
 `GET /api/v1/notifications` liefert Requests und Bursts, deren IDs neuer als die gespeicherten Gesehen-Cursor sind. Die Antwort enthält die Gesamtzahlen, bis zu fünf aktuelle Einträge je Typ sowie die neuesten Cursorwerte. `PUT /api/v1/notifications/seen?request_cursor=…&burst_cursor=…` speichert diese Cursor in der Settings-Tabelle. Beim ersten Abruf werden die aktuellen Höchst-IDs als Ausgangsstand gespeichert, damit bereits vorhandene Datensätze nicht als neu gemeldet werden.

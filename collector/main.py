@@ -11,6 +11,7 @@ import uvicorn
 
 from common.database import Database
 from common.env import EnvConfig
+from common.logging_setup import configure_file_logging
 from common.status import CollectorStatus
 from collector.importer import Importer
 from collector.control import create_control_app
@@ -80,10 +81,15 @@ class CollectorApplication:
             self.status.begin_import()
         else:
             self.status.begin_maintenance()
+        logger.info("%s started", activity)
         try:
             callback()
             if imported:
                 self.status.complete_import()
+            logger.info("%s completed", activity)
+        except Exception:
+            logger.exception("%s failed", activity)
+            raise
         finally:
             self.status.end_activity()
 
@@ -102,9 +108,11 @@ class CollectorApplication:
 
             def run_reserved_operation() -> None:
                 try:
+                    logger.info("Manual %s started", activity.lower())
                     callback()
                     if imported:
                         self.status.complete_import()
+                    logger.info("Manual %s completed", activity.lower())
                 except Exception:
                     logger.exception("Manually triggered %s failed", activity.lower())
                 finally:
@@ -184,7 +192,12 @@ class CollectorApplication:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    CollectorApplication().run()
+    configure_file_logging("collector")
+    try:
+        CollectorApplication().run()
+    except Exception:
+        logger.exception("Collector terminated unexpectedly")
+        raise
 
 
 if __name__ == "__main__":
