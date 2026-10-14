@@ -58,7 +58,7 @@ Compose lädt die Collector-Einstellungen aus `.env`. Die Datei `.env.example` e
 | `GEOLITE_CITY_DB` | `/geoip/GeoLite2-City.mmdb` | Containerpfad zur optionalen City-Datenbank. |
 | `GEOLITE_ASN_DB` | `/geoip/GeoLite2-ASN.mmdb` | Containerpfad zur optionalen ASN-Datenbank. |
 | `IGNORE_REQUEST_ROUTES` | leer | Semikolongetrennte `host/pfadpräfix`-Einträge, die beim Import übersprungen werden. Host muss Traefiks `RequestHost` entsprechen. |
-| `KNOWN_HOSTS` | leer | Semikolongetrennte eigene Hostnamen, die auf der Host-Seite markiert und filterbar sind. |
+| `KNOWN_HOSTS` | leer | Semikolongetrennte eigene Hostnamen; jeder Eintrag gilt auch für alle Subdomains und wird auf der Host-Seite markiert und filterbar. |
 
 ### GeoLite2-Datenbanken (optional)
 

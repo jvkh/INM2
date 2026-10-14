@@ -211,11 +211,12 @@ function rangeTick(range: TimeRange, fraction: number, language: Language, timeO
   return new Intl.DateTimeFormat(locale, options).format(value)
 }
 
-function useApiData<T>(url: string | null, pollIntervalMs = 0, showActivityToast = true) {
+function useApiData<T>(url: string | null, pollIntervalMs = 0, showActivityToast = true, refreshOnLiveTick = true) {
   const refreshTick = useSyncExternalStore(subscribeLiveRefresh, getLiveRefreshTick, getLiveRefreshTick)
-  const previousRefreshTick = useRef(refreshTick)
-  const scheduledRefresh = previousRefreshTick.current !== refreshTick
-  previousRefreshTick.current = refreshTick
+  const effectiveRefreshTick = refreshOnLiveTick ? refreshTick : 0
+  const previousRefreshTick = useRef(effectiveRefreshTick)
+  const scheduledRefresh = previousRefreshTick.current !== effectiveRefreshTick
+  previousRefreshTick.current = effectiveRefreshTick
   const showToastForRequest = showActivityToast && !scheduledRefresh
   const [data, setData] = useState<T | null>(null)
   const dataRef = useRef<T | null>(null)
@@ -261,7 +262,7 @@ function useApiData<T>(url: string | null, pollIntervalMs = 0, showActivityToast
         }
       })
     return () => { if (pollTimer !== undefined) window.clearTimeout(pollTimer); finishRequest(); controller.abort() }
-  }, [url, reloadKey, pollIntervalMs, showToastForRequest, refreshTick])
+  }, [url, reloadKey, pollIntervalMs, showToastForRequest, effectiveRefreshTick])
 
   return { data, loading, error, reload: () => setReloadKey((key) => key + 1) }
 }
@@ -1328,7 +1329,7 @@ function LoggingPage({ t }: { t: (key: MessageKey) => string }) {
 }
 
 function LogServicePanel({ service, t }: { service: LogService; t: (key: MessageKey) => string }) {
-  const logs = useApiData<LogResponse>(apiUrl('logs', undefined, { service, limit: '4000' }), 5_000, false)
+  const logs = useApiData<LogResponse>(apiUrl('logs', undefined, { service, limit: '4000' }), 0, false, false)
   const [wrapLines, setWrapLines] = useState(false)
   const [resetting, setResetting] = useState(false)
   const [actionError, setActionError] = useState('')

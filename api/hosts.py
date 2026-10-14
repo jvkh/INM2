@@ -6,6 +6,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from api.dependencies import get_database
+from common.known_hosts import known_host_match_sql
 
 
 router = APIRouter()
@@ -39,8 +40,7 @@ def get_hosts(
     if host is not None:
         conditions.append("h.name LIKE ?")
         parameters.append(f"%{host}%")
-    normalized_host = "CASE WHEN lower(rtrim(h.name, '.')) LIKE 'www.%' THEN substr(lower(rtrim(h.name, '.')), 5) ELSE lower(rtrim(h.name, '.')) END"
-    known_match = f"EXISTS (SELECT 1 FROM known_host kh WHERE kh.name = {normalized_host})"
+    known_match = known_host_match_sql("h.name")
     if known == "own":
         conditions.append(known_match)
     elif known == "foreign":

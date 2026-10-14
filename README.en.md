@@ -58,7 +58,7 @@ Compose loads collector settings from `.env`. `.env.example` contains this repos
 | `GEOLITE_CITY_DB` | `/geoip/GeoLite2-City.mmdb` | Container path to the optional City database. |
 | `GEOLITE_ASN_DB` | `/geoip/GeoLite2-ASN.mmdb` | Container path to the optional ASN database. |
 | `IGNORE_REQUEST_ROUTES` | empty | Semicolon-separated `host/path-prefix` entries to skip during import. Host must match Traefik's `RequestHost`. |
-| `KNOWN_HOSTS` | empty | Semicolon-separated host names belonging to this installation; shown and filterable as own hosts. |
+| `KNOWN_HOSTS` | empty | Semicolon-separated host names belonging to this installation; each entry also matches all subdomains and is shown/filterable as an own host. |
 
 ### GeoLite2 databases (optional)
 

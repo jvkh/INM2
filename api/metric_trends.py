@@ -6,6 +6,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from api.dependencies import get_database
+from common.known_hosts import known_host_match_sql
 from common.search import parse_search
 
 router = APIRouter()
@@ -56,11 +57,11 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
     if page == "hosts" and search:
         request_conditions.append("h.name LIKE ?")
         request_params.append(f"%{search}%")
-    normalized_host = "CASE WHEN lower(rtrim(h.name, '.')) LIKE 'www.%' THEN substr(lower(rtrim(h.name, '.')), 5) ELSE lower(rtrim(h.name, '.')) END"
+    known_match = known_host_match_sql("h.name")
     if page == "hosts" and known == "own":
-        request_conditions.append(f"EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = {normalized_host})")
+        request_conditions.append(known_match)
     elif page == "hosts" and known == "foreign":
-        request_conditions.append(f"NOT EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = {normalized_host})")
+        request_conditions.append(f"NOT {known_match}")
     if page == "categories" and search:
         request_conditions.append("EXISTS (SELECT 1 FROM request_category AS xrc JOIN category AS xc ON xc.category_id=xrc.category_id WHERE xrc.request_id=r.request_id AND xc.category_name LIKE ?)")
         request_params.append(f"%{search}%")
@@ -111,9 +112,9 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
             burst_conditions.append("h.name = ?" if host_exact else "h.name LIKE ?")
             burst_params.append(host if host_exact else f"%{host}%")
         if known == "own":
-            burst_conditions.append("EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = CASE WHEN lower(rtrim(h.name, '.')) LIKE 'www.%' THEN substr(lower(rtrim(h.name, '.')), 5) ELSE lower(rtrim(h.name, '.')) END)")
+            burst_conditions.append(known_match)
         elif known == "foreign":
-            burst_conditions.append("NOT EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = CASE WHEN lower(rtrim(h.name, '.')) LIKE 'www.%' THEN substr(lower(rtrim(h.name, '.')), 5) ELSE lower(rtrim(h.name, '.')) END)")
+            burst_conditions.append(f"NOT {known_match}")
         if country:
             burst_conditions.append("a.country = ?" if country_exact else "a.country LIKE ?")
             burst_params.append(country if country_exact else f"%{country}%")

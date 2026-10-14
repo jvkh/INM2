@@ -6,6 +6,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 
 from api.dependencies import get_database
+from common.known_hosts import known_host_match_sql
 from common.search import parse_search
 
 router = APIRouter()
@@ -26,10 +27,10 @@ def get_request(
     """Return one request with its actor, host, and categories."""
     database = get_database(request)
     rows = database.query(
-        """SELECT r.*, a.ip AS actor_ip, a.first_time AS actor_first_time,
+        f"""SELECT r.*, a.ip AS actor_ip, a.first_time AS actor_first_time,
                   a.last_time AS actor_last_time, a.provider, a.asn, a.city, a.country,
                   h.name AS host,
-                  CASE WHEN EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = CASE WHEN lower(rtrim(h.name, '.')) LIKE 'www.%' THEN substr(lower(rtrim(h.name, '.')), 5) ELSE lower(rtrim(h.name, '.')) END) THEN 1 ELSE 0 END AS host_known
+                  CASE WHEN {known_host_match_sql('h.name')} THEN 1 ELSE 0 END AS host_known
            FROM request AS r
            JOIN actor AS a ON a.actor_id = r.actor_id
            LEFT JOIN host AS h ON h.host_id = r.host_id
@@ -155,7 +156,7 @@ def get_requests(
     items = database.query(
         f"""SELECT r.request_id, r.start_utc, r.actor_id, a.ip AS actor_ip,
                       a.provider, a.country, a.city, a.asn, r.host_id, h.name AS host,
-                      CASE WHEN EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = CASE WHEN lower(rtrim(h.name, '.')) LIKE 'www.%' THEN substr(lower(rtrim(h.name, '.')), 5) ELSE lower(rtrim(h.name, '.')) END) THEN 1 ELSE 0 END AS host_known,
+                      CASE WHEN {known_host_match_sql('h.name')} THEN 1 ELSE 0 END AS host_known,
                       r.request_method, r.request_path, r.request_scheme,
                       (SELECT GROUP_CONCAT(c.category_name, ', ')
                        FROM request_category AS rc

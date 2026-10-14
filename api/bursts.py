@@ -6,6 +6,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 
 from api.dependencies import get_database
+from common.known_hosts import known_host_match_sql
 from common.search import parse_search
 
 
@@ -27,9 +28,9 @@ def get_burst_requests(
     """Return a burst and its exactly assigned requests."""
     database = get_database(request)
     burst_rows = database.query(
-        """SELECT b.*, a.ip AS actor_ip, a.country, a.provider, a.asn, a.city,
+        f"""SELECT b.*, a.ip AS actor_ip, a.country, a.provider, a.asn, a.city,
                   h.name AS host,
-                  CASE WHEN EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = CASE WHEN lower(rtrim(h.name, '.')) LIKE 'www.%' THEN substr(lower(rtrim(h.name, '.')), 5) ELSE lower(rtrim(h.name, '.')) END) THEN 1 ELSE 0 END AS known
+                  CASE WHEN {known_host_match_sql('h.name')} THEN 1 ELSE 0 END AS known
            FROM burst AS b
            JOIN actor AS a ON a.actor_id = b.actor_id
            LEFT JOIN host AS h ON h.host_id = b.host_id
@@ -59,9 +60,9 @@ def get_burst_requests(
     """Return a burst."""
     database = get_database(request)
     burst_rows = database.query(
-        """SELECT b.*, a.ip AS actor_ip, a.country, a.provider, a.asn, a.city,
+        f"""SELECT b.*, a.ip AS actor_ip, a.country, a.provider, a.asn, a.city,
                   h.name AS host,
-                  CASE WHEN EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = CASE WHEN lower(rtrim(h.name, '.')) LIKE 'www.%' THEN substr(lower(rtrim(h.name, '.')), 5) ELSE lower(rtrim(h.name, '.')) END) THEN 1 ELSE 0 END AS known
+                  CASE WHEN {known_host_match_sql('h.name')} THEN 1 ELSE 0 END AS known
            FROM burst AS b
            JOIN actor AS a ON a.actor_id = b.actor_id
            LEFT JOIN host AS h ON h.host_id = b.host_id
@@ -105,11 +106,11 @@ def get_bursts(
     if host is not None:
         conditions.append("h.name = ?" if host_exact else "h.name LIKE ?")
         parameters.append(host if host_exact else f"%{host}%")
-    normalized_host = "CASE WHEN lower(rtrim(h.name, '.')) LIKE 'www.%' THEN substr(lower(rtrim(h.name, '.')), 5) ELSE lower(rtrim(h.name, '.')) END"
+    known_match = known_host_match_sql("h.name")
     if known == "own":
-        conditions.append(f"EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = {normalized_host})")
+        conditions.append(known_match)
     elif known == "foreign":
-        conditions.append(f"NOT EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = {normalized_host})")
+        conditions.append(f"NOT {known_match}")
     if country is not None:
         conditions.append("a.country = ?" if country_exact else "a.country LIKE ?")
         parameters.append(country if country_exact else f"%{country}%")
@@ -144,7 +145,7 @@ def get_bursts(
     from_clause = """FROM burst AS b
                      JOIN actor AS a ON a.actor_id = b.actor_id
                      LEFT JOIN host AS h ON h.host_id = b.host_id"""
-    known_expression = f"CASE WHEN EXISTS (SELECT 1 FROM known_host AS kh WHERE kh.name = {normalized_host}) THEN 1 ELSE 0 END AS known"
+    known_expression = f"CASE WHEN {known_match} THEN 1 ELSE 0 END AS known"
     filtered = f"SELECT b.*, a.ip AS actor_ip, a.country, a.provider, a.asn, a.city, a.first_time AS actor_first_time, h.name AS host, {known_expression} {from_clause} WHERE {where_clause}"
 
     aggregate_rows = database.query(

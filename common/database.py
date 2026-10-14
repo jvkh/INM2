@@ -34,8 +34,19 @@ class Database:
         self._lock = RLock()
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         # Scheduled importer callbacks run on the scheduler thread.
-        self.connection = sqlite3.connect(self.database_path, check_same_thread=False)
+        # The API and collector use separate connections to the same SQLite
+        # file. WAL lets API readers continue while the collector is writing,
+        # and the longer busy timeout absorbs short write-lock contention
+        # during imports and burst updates.
+        self.connection = sqlite3.connect(
+            self.database_path,
+            timeout=30.0,
+            check_same_thread=False,
+        )
         self.connection.row_factory = sqlite3.Row
+        self.connection.execute("PRAGMA busy_timeout = 30000")
+        self.connection.execute("PRAGMA journal_mode = WAL")
+        self.connection.execute("PRAGMA synchronous = NORMAL")
         self.connection.execute("PRAGMA foreign_keys = ON")
         if initialize:
             self.initialize()
