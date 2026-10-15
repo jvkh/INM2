@@ -54,8 +54,16 @@ def get_notifications(request: Request) -> dict[str, Any]:
     )
     request_count = database.query("SELECT COUNT(*) AS value FROM request WHERE request_id > ?", (request_cursor,))[0]["value"]
     burst_count = database.query("SELECT COUNT(*) AS value FROM burst WHERE burst_id > ?", (burst_cursor,))[0]["value"]
+    if request_cursor:
+        request_since = database.query(
+            "SELECT start_utc AS value FROM request WHERE request_id <= ? ORDER BY request_id DESC LIMIT 1",
+            (request_cursor,),
+        )
+    else:
+        request_since = database.query("SELECT MIN(start_utc) AS value FROM request")
     return {
         "request_count": request_count,
+        "request_since_utc": request_since[0]["value"] if request_since else None,
         "burst_count": burst_count,
         "requests": requests,
         "bursts": bursts,

@@ -1,14 +1,14 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import {
   Activity, ArrowDown, ArrowDownRight, ArrowRight, ArrowUp, ArrowUpRight, Bell, Blocks, BookOpenText, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CircleHelp,
   Clock3, Command, Database, FileText, Filter, Globe2, LayoutDashboard, List, LockKeyhole, LockOpen, Menu,
-  Network, Search, Settings2, ShieldAlert, SkipBack, SkipForward, Sun, Trash2, Users, X,
+  Network, Search, Settings, Settings2, ShieldAlert, SkipBack, SkipForward, Sun, Trash2, Users, X,
 } from 'lucide-react'
 import { messages, type Language, type MessageKey } from './i18n'
 
 type Theme = 'auto' | 'cloud' | 'midnight' | 'moss'
-type PageKey = 'dashboard' | 'bursts' | 'actors' | 'hosts' | 'categories' | 'requests' | 'administration' | 'categoryGuide' | 'burstGuide' | 'countGuide' | 'hostGuide' | 'logging'
-const pageKeys: PageKey[] = ['dashboard', 'bursts', 'actors', 'hosts', 'categories', 'requests', 'administration', 'categoryGuide', 'burstGuide', 'countGuide', 'hostGuide', 'logging']
+type PageKey = 'dashboard' | 'bursts' | 'actors' | 'hosts' | 'categories' | 'requests' | 'administration' | 'categoryGuide' | 'burstGuide' | 'countGuide' | 'hostGuide' | 'pathsGuide' | 'logging'
+const pageKeys: PageKey[] = ['dashboard', 'bursts', 'actors', 'hosts', 'categories', 'requests', 'administration', 'categoryGuide', 'burstGuide', 'countGuide', 'hostGuide', 'pathsGuide', 'logging']
 function pageFromUrl(): PageKey | null {
   const value = new URLSearchParams(window.location.search).get('page')
   return value && pageKeys.includes(value as PageKey) ? value as PageKey : null
@@ -76,7 +76,7 @@ const navigation: { key: PageKey; icon: typeof LayoutDashboard }[] = [
 type RangePreset = 'last24h' | 'today' | 'yesterday' | 'last6h' | 'last7d' | 'last30d' | 'last90d' | 'custom'
 type TimeRange = { from: Date; to: Date; preset: RangePreset; query: string }
 type TrafficBucket = { from: string; to: string }
-type UiPreferences = { language?: Language; theme?: Theme; lastPage?: PageKey; sidebarCollapsed?: boolean; timeRange?: { preset: RangePreset; from?: string; to?: string }; tablePageSizes?: Partial<Record<TableKey, PageSize>>; burstSort?: BurstSort; burstFilters?: BurstFilters; actorSort?: ActorSort; actorFilters?: ActorFilters; hostSort?: HostSort; hostFilters?: HostFilters; categorySort?: CategorySort; categoryFilters?: CategoryFilters; requestSort?: RequestSort; requestFilters?: RequestFilters }
+type UiPreferences = { language?: Language; theme?: Theme; lastPage?: PageKey; sidebarCollapsed?: boolean; systemNavOpen?: boolean; helpNavOpen?: boolean; timeRange?: { preset: RangePreset; from?: string; to?: string }; tablePageSizes?: Partial<Record<TableKey, PageSize>>; burstSort?: BurstSort; burstFilters?: BurstFilters; actorSort?: ActorSort; actorFilters?: ActorFilters; hostSort?: HostSort; hostFilters?: HostFilters; categorySort?: CategorySort; categoryFilters?: CategoryFilters; requestSort?: RequestSort; requestFilters?: RequestFilters }
 type ApiResult<T> = { items: T[]; total?: number; known_count?: number; summary?: Record<string, number | null> }
 type ActorItem = { actor_id: number; ip: string; first_time: string; last_time: string; provider: string | null; asn: string | null; city: string | null; country: string | null; request_count: number; total_request_count: number; burst_count: number }
 type BurstItem = { burst_id: number; actor_ip: string; country: string | null; provider: string | null; asn: string | null; city: string | null; host: string | null; known: number; start_time: string; end_time: string; avg_count: number; read_count: number; write_count: number; other_count: number }
@@ -90,7 +90,7 @@ type GlobalSearchPath = { path: string; request_count: number; last_seen: string
 type GlobalSearchResults = { actors: GlobalSearchActor[]; hosts: GlobalSearchHost[]; categories: GlobalSearchCategory[]; paths: GlobalSearchPath[] }
 type NotificationRequest = { request_id: number; start_utc: string; actor_ip: string; host: string | null; host_known: number; request_method: string; request_path: string; downstream_status: number | null }
 type NotificationBurst = { burst_id: number; start_time: string; actor_ip: string; host: string | null; request_count: number }
-type NotificationData = { request_count: number; burst_count: number; requests: NotificationRequest[]; bursts: NotificationBurst[]; request_cursor: number; burst_cursor: number }
+type NotificationData = { request_count: number; request_since_utc: string | null; burst_count: number; requests: NotificationRequest[]; bursts: NotificationBurst[]; request_cursor: number; burst_cursor: number }
 type StatusData = { status: string; database: string; collector_status: { available: boolean; last_import: string | null; activity: string; import_file: string; last_import_file: string; import_count: number }; environment: Record<string, string> }
 type LogService = 'collector' | 'api' | 'ui_access' | 'ui_error'
 type LogResponse = { service: LogService; content: string; truncated: boolean }
@@ -190,10 +190,18 @@ function countryFlag(country: string | null | undefined) {
   }
   const normalized = country.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
     .replace(/^the\s+/, '').replace(/[^a-z0-9]+/g, ' ').trim()
-  const code = /^[a-z]{2}$/i.test(country.trim()) ? country.trim().toUpperCase() : codeByName[normalized]
+  const code = /^[a-z]{2}$/i.test(country.trim()) ? country.trim().toUpperCase() : codeByName[normalized] ?? countryCodeByEnglishName[normalized]
   if (!code) return '🌐'
   return String.fromCodePoint(...[...code].map((letter) => 127397 + letter.charCodeAt(0)))
 }
+
+const isoCountryCodes = 'AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW'.split(' ')
+const countryDisplayNames = typeof Intl.DisplayNames === 'undefined' ? null : new Intl.DisplayNames(['en'], { type: 'region' })
+const countryCodeByEnglishName = Object.fromEntries(isoCountryCodes.map((code) => {
+  const name = countryDisplayNames?.of(code) ?? code
+  const normalized = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/^the\s+/, '').replace(/[^a-z0-9]+/g, ' ').trim()
+  return [normalized, code]
+})) as Record<string, string>
 
 function rangeLabel(range: TimeRange, t: (key: MessageKey) => string, language: Language) {
   const key: Partial<Record<RangePreset, MessageKey>> = { last24h: 'last24h', today: 'todayRange', yesterday: 'yesterdayRange', last6h: 'last6h', last7d: 'last7d', last30d: 'last30d', last90d: 'last90d' }
@@ -307,6 +315,8 @@ function parsePreferences(items: { name: string; value: string | null }[]): UiPr
   if (values.theme === 'auto' || values.theme === 'cloud' || values.theme === 'midnight' || values.theme === 'moss') preferences.theme = values.theme
   if (values.last_page && pageKeys.includes(values.last_page as PageKey)) preferences.lastPage = values.last_page as PageKey
   if (values.sidebar_collapsed === 'true' || values.sidebar_collapsed === 'false') preferences.sidebarCollapsed = values.sidebar_collapsed === 'true'
+  if (values.system_nav_open === 'true' || values.system_nav_open === 'false') preferences.systemNavOpen = values.system_nav_open === 'true'
+  if (values.help_nav_open === 'true' || values.help_nav_open === 'false') preferences.helpNavOpen = values.help_nav_open === 'true'
   if (values.table_page_sizes) {
     try {
       const parsed = JSON.parse(values.table_page_sizes) as Partial<Record<TableKey, number>>
@@ -463,11 +473,71 @@ function ApiActivityToast({ t }: { t: (key: MessageKey) => string }) {
   return <div className="api-activity-toast" role="status" aria-live="polite"><span className="loading-spinner" /><span>{t('apiCallInProgress')}</span></div>
 }
 
+function AppHints() {
+  const [hint, setHint] = useState<{ text: string; left: number; top: number } | null>(null)
+  useEffect(() => {
+    let active: Element | null = null
+    let timer: number | undefined
+    const hide = () => {
+      if (timer !== undefined) window.clearTimeout(timer)
+      timer = undefined
+      active = null
+      setHint(null)
+    }
+    const show = (target: Element | null) => {
+      if (!target || target === active) return
+      hide()
+      const nativeTitle = target.getAttribute('title')
+      if (nativeTitle) {
+        target.setAttribute('data-app-hint', nativeTitle)
+        target.removeAttribute('title')
+      }
+      const text = target.getAttribute('data-hint') || target.getAttribute('data-app-hint')
+      if (!text?.trim()) return
+      active = target
+      timer = window.setTimeout(() => {
+        const rect = target.getBoundingClientRect()
+        const left = Math.max(120, Math.min(window.innerWidth - 120, rect.left + rect.width / 2))
+        const top = rect.bottom + 8 < window.innerHeight - 60 ? rect.bottom + 8 : Math.max(8, rect.top - 48)
+        setHint({ text, left, top })
+      }, 500)
+    }
+    const findTarget = (event: Event) => {
+      const source = event.target
+      return source instanceof Element ? source.closest('[data-hint], [data-app-hint], [title]') : null
+    }
+    const onPointerOver = (event: Event) => show(findTarget(event))
+    const onPointerOut = (event: Event) => {
+      const target = findTarget(event)
+      const next = event instanceof PointerEvent && event.relatedTarget instanceof Element ? event.relatedTarget : null
+      if (target && target === active && (!next || !target.contains(next))) hide()
+    }
+    const onFocusIn = (event: Event) => show(findTarget(event))
+    const onFocusOut = (event: Event) => {
+      const target = findTarget(event)
+      if (target && target === active) hide()
+    }
+    document.addEventListener('pointerover', onPointerOver)
+    document.addEventListener('pointerout', onPointerOut)
+    document.addEventListener('focusin', onFocusIn)
+    document.addEventListener('focusout', onFocusOut)
+    return () => {
+      hide()
+      document.removeEventListener('pointerover', onPointerOver)
+      document.removeEventListener('pointerout', onPointerOut)
+      document.removeEventListener('focusin', onFocusIn)
+      document.removeEventListener('focusout', onFocusOut)
+    }
+  }, [])
+  return hint ? <div className="app-hint" role="tooltip" style={{ left: hint.left, top: hint.top }}>{hint.text}</div> : null
+}
+
 function NotificationPopover({ data, t, language, onClose, onSelect, onMarkRead, marking, closing }: { data: NotificationData | null; t: (key: MessageKey) => string; language: Language; onClose: () => void; onSelect: (item: { type: 'request' | 'burst'; id: number; actorIp: string }) => void; onMarkRead: () => void; marking: boolean; closing: boolean }) {
   return <section className={`notification-popover${closing ? ' notification-closing' : ''}`} aria-label={t('notifications')}>
     <header><strong>{t('notifications')}</strong><div className="notification-header-actions">{data && <button type="button" className="icon-button notification-mark-read" aria-label={t('markNotificationsRead')} title={t('markNotificationsRead')} disabled={marking || data.request_count + data.burst_count === 0} onClick={onMarkRead}><Check size={15} /></button>}<button type="button" className="icon-button" onClick={onClose} aria-label={t('close')}><X size={15} /></button></div></header>
     {!data ? <p className="notification-empty">{t('loadingData')}</p> : <>
       <p className="notification-summary">{numberText(data.request_count, language)} {t('newRequests')} · {numberText(data.burst_count, language)} {t('newBursts')}</p>
+      <p className="notification-since">{t('newRequestsSince')}: {dateText(data.request_since_utc, language)}</p>
       {data.bursts.map((burst) => <button type="button" key={`burst-${burst.burst_id}`} className="notification-row" onClick={() => onSelect({ type: 'burst', id: burst.burst_id, actorIp: burst.actor_ip })}><span><strong>{t('newBurst')} · {burst.actor_ip}</strong><small>{burst.host || '—'} · {numberText(burst.request_count, language)} {t('requestsLabel')}</small></span><ArrowUpRight size={14} /></button>)}
       {data.requests.map((item) => <button type="button" key={`request-${item.request_id}`} className="notification-row" onClick={() => onSelect({ type: 'request', id: item.request_id, actorIp: item.actor_ip })}><span><strong>{item.request_method || 'GET'} {item.request_path || '/'}</strong><small>{item.actor_ip} · {item.host || '—'} · {dateText(item.start_utc, language)}</small></span><ArrowUpRight size={14} /></button>)}
       {data.request_count + data.burst_count === 0 && <p className="notification-empty">{t('noNewNotifications')}</p>}
@@ -493,6 +563,8 @@ function App() {
   const activeTheme: Exclude<Theme, 'auto'> = theme === 'auto' ? (systemPrefersDark ? 'midnight' : 'cloud') : theme
   const [menuOpen, setMenuOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [systemNavOpen, setSystemNavOpen] = useState(true)
+  const [helpNavOpen, setHelpNavOpen] = useState(true)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchClosing, setSearchClosing] = useState(false)
   const [searchText, setSearchText] = useState('')
@@ -527,8 +599,50 @@ function App() {
   const [preferencesError, setPreferencesError] = useState(false)
   const preferenceSaves = useRef<Record<string, AbortController>>({})
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const topbarRef = useRef<HTMLElement>(null)
+  const sidebarToggleRef = useRef<HTMLButtonElement>(null)
+  const sidebarTogglePinned = useRef(false)
   const t = (key: MessageKey) => messages[language][key]
   const liveStatus = useApiData<StatusData>(apiUrl('status'), 10_000, false)
+
+  useLayoutEffect(() => {
+    const updatePosition = () => {
+      const topbar = topbarRef.current
+      const toggle = sidebarToggleRef.current
+      if (!topbar || !toggle) return
+      if (window.matchMedia('(max-width: 850px)').matches) {
+        sidebarTogglePinned.current = false
+        toggle.style.removeProperty('position')
+        toggle.style.removeProperty('top')
+        toggle.style.removeProperty('left')
+        toggle.style.removeProperty('transform')
+        return
+      }
+      const top = topbar.getBoundingClientRect().top
+      if (sidebarTogglePinned.current ? top >= 4 : top <= 0) sidebarTogglePinned.current = !sidebarTogglePinned.current
+      if (sidebarTogglePinned.current) {
+        toggle.style.position = 'fixed'
+        toggle.style.top = '33px'
+        toggle.style.left = `${topbar.getBoundingClientRect().left}px`
+        toggle.style.transform = 'translate(-50%, -50%)'
+      } else {
+        toggle.style.removeProperty('position')
+        toggle.style.removeProperty('top')
+        toggle.style.removeProperty('left')
+        toggle.style.removeProperty('transform')
+      }
+    }
+    updatePosition()
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updatePosition)
+    if (topbarRef.current) observer?.observe(topbarRef.current)
+    window.addEventListener('scroll', updatePosition, { passive: true, capture: true })
+    window.addEventListener('resize', updatePosition)
+    return () => {
+      window.removeEventListener('scroll', updatePosition, true)
+      window.removeEventListener('resize', updatePosition)
+      observer?.disconnect()
+    }
+  }, [sidebarCollapsed])
 
   useEffect(() => {
     if (range.preset !== 'last24h') return
@@ -566,6 +680,8 @@ function App() {
         if (saved.tablePageSizes) setTablePageSizes(saved.tablePageSizes)
         if (saved.language) setLanguage(saved.language)
         if (saved.sidebarCollapsed && window.matchMedia('(min-width: 851px)').matches) setSidebarCollapsed(true)
+        if (saved.systemNavOpen !== undefined) setSystemNavOpen(saved.systemNavOpen)
+        if (saved.helpNavOpen !== undefined) setHelpNavOpen(saved.helpNavOpen)
         const initialPage = pageFromUrl() ?? saved.lastPage ?? 'dashboard'
         setActivePage(initialPage)
         writePageToUrl(initialPage, true)
@@ -648,6 +764,8 @@ function App() {
     setSidebarCollapsed(next)
     if (window.matchMedia('(min-width: 851px)').matches) savePreference('sidebar_collapsed', String(next))
   }
+  const toggleSystemNavigation = () => { const next = !systemNavOpen; setSystemNavOpen(next); savePreference('system_nav_open', String(next)) }
+  const toggleHelpNavigation = () => { const next = !helpNavOpen; setHelpNavOpen(next); savePreference('help_nav_open', String(next)) }
   useEffect(() => {
     const onPopState = () => {
       const page = pageFromUrl() ?? 'dashboard'
@@ -779,14 +897,22 @@ function App() {
           ))}
         </nav>
 
-        <div className="admin-navigation">
-          <div className="nav-caption">{t('systemHelp')}</div>
-          <a href="#" title={sidebarCollapsed ? t('administration') : undefined} className={`nav-link ${activePage === 'administration' ? 'active' : ''}`} aria-current={activePage === 'administration' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('administration'); setMenuOpen(false) }}><Settings2 size={18} /><span>{t('administration')}</span></a>
-          <a href="#" title={sidebarCollapsed ? t('logging') : undefined} className={`nav-link ${activePage === 'logging' ? 'active' : ''}`} aria-current={activePage === 'logging' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('logging'); setMenuOpen(false) }}><FileText size={18} /><span>{t('logging')}</span></a>
-          <a href="#" title={sidebarCollapsed ? t('categoryGuide') : undefined} className={`nav-link ${activePage === 'categoryGuide' ? 'active' : ''}`} aria-current={activePage === 'categoryGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('categoryGuide'); setMenuOpen(false) }}><BookOpenText size={18} /><span>{t('categoryGuide')}</span></a>
-          <a href="#" title={sidebarCollapsed ? t('burstGuide') : undefined} className={`nav-link ${activePage === 'burstGuide' ? 'active' : ''}`} aria-current={activePage === 'burstGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('burstGuide'); setMenuOpen(false) }}><Activity size={18} /><span>{t('burstGuide')}</span></a>
-          <a href="#" title={sidebarCollapsed ? t('countGuide') : undefined} className={`nav-link ${activePage === 'countGuide' ? 'active' : ''}`} aria-current={activePage === 'countGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('countGuide'); setMenuOpen(false) }}><Database size={18} /><span>{t('countGuide')}</span></a>
-          <a href="#" title={sidebarCollapsed ? t('hostGuide') : undefined} className={`nav-link ${activePage === 'hostGuide' ? 'active' : ''}`} aria-current={activePage === 'hostGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('hostGuide'); setMenuOpen(false) }}><Globe2 size={18} /><span>{t('hostGuide')}</span></a>
+        <div className="admin-navigation system-navigation">
+          <button type="button" className="nav-section-toggle" aria-expanded={systemNavOpen} onClick={toggleSystemNavigation}><Settings size={17} /><span>{t('systemHelp')}</span><ChevronDown size={14} /></button>
+          {systemNavOpen && <div className="nav-section-links">
+            <a href="#" title={sidebarCollapsed ? t('administration') : undefined} className={`nav-link ${activePage === 'administration' ? 'active' : ''}`} aria-current={activePage === 'administration' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('administration'); setMenuOpen(false) }}><Settings2 size={18} /><span>{t('administration')}</span></a>
+            <a href="#" title={sidebarCollapsed ? t('logging') : undefined} className={`nav-link ${activePage === 'logging' ? 'active' : ''}`} aria-current={activePage === 'logging' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('logging'); setMenuOpen(false) }}><FileText size={18} /><span>{t('logging')}</span></a>
+          </div>}
+        </div>
+        <div className="admin-navigation help-navigation">
+          <button type="button" className="nav-section-toggle" aria-expanded={helpNavOpen} onClick={toggleHelpNavigation}><CircleHelp size={17} /><span>{t('helpSection')}</span><ChevronDown size={14} /></button>
+          {helpNavOpen && <div className="nav-section-links">
+            <a href="#" title={sidebarCollapsed ? t('categoryGuide') : undefined} className={`nav-link ${activePage === 'categoryGuide' ? 'active' : ''}`} aria-current={activePage === 'categoryGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('categoryGuide'); setMenuOpen(false) }}><BookOpenText size={18} /><span>{t('categoryGuide')}</span></a>
+            <a href="#" title={sidebarCollapsed ? t('burstGuide') : undefined} className={`nav-link ${activePage === 'burstGuide' ? 'active' : ''}`} aria-current={activePage === 'burstGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('burstGuide'); setMenuOpen(false) }}><Activity size={18} /><span>{t('burstGuide')}</span></a>
+            <a href="#" title={sidebarCollapsed ? t('countGuide') : undefined} className={`nav-link ${activePage === 'countGuide' ? 'active' : ''}`} aria-current={activePage === 'countGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('countGuide'); setMenuOpen(false) }}><Database size={18} /><span>{t('countGuide')}</span></a>
+            <a href="#" title={sidebarCollapsed ? t('hostGuide') : undefined} className={`nav-link ${activePage === 'hostGuide' ? 'active' : ''}`} aria-current={activePage === 'hostGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('hostGuide'); setMenuOpen(false) }}><Globe2 size={18} /><span>{t('hostGuide')}</span></a>
+            <a href="#" title={sidebarCollapsed ? t('pathsGuide') : undefined} className={`nav-link ${activePage === 'pathsGuide' ? 'active' : ''}`} aria-current={activePage === 'pathsGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('pathsGuide'); setMenuOpen(false) }}><List size={18} /><span>{t('pathsGuide')}</span></a>
+          </div>}
         </div>
         <div className="sidebar-spacer" />
       </aside>
@@ -794,26 +920,27 @@ function App() {
       {menuOpen && <button className="mobile-scrim" onClick={() => setMenuOpen(false)} aria-label="Close menu" />}
 
       <main className="main-area">
-        <header className="topbar">
+        <header ref={topbarRef} className="topbar">
           <button className="icon-button mobile-menu" onClick={() => setMenuOpen(true)} aria-label={t('navigation')}><Menu size={20} /></button>
-          <button type="button" className={`icon-button sidebar-toggle${sidebarCollapsed ? ' collapsed' : ''}`} onClick={toggleSidebar} aria-label={t(sidebarCollapsed ? 'expandNavigation' : 'collapseNavigation')} title={t(sidebarCollapsed ? 'expandNavigation' : 'collapseNavigation')}>
+          <button ref={sidebarToggleRef} type="button" className={`icon-button sidebar-toggle${sidebarCollapsed ? ' collapsed' : ''}`} onClick={toggleSidebar} aria-label={t(sidebarCollapsed ? 'expandNavigation' : 'collapseNavigation')} title={t(sidebarCollapsed ? 'expandNavigation' : 'collapseNavigation')}>
             <ChevronLeft size={15} />
           </button>
           <div className="breadcrumbs"><span>{t('workspace')}</span><span className="crumb-slash">/</span><strong>{t(activePage)}</strong></div>
           <div className="topbar-actions">
             <label className="search-trigger"><Search size={16} /><input ref={searchInputRef} value={searchText} placeholder={t('search')} aria-label={t('search')} onChange={(event) => { const value = event.target.value; setSearchText(value); if (value.trim()) openSearch(); else closeSearch() }} onKeyDown={(event) => { if (event.key === 'Enter' && searchText.trim()) { event.preventDefault(); openSearch() } }} /><kbd><Command size={11} /> K</kbd></label>
             <span className="topbar-divider" />
-            <div className="notification-wrap"><button className="icon-button notification-button" aria-label={t('notifications')} title={t('notifications')} aria-expanded={notificationsOpen && !notificationsClosing} onClick={toggleNotifications}><Bell size={18} />{notificationData && notificationData.request_count + notificationData.burst_count > 0 && <span className="notification-badge">{numberText(notificationData.request_count + notificationData.burst_count, language)}</span>}</button>{notificationsOpen && <NotificationPopover data={notificationSnapshot ?? notificationData} t={t} language={language} marking={notificationsMarking} closing={notificationsClosing} onMarkRead={markNotificationsRead} onClose={closeNotifications} onSelect={(item) => { setSelectedTrafficBucket(null); setSelectedBurstId(item.type === 'burst' ? item.id : null); setSelectedActorIp(item.type === 'request' ? item.actorIp : null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests'); closeNotifications() }} />}</div>
+            <div className="notification-wrap"><button className="icon-button notification-button" aria-label={t('notifications')} data-hint={notificationData ? `${t('notifications')} · ${t('newRequestsSince')}: ${dateText(notificationData.request_since_utc, language)}` : t('notifications')} aria-expanded={notificationsOpen && !notificationsClosing} onClick={toggleNotifications}><Bell size={18} />{notificationData && notificationData.request_count + notificationData.burst_count > 0 && <span className="notification-badge">{numberText(notificationData.request_count + notificationData.burst_count, language)}</span>}</button>{notificationsOpen && <NotificationPopover data={notificationSnapshot ?? notificationData} t={t} language={language} marking={notificationsMarking} closing={notificationsClosing} onMarkRead={markNotificationsRead} onClose={closeNotifications} onSelect={(item) => { setSelectedTrafficBucket(null); setSelectedBurstId(item.type === 'burst' ? item.id : null); setSelectedActorIp(item.type === 'request' ? item.actorIp : null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests'); closeNotifications() }} />}</div>
           </div>
         </header>
 
         <div className="content-wrap">
-          {activePage === 'bursts' ? <BurstsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.bursts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('bursts', size)} sort={burstSort} onSortChange={updateBurstSort} filters={burstFilters} onFiltersChange={updateBurstFilters} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'actors' ? <ActorsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.actors ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('actors', size)} sort={actorSort} onSortChange={updateActorSort} filters={actorFilters} onFiltersChange={updateActorFilters} onActorSelect={(ip) => { setSelectedTrafficBucket(null); setSelectedActorIp(ip); setSelectedBurstId(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'hosts' ? <HostsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.hosts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('hosts', size)} sort={hostSort} onSortChange={updateHostSort} filters={hostFilters} onFiltersChange={updateHostFilters} onHostSelect={(host) => { setSelectedTrafficBucket(null); setSelectedHost(host); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'categories' ? <CategoriesPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.categories ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('categories', size)} sort={categorySort} onSortChange={updateCategorySort} filters={categoryFilters} onFiltersChange={updateCategoryFilters} onCategorySelect={(category) => { setSelectedTrafficBucket(null); setSelectedCategory(category); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'requests' ? <RequestsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.requests ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('requests', size)} burstId={selectedBurstId} actorIp={selectedActorIp} host={selectedHost} category={selectedCategory} path={selectedPath} trafficBucket={selectedTrafficBucket} onTrafficBucketClear={() => setSelectedTrafficBucket(null)} filters={requestFilters} onFiltersChange={updateRequestFilters} sort={requestSort} onSortChange={updateRequestSort} onBurstClear={() => setSelectedBurstId(null)} onActorClear={() => setSelectedActorIp(null)} onHostClear={() => setSelectedHost(null)} onCategoryClear={() => setSelectedCategory(null)} onPathClear={() => setSelectedPath(null)} /> : activePage === 'administration' ? <AdministrationPage t={t} language={language} /> : activePage === 'categoryGuide' ? <CategoryGuidePage t={t} /> : activePage === 'burstGuide' ? <BurstGuidePage t={t} /> : activePage === 'countGuide' ? <CountGuidePage t={t} /> : activePage === 'hostGuide' ? <HostGuidePage t={t} /> : activePage === 'logging' ? <LoggingPage t={t} /> : <DashboardPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} onBucketSelect={(bucket) => { setSelectedTrafficBucket(bucket); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} />}
+          {activePage === 'bursts' ? <BurstsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.bursts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('bursts', size)} sort={burstSort} onSortChange={updateBurstSort} filters={burstFilters} onFiltersChange={updateBurstFilters} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'actors' ? <ActorsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.actors ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('actors', size)} sort={actorSort} onSortChange={updateActorSort} filters={actorFilters} onFiltersChange={updateActorFilters} onActorSelect={(ip) => { setSelectedTrafficBucket(null); setSelectedActorIp(ip); setSelectedBurstId(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'hosts' ? <HostsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.hosts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('hosts', size)} sort={hostSort} onSortChange={updateHostSort} filters={hostFilters} onFiltersChange={updateHostFilters} onHostSelect={(host) => { setSelectedTrafficBucket(null); setSelectedHost(host); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'categories' ? <CategoriesPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.categories ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('categories', size)} sort={categorySort} onSortChange={updateCategorySort} filters={categoryFilters} onFiltersChange={updateCategoryFilters} onCategorySelect={(category) => { setSelectedTrafficBucket(null); setSelectedCategory(category); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'requests' ? <RequestsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.requests ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('requests', size)} burstId={selectedBurstId} actorIp={selectedActorIp} host={selectedHost} category={selectedCategory} path={selectedPath} trafficBucket={selectedTrafficBucket} onTrafficBucketClear={() => setSelectedTrafficBucket(null)} filters={requestFilters} onFiltersChange={updateRequestFilters} sort={requestSort} onSortChange={updateRequestSort} onBurstClear={() => setSelectedBurstId(null)} onActorClear={() => setSelectedActorIp(null)} onHostClear={() => setSelectedHost(null)} onCategoryClear={() => setSelectedCategory(null)} onPathClear={() => setSelectedPath(null)} /> : activePage === 'administration' ? <AdministrationPage t={t} language={language} /> : activePage === 'categoryGuide' ? <CategoryGuidePage t={t} /> : activePage === 'burstGuide' ? <BurstGuidePage t={t} /> : activePage === 'countGuide' ? <CountGuidePage t={t} /> : activePage === 'hostGuide' ? <HostGuidePage t={t} /> : activePage === 'pathsGuide' ? <PathsGuidePage t={t} /> : activePage === 'logging' ? <LoggingPage t={t} /> : <DashboardPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} onBucketSelect={(bucket) => { setSelectedTrafficBucket(bucket); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} />}
 
           <footer className="page-footer"><span>INM2 <b>·</b> Internet Noise Monitor</span><div className="footer-controls">{preferencesError && <span className="preferences-error">{t('preferencesError')}</span>}<label><span>{t('theme')}</span><select value={theme} onChange={(event) => updateTheme(event.target.value as Theme)} aria-label={t('theme')}><option value="auto">{t('themeAuto')}</option><option value="cloud">{t('themeCloud')}</option><option value="midnight">{t('themeMidnight')}</option><option value="moss">{t('themeMoss')}</option></select><Sun size={14} /></label><label><span>{t('language')}</span><select value={language} onChange={(event) => updateLanguage(event.target.value as Language)} aria-label={t('language')}><option value="de">DE</option><option value="en">EN</option></select></label><span className="version-label">v{__APP_VERSION__}</span></div></footer>
         </div>
       </main>
       <ApiActivityToast t={t} />
+      <AppHints />
       {searchOpen && <GlobalSearchDialog query={searchText} queryRange={range.query} language={language} t={t} closing={searchClosing} onClose={closeSearch} onSelect={(kind, value) => { setSelectedTrafficBucket(null); setSelectedBurstId(null); setSelectedActorIp(kind === 'actor' ? value : null); setSelectedHost(kind === 'host' ? value : null); setSelectedCategory(kind === 'category' ? value : null); setSelectedPath(kind === 'path' ? value : null); navigateToPage('requests'); closeSearch(); setSearchText('') }} />}
     </div>
   )
@@ -1085,7 +1212,7 @@ function ActorsPage({ t, language, range, onRangeChange, lastImport, sort, onSor
   return <>
     <PageHeading title={t('actors')} subtitle={t('actorPageSubtitle')} t={t} language={language} range={range} onRangeChange={onRangeChange} lastImport={lastImport} />
     <PageDataState loading={result.loading || newActors.loading} error={result.error ?? newActors.error} retry={retry} t={t} />
-    <div className="filter-toolbar burst-filters burst-filter-controls"><label className="filter-search"><Search size={15} /><input value={draftFilters.search} placeholder={t('actorSearchPlaceholder')} aria-label={t('actorSearchPlaceholder')} onChange={(event) => setDraftFilters((value) => ({ ...value, search: event.target.value }))} onKeyDown={(event) => { if (event.key === 'Enter') applyFilters() }} /></label><label className="filter-select"><Globe2 size={15} /><select aria-label={t('filterCountry')} value={draftFilters.country} onChange={(event) => setDraftFilters((value) => ({ ...value, country: event.target.value }))}><option value="">{t('allCountries')}</option>{countryOptions.data?.items.map((item) => <option key={item.country} value={item.country}>{countryFlag(item.country)} {item.country}</option>)}</select><span className="filter-select-value">{draftFilters.country && <span className="country-flag">{countryFlag(draftFilters.country)}</span>}{draftFilters.country || t('allCountries')}</span><ChevronDown size={13} /></label><button type="button" className="filter-button" onClick={resetFilters}>{t('resetFilters')}</button><button type="button" className="primary-button filter-submit" onClick={applyFilters}>{t('applyFilters')}</button></div>
+    <div className="filter-toolbar burst-filters burst-filter-controls"><label className="filter-search"><Search size={15} /><input value={draftFilters.search} placeholder={t('actorSearchPlaceholder')} aria-label={t('actorSearchPlaceholder')} onChange={(event) => setDraftFilters((value) => ({ ...value, search: event.target.value }))} onKeyDown={(event) => { if (event.key === 'Enter') applyFilters() }} /></label><label className="filter-select country-filter"><Globe2 size={15} /><select aria-label={t('filterCountry')} value={draftFilters.country} onChange={(event) => setDraftFilters((value) => ({ ...value, country: event.target.value }))}><option value="">{t('allCountries')}</option>{countryOptions.data?.items.map((item) => <option key={item.country} value={item.country}>{countryFlag(item.country)} {item.country}</option>)}</select><span className="filter-select-value">{draftFilters.country && <span className="country-flag">{countryFlag(draftFilters.country)}</span>}{draftFilters.country || t('allCountries')}</span><ChevronDown size={13} /></label><button type="button" className="filter-button" onClick={resetFilters}>{t('resetFilters')}</button><button type="button" className="primary-button filter-submit" onClick={applyFilters}>{t('applyFilters')}</button></div>
     {!result.loading && !newActors.loading && !result.error && !newActors.error && <>
       <div className="metric-grid"><MetricCard t={t} language={language} label={t('uniqueActors')} value={numberText(result.data?.total, language)} icon={Users} iconClass="violet" trend={trends.data?.metrics.actor_count} trendLoading={trends.loading} trendAbsoluteUnit={t('actors')} /><MetricCard t={t} language={language} label={t('newActors')} value={numberText(newActors.data?.total, language)} icon={ArrowUpRight} iconClass="blue" trend={trends.data?.metrics.new_actor_count} trendLoading={trends.loading} trendAbsoluteUnit={t('actors')} /><MetricCard t={t} language={language} label={t('countriesSeen')} value={numberText(trends.data?.metrics.country_count?.current ?? countries, language)} icon={Globe2} iconClass="green" trend={trends.data?.metrics.country_count} trendLoading={trends.loading} trendAbsoluteUnit={t('countries')} /><MetricCard t={t} language={language} label={t('avgRequestsActor')} value={numberText(trends.data?.metrics.avg_requests_per_actor?.current ?? (actors.length ? totalRequests / actors.length : 0), language)} icon={Activity} iconClass="amber" trend={trends.data?.metrics.avg_requests_per_actor} trendLoading={trends.loading} trendAbsoluteUnit={t('requestsPerActor')} trendAbsoluteDecimals={1} /></div>
       <div className="panel data-list-panel"><ListHeading title={t('actors')} />
@@ -1197,7 +1324,7 @@ function RequestsPage({ t, language, range, onRangeChange, lastImport, burstId, 
       <div className={`metric-grid request-metrics${burstId != null ? ' has-burst' : ''}`}><MetricCard t={t} language={language} label={t('totalRequests')} value={numberText(result.data?.total ?? total, language)} icon={Activity} iconClass="blue" trend={trends.data?.metrics.request_count} trendLoading={trends.loading} trendAbsoluteUnit={t('requestsLabel')} /><MetricCard t={t} language={language} label={t('errorResponses')} value={numberText(trends.data?.metrics.error_request_count?.current ?? errorCount, language)} icon={ShieldAlert} iconClass="amber" trend={trends.data?.metrics.error_request_count} trendLoading={trends.loading} trendAbsoluteUnit={t('errorResponses')} /><MetricCard t={t} language={language} label={t('writeRequests')} value={numberText(countRow?.write_count, language)} icon={ArrowUpRight} iconClass="violet" trend={trends.data?.metrics.write_request_count} trendLoading={trends.loading} trendAbsoluteUnit={t('writeRequests')} />{burstId != null && <div className="panel metric-card burst-context-card"><div className="metric-top"><span>{t('burstDetails')} · #{burstId}</span><span className="metric-icon amber"><Activity size={17} /></span></div><div className="metric-bottom"><strong className="metric-value-compact">{activeBurst ? dateText(activeBurst.start_time, language) : '…'}</strong></div><div className="metric-foot"><div className="metric-caption">{t('duration')}: {activeBurst ? preciseSecondsText((new Date(activeBurst.end_time).getTime() - new Date(activeBurst.start_time).getTime()) / 1000, language) : '…'}</div><div className="metric-trend steady"><Activity size={13} /><span>{activeBurst ? `${decimalText(activeBurst.avg_count, language)} ${t('requestsPerSecond')}` : '…'}</span></div></div></div>}</div>
       <div className="panel data-list-panel requests-list-panel"><ListHeading title={t('requests')} />
         <Paginator total={result.data?.total ?? 0} pageIndex={pageIndex} pageSize={pageSize} onPageChange={setPageIndex} onPageSizeChange={onPageSizeChange} t={t} language={language} />
-        <TableScroller t={t}><table className={requestTableClass}><thead><tr><SortableHeader column="start_utc" label={t('startTime')} sort={sort} onSort={changeSort} filtered={true} filterLabel={t('filteredColumn')} /><SortableHeader column="request_method" label={t('method')} sort={sort} onSort={changeSort} /><SortableHeader column="request_path" label={t('requestPath')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || category != null || path != null)} filterLabel={t('filteredColumn')} /><SortableHeader column="user_agent" label={t('userAgent')} sort={sort} onSort={changeSort} /><SortableHeader column="downstream_status" label={t('responseStatus')} sort={sort} onSort={changeSort} filtered={Boolean(filters.status)} filterLabel={t('filteredColumn')} />{!hideActorColumn && <SortableHeader column="actor_ip" label={t('actor')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || actorIp != null)} filterLabel={t('filteredColumn')} />}{!hideHostColumn && <SortableHeader column="host" label={t('host')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || host != null)} filterLabel={t('filteredColumn')} />}<SortableHeader column="duration" label={t('durationShort')} sort={sort} onSort={changeSort} /><SortableHeader column="downstream_content_size" label={t('responseSize')} sort={sort} onSort={changeSort} /></tr></thead><tbody>{requests.length ? requests.map((request) => <tr key={request.request_id}><td><span className="request-time-cell"><span>{requestDateTimeText(request.start_utc, language)} . {timestampMillisText(request.start_utc, language)}</span><small>{numberText(request.duration / 1_000_000, language)} ms</small></span></td><td><span className="method-cell">{request.request_scheme.toLowerCase() === 'https' && <span className="https-lock" title="HTTPS" aria-label="HTTPS"><LockKeyhole size={13} /></span>}{request.request_scheme.toLowerCase() === 'http' && <span className="http-lock" title="HTTP" aria-label="HTTP"><LockOpen size={13} /></span>}<span className={`method-badge ${request.request_method.toLowerCase()}`}>{request.request_method}</span></span></td><td><span className="request-path-detail"><code className="path-cell">{request.request_path}</code>{category == null && request.categories && <small>{request.categories}</small>}</span></td><td><span className="user-agent-cell">{request.user_agent || '—'}</span></td><td><span className={`response-code ${request.downstream_status < 400 ? 'response-success' : ''}`}>{request.downstream_status}</span></td>{!hideActorColumn && <td><span className="actor-detail"><strong className="primary-cell">{request.actor_ip}</strong>{(request.provider || request.asn) && <small>{[request.provider, request.asn].filter(Boolean).join(' · ')}</small>}{(request.city || request.country) && <small className="country-cell">{request.country && <><span className="country-flag" title={request.country}>{countryFlag(request.country)}</span>{request.country}</>}{request.city && <>{request.country ? ' · ' : ''}{request.city}</>}</small>}</span></td>}{!hideHostColumn && <td className={`host-cell${request.host_known ? ' known-host-name' : ''}`}>{request.host || '—'}</td>}<td>{numberText(request.duration / 1_000_000, language)} ms</td><td>{numberText(request.downstream_content_size, language)} B</td></tr>) : <EmptyRows t={t} columns={9 - Number(hideActorColumn) - Number(hideHostColumn)} />}</tbody></table></TableScroller>
+        <TableScroller t={t}><table className={requestTableClass}><thead><tr><SortableHeader column="start_utc" label={t('startTime')} sort={sort} onSort={changeSort} filtered={true} filterLabel={t('filteredColumn')} /><SortableHeader column="request_method" label={t('method')} sort={sort} onSort={changeSort} /><SortableHeader column="request_path" label={t('requestPath')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || category != null || path != null)} filterLabel={t('filteredColumn')} /><SortableHeader column="host" label={t('host')} sort={sort} onSort={changeSort} className="request-host-col" filtered={Boolean(filters.search.trim() || host != null)} filterLabel={t('filteredColumn')} hidden={hideHostColumn} /><SortableHeader column="downstream_status" label={t('responseStatus')} sort={sort} onSort={changeSort} className="request-status-col" filtered={Boolean(filters.status)} filterLabel={t('filteredColumn')} />{!hideActorColumn && <SortableHeader column="actor_ip" label={t('actor')} sort={sort} onSort={changeSort} className="request-actor-col" filtered={Boolean(filters.search.trim() || actorIp != null)} filterLabel={t('filteredColumn')} />}<SortableHeader column="user_agent" label={t('userAgent')} sort={sort} onSort={changeSort} className="request-user-agent-col" /><SortableHeader column="duration" label={t('durationShort')} sort={sort} onSort={changeSort} /><SortableHeader column="downstream_content_size" label={t('responseSize')} sort={sort} onSort={changeSort} /></tr></thead><tbody>{requests.length ? requests.map((request) => <tr key={request.request_id}><td><span className="request-time-cell"><span>{requestDateTimeText(request.start_utc, language)} . {timestampMillisText(request.start_utc, language)}</span><small>{numberText(request.duration / 1_000_000, language)} ms</small></span></td><td><span className="method-cell">{request.request_scheme.toLowerCase() === 'https' && <span className="https-lock" title="HTTPS" aria-label="HTTPS"><LockKeyhole size={13} /></span>}{request.request_scheme.toLowerCase() === 'http' && <span className="http-lock" title="HTTP" aria-label="HTTP"><LockOpen size={13} /></span>}<span className={`method-badge ${request.request_method.toLowerCase()}`}>{request.request_method}</span></span></td><td><span className="request-path-detail"><code className="path-cell">{request.request_path}</code>{category == null && request.categories && <small>{request.categories}</small>}</span></td>{!hideHostColumn && <td className={`host-cell request-host-col${request.host_known ? ' known-host-name' : ''}`}>{request.host || '—'}</td>}<td className="request-status-col"><span className={`response-code ${request.downstream_status < 400 ? 'response-success' : ''}`}>{request.downstream_status}</span></td>{!hideActorColumn && <td className="request-actor-col"><span className="actor-detail"><strong className="primary-cell">{request.actor_ip}</strong>{(request.provider || request.asn) && <small>{[request.provider, request.asn].filter(Boolean).join(' · ')}</small>}{(request.city || request.country) && <small className="country-cell">{request.country && <><span className="country-flag" title={request.country}>{countryFlag(request.country)}</span>{request.country}</>}{request.city && <>{request.country ? ' · ' : ''}{request.city}</>}</small>}</span></td>}<td className="request-user-agent-col"><span className="user-agent-cell">{request.user_agent || '—'}</span></td><td>{numberText(request.duration / 1_000_000, language)} ms</td><td>{numberText(request.downstream_content_size, language)} B</td></tr>) : <EmptyRows t={t} columns={9 - Number(hideActorColumn) - Number(hideHostColumn)} />}</tbody></table></TableScroller>
         <Paginator total={result.data?.total ?? 0} pageIndex={pageIndex} pageSize={pageSize} onPageChange={setPageIndex} onPageSizeChange={onPageSizeChange} t={t} language={language} />
       </div>
     </>}
@@ -1247,27 +1374,71 @@ function ListHeading({ title }: { title: string }) {
 
 function TableScroller({ children, className = '', t }: { children: ReactNode; className?: string; t: (key: MessageKey) => string }) {
   const scrollRef = useRef<HTMLDivElement>(null)
-  const [canScrollLeft, setCanScrollLeft] = useState(false)
-  const [canScrollRight, setCanScrollRight] = useState(false)
-  const [cueTop, setCueTop] = useState(24)
-  useEffect(() => {
+  const leftCueRef = useRef<HTMLButtonElement>(null)
+  const rightCueRef = useRef<HTMLButtonElement>(null)
+  const cuesPinnedRef = useRef(false)
+  useLayoutEffect(() => {
     const element = scrollRef.current
     if (!element) return
-    const update = () => {
-      setCanScrollLeft(element.scrollLeft > 1)
-      setCanScrollRight(element.scrollLeft + element.clientWidth < element.scrollWidth - 1)
+    const update = (reflow = false) => {
+      const frame = element.parentElement
+      if (!frame) return
+      const frameRect = frame.getBoundingClientRect()
       const headerRow = element.querySelector('thead tr')
-      if (headerRow) setCueTop(headerRow.getBoundingClientRect().bottom - element.getBoundingClientRect().top)
+      const headerRect = headerRow?.getBoundingClientRect()
+      const buttonRadius = window.matchMedia('(max-width: 560px)').matches ? 10 : 11
+      const minTop = Math.max(frameRect.top + buttonRadius, buttonRadius + 4)
+      const maxTop = Math.min(frameRect.bottom - buttonRadius, window.innerHeight - buttonRadius - 4)
+      const visible = frameRect.bottom > 0 && frameRect.top < window.innerHeight && minTop <= maxTop
+      const headerBottom = headerRect?.bottom ?? frameRect.top + buttonRadius
+      if (headerRect) {
+        if (cuesPinnedRef.current ? headerRect.top >= 4 : headerRect.top <= 0) cuesPinnedRef.current = !cuesPinnedRef.current
+      }
+      const pinned = cuesPinnedRef.current
+      const top = Math.max(minTop, Math.min(maxTop, headerBottom))
+      const absoluteTop = headerBottom - frameRect.top
+      const canScrollLeft = element.scrollLeft > 1
+      const canScrollRight = element.scrollLeft + element.clientWidth < element.scrollWidth - 1
+      const leftCue = leftCueRef.current
+      const rightCue = rightCueRef.current
+      if (leftCue) {
+        leftCue.style.position = pinned ? 'fixed' : 'absolute'
+        if (pinned) {
+          leftCue.style.top = `${top}px`
+          leftCue.style.left = `${Math.max(4, frameRect.left + 3)}px`
+        } else {
+          leftCue.style.removeProperty('left')
+          if (headerRect && (reflow || leftCue.dataset.position !== 'absolute')) leftCue.style.top = `${absoluteTop}px`
+        }
+        leftCue.style.display = visible && canScrollLeft ? 'grid' : 'none'
+        leftCue.dataset.position = pinned ? 'fixed' : 'absolute'
+      }
+      if (rightCue) {
+        rightCue.style.position = pinned ? 'fixed' : 'absolute'
+        if (pinned) {
+          rightCue.style.top = `${top}px`
+          rightCue.style.right = `${Math.max(4, window.innerWidth - frameRect.right + 3)}px`
+        } else {
+          rightCue.style.removeProperty('right')
+          if (headerRect && (reflow || rightCue.dataset.position !== 'absolute')) rightCue.style.top = `${absoluteTop}px`
+        }
+        rightCue.style.display = visible && canScrollRight ? 'grid' : 'none'
+        rightCue.dataset.position = pinned ? 'fixed' : 'absolute'
+      }
     }
-    update()
-    element.addEventListener('scroll', update, { passive: true })
-    window.addEventListener('resize', update)
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update)
+    update(true)
+    const onScroll = () => update()
+    element.addEventListener('scroll', onScroll, { passive: true })
+    const onResize = () => update(true)
+    window.addEventListener('resize', onResize)
+    window.addEventListener('scroll', onScroll, { passive: true, capture: true })
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(onResize)
     observer?.observe(element)
     if (element.firstElementChild) observer?.observe(element.firstElementChild)
     return () => {
-      element.removeEventListener('scroll', update)
-      window.removeEventListener('resize', update)
+      element.removeEventListener('scroll', onScroll)
+      window.removeEventListener('resize', onResize)
+      window.removeEventListener('scroll', onScroll, true)
       observer?.disconnect()
     }
   }, [children])
@@ -1276,15 +1447,16 @@ function TableScroller({ children, className = '', t }: { children: ReactNode; c
     if (element) element.scrollBy({ left: direction * element.clientWidth * .75, behavior: 'smooth' })
   }
   return <div className={`table-scroll-frame${className ? ` ${className}-frame` : ''}`}>
-    {canScrollLeft && <button type="button" className="table-scroll-cue left" style={{ top: cueTop }} aria-label={t('tableScrollLeft')} title={t('tableScrollLeft')} onClick={() => scroll(-1)}><ChevronLeft size={15} /></button>}
+    <button ref={leftCueRef} type="button" className="table-scroll-cue left" aria-label={t('tableScrollLeft')} title={t('tableScrollLeft')} onClick={() => scroll(-1)}><ChevronLeft size={15} /></button>
     <div ref={scrollRef} className={`table-scroll ${className}`}>{children}</div>
-    {canScrollRight && <button type="button" className="table-scroll-cue right" style={{ top: cueTop }} aria-label={t('tableScrollRight')} title={t('tableScrollRight')} onClick={() => scroll(1)}><ChevronRight size={15} /></button>}
+    <button ref={rightCueRef} type="button" className="table-scroll-cue right" aria-label={t('tableScrollRight')} title={t('tableScrollRight')} onClick={() => scroll(1)}><ChevronRight size={15} /></button>
   </div>
 }
 
-function SortableHeader<T extends string>({ column, label, sort, onSort, filtered = false, filterLabel }: { column: T; label: string; sort: { column: T; direction: 'asc' | 'desc' }; onSort: (column: T) => void; filtered?: boolean; filterLabel?: string }) {
+function SortableHeader<T extends string>({ column, label, sort, onSort, filtered = false, filterLabel, className, hidden = false }: { column: T; label: string; sort: { column: T; direction: 'asc' | 'desc' }; onSort: (column: T) => void; filtered?: boolean; filterLabel?: string; className?: string; hidden?: boolean }) {
   const active = sort.column === column
-  return <th aria-sort={active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}><button type="button" className="sort-header" title={filtered ? `${label} · ${filterLabel ?? ''}` : label} aria-label={filtered ? `${label} · ${filterLabel ?? ''}` : label} onClick={() => onSort(column)}>{label}{active && (sort.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}{filtered && <Filter size={11} className="column-filter-marker" aria-hidden="true" />}</button></th>
+  if (hidden) return null
+  return <th className={className} aria-sort={active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}><button type="button" className="sort-header" title={filtered ? `${label} · ${filterLabel ?? ''}` : label} aria-label={filtered ? `${label} · ${filterLabel ?? ''}` : label} onClick={() => onSort(column)}>{label}{active && (sort.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}{filtered && <Filter size={11} className="column-filter-marker" aria-hidden="true" />}</button></th>
 }
 
 function Paginator({ total, pageIndex, pageSize, onPageChange, onPageSizeChange, t, language }: { total: number; pageIndex: number; pageSize: PageSize; onPageChange: (page: number) => void; onPageSizeChange: (size: PageSize) => void; t: (key: MessageKey) => string; language: Language }) {
@@ -1371,6 +1543,20 @@ function HostGuidePage({ t }: { t: (key: MessageKey) => string }) {
     { title: 'hostGuideBurstTitle', description: 'hostGuideBurstBody', exampleKey: 'hostGuideBurstExample' },
   ]
   return <InfoGuidePage t={t} title="hostGuideTitle" subtitle="hostGuideSubtitle" entries={entries} note="hostGuideCaveat" />
+}
+
+function PathsGuidePage({ t }: { t: (key: MessageKey) => string }) {
+  const entries: GuideEntry[] = [
+    { title: 'pathsGuideSensitiveTitle', description: 'pathsGuideSensitiveBody', exampleKey: 'pathsGuideSensitiveExample' },
+    { title: 'pathsGuideAdminTitle', description: 'pathsGuideAdminBody', exampleKey: 'pathsGuideAdminExample' },
+    { title: 'pathsGuideCmsTitle', description: 'pathsGuideCmsBody', exampleKey: 'pathsGuideCmsExample' },
+    { title: 'pathsGuideVulnerabilityTitle', description: 'pathsGuideVulnerabilityBody', exampleKey: 'pathsGuideVulnerabilityExample' },
+    { title: 'pathsGuideDiagnosticsTitle', description: 'pathsGuideDiagnosticsBody', exampleKey: 'pathsGuideDiagnosticsExample' },
+    { title: 'pathsGuideShellTitle', description: 'pathsGuideShellBody', exampleKey: 'pathsGuideShellExample' },
+    { title: 'pathsGuideDatabaseTitle', description: 'pathsGuideDatabaseBody', exampleKey: 'pathsGuideDatabaseExample' },
+    { title: 'pathsGuideApiTitle', description: 'pathsGuideApiBody', exampleKey: 'pathsGuideApiExample' },
+  ]
+  return <InfoGuidePage t={t} title="pathsGuideTitle" subtitle="pathsGuideSubtitle" entries={entries} note="pathsGuideCaveat" />
 }
 
 function LoggingPage({ t }: { t: (key: MessageKey) => string }) {
