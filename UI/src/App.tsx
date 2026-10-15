@@ -108,9 +108,51 @@ type BurstChartResponse = { items: BurstChartBucket[]; from: string; to: string;
 
 let liveRefreshTick = 0
 const liveRefreshListeners = new Set<() => void>()
+type LiveDisplayStatus = 'current' | 'updating' | 'pending'
+let liveDisplayStatus: LiveDisplayStatus = 'pending'
+let liveRefreshPending = 0
+let liveRefreshCollecting = false
+let liveRefreshFailed = false
+const liveDisplayListeners = new Set<() => void>()
 function subscribeLiveRefresh(listener: () => void) { liveRefreshListeners.add(listener); return () => liveRefreshListeners.delete(listener) }
 function getLiveRefreshTick() { return liveRefreshTick }
-function triggerLiveRefresh() { liveRefreshTick += 1; liveRefreshListeners.forEach((listener) => listener()) }
+function subscribeLiveDisplay(listener: () => void) { liveDisplayListeners.add(listener); return () => liveDisplayListeners.delete(listener) }
+function getLiveDisplayStatus() { return liveDisplayStatus }
+function setLiveDisplayStatus(status: LiveDisplayStatus) {
+  if (liveDisplayStatus === status) return
+  liveDisplayStatus = status
+  liveDisplayListeners.forEach((listener) => listener())
+}
+function completeLiveRefreshIfReady(tick: number) {
+  if (tick !== liveRefreshTick || liveRefreshCollecting || liveRefreshPending > 0) return
+  setLiveDisplayStatus(liveRefreshFailed ? 'pending' : 'current')
+}
+function beginLiveRefreshRequest(tick: number) {
+  if (tick !== liveRefreshTick || liveDisplayStatus !== 'updating') return null
+  liveRefreshPending += 1
+  let finished = false
+  return (success: boolean, aborted = false) => {
+    if (finished) return
+    finished = true
+    if (tick !== liveRefreshTick) return
+    liveRefreshPending = Math.max(0, liveRefreshPending - 1)
+    if (!success && !aborted) liveRefreshFailed = true
+    completeLiveRefreshIfReady(tick)
+  }
+}
+function triggerLiveRefresh() {
+  liveRefreshTick += 1
+  const tick = liveRefreshTick
+  liveRefreshPending = 0
+  liveRefreshFailed = false
+  liveRefreshCollecting = true
+  liveRefreshListeners.forEach((listener) => listener())
+  window.setTimeout(() => {
+    if (tick !== liveRefreshTick) return
+    liveRefreshCollecting = false
+    completeLiveRefreshIfReady(tick)
+  }, 100)
+}
 
 let pendingApiRequests = 0
 const apiRequestListeners = new Set<() => void>()
@@ -251,6 +293,8 @@ function useApiData<T>(url: string | null, pollIntervalMs = 0, showActivityToast
       return
     }
     const controller = new AbortController()
+    const finishLiveRefresh = beginLiveRefreshRequest(effectiveRefreshTick)
+    let liveRequestSucceeded = false
     let pollTimer: number | undefined
     let requestFinished = false
     const finishRequest = () => {
@@ -267,20 +311,21 @@ function useApiData<T>(url: string | null, pollIntervalMs = 0, showActivityToast
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
         return response.json() as Promise<T>
       })
-      .then((result) => { if (!controller.signal.aborted) { dataRef.current = result; setData(result) } })
+      .then((result) => { if (!controller.signal.aborted) { liveRequestSucceeded = true; dataRef.current = result; setData(result) } })
       .catch((reason: unknown) => {
         if (controller.signal.aborted || (reason instanceof DOMException && reason.name === 'AbortError')) return
         setError(reason instanceof Error ? reason.message : 'Request failed')
       })
       .finally(() => {
         finishRequest()
+        finishLiveRefresh?.(liveRequestSucceeded, controller.signal.aborted)
         if (!controller.signal.aborted) {
           setLoading(false)
           if (pollIntervalMs > 0) pollTimer = window.setTimeout(() => setReloadKey((key) => key + 1), pollIntervalMs)
         }
       })
-    return () => { if (pollTimer !== undefined) window.clearTimeout(pollTimer); finishRequest(); controller.abort() }
-  }, [url, reloadKey, pollIntervalMs, showToastForRequest, effectiveRefreshTick])
+    return () => { if (pollTimer !== undefined) window.clearTimeout(pollTimer); finishRequest(); controller.abort(); finishLiveRefresh?.(false, true) }
+  }, [url, reloadKey, pollIntervalMs, effectiveRefreshTick, showActivityToast])
 
   return { data, loading, error, reload: () => setReloadKey((key) => key + 1) }
 }
@@ -303,6 +348,7 @@ type MetricTrendKey = 'request_count' | 'error_request_count' | 'write_request_c
 type MetricTrend = { current: number; previous: number; change_percent: number; direction: 'up' | 'down' | 'steady' }
 type MetricTrendResponse = { metrics: Partial<Record<MetricTrendKey, MetricTrend>> }
 function useMetricTrends(range: TimeRange, page: string, filters: Record<string, string> = {}) {
+  const refreshTick = useSyncExternalStore(subscribeLiveRefresh, getLiveRefreshTick, getLiveRefreshTick)
   const extras = Object.fromEntries(Object.entries({ page, ...filters }).filter(([, value]) => value))
   const url = apiUrl('metric_trends', range.query, extras)
   const [result, setResult] = useState<{ url: string; data: MetricTrendResponse } | null>(null)
@@ -310,17 +356,19 @@ function useMetricTrends(range: TimeRange, page: string, filters: Record<string,
   const [reloadKey, setReloadKey] = useState(0)
   useEffect(() => {
     const controller = new AbortController()
+    const finishLiveRefresh = beginLiveRefreshRequest(refreshTick)
+    let liveRequestSucceeded = false
     setLoading(true)
     apiFetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } })
       .then(async (response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
         return response.json() as Promise<MetricTrendResponse>
       })
-      .then((data) => { if (!controller.signal.aborted) setResult({ url, data }) })
+      .then((data) => { if (!controller.signal.aborted) { liveRequestSucceeded = true; setResult({ url, data }) } })
       .catch((error: unknown) => { if (!controller.signal.aborted) console.error('Could not load metric trends', error) })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
-    return () => controller.abort()
-  }, [url, reloadKey])
+      .finally(() => { finishLiveRefresh?.(liveRequestSucceeded, controller.signal.aborted); if (!controller.signal.aborted) setLoading(false) })
+    return () => { controller.abort(); finishLiveRefresh?.(false, true) }
+  }, [url, reloadKey, refreshTick])
   return { data: result?.url === url ? result.data : undefined, loading, reload: () => setReloadKey((key) => key + 1) }
 }
 
@@ -492,7 +540,7 @@ function ApiActivityToast({ t }: { t: (key: MessageKey) => string }) {
   return <div className="api-activity-toast" role="status" aria-live="polite"><span className="loading-spinner" /><span>{t('apiCallInProgress')}</span></div>
 }
 
-function AppHints() {
+function AppHints({ suppress, notificationOpen }: { suppress: boolean; notificationOpen: boolean }) {
   const [hint, setHint] = useState<{ text: string; left: number; top: number } | null>(null)
   useEffect(() => {
     let active: Element | null = null
@@ -503,7 +551,10 @@ function AppHints() {
       active = null
       setHint(null)
     }
+    // Clear a bell or popup button hint whenever its popover opens/closes.
+    hide()
     const show = (target: Element | null) => {
+      if (suppress) return
       if (!target || target === active) return
       hide()
       const nativeTitle = target.getAttribute('title')
@@ -525,29 +576,35 @@ function AppHints() {
       const source = event.target
       return source instanceof Element ? source.closest('[data-hint], [data-app-hint], [title]') : null
     }
-    const onPointerOver = (event: Event) => show(findTarget(event))
+    const onPointerOver = (event: Event) => suppress ? hide() : show(findTarget(event))
     const onPointerOut = (event: Event) => {
       const target = findTarget(event)
       const next = event instanceof PointerEvent && event.relatedTarget instanceof Element ? event.relatedTarget : null
       if (target && target === active && (!next || !target.contains(next))) hide()
     }
-    const onFocusIn = (event: Event) => show(findTarget(event))
+    const onFocusIn = (event: Event) => suppress ? hide() : show(findTarget(event))
     const onFocusOut = (event: Event) => {
       const target = findTarget(event)
       if (target && target === active) hide()
+    }
+    const onNotificationOpen = (event: Event) => {
+      const source = event.target
+      if (source instanceof Element && source.closest('.notification-button')) hide()
     }
     document.addEventListener('pointerover', onPointerOver)
     document.addEventListener('pointerout', onPointerOut)
     document.addEventListener('focusin', onFocusIn)
     document.addEventListener('focusout', onFocusOut)
+    document.addEventListener('click', onNotificationOpen)
     return () => {
       hide()
       document.removeEventListener('pointerover', onPointerOver)
       document.removeEventListener('pointerout', onPointerOut)
       document.removeEventListener('focusin', onFocusIn)
       document.removeEventListener('focusout', onFocusOut)
+      document.removeEventListener('click', onNotificationOpen)
     }
-  }, [])
+  }, [suppress, notificationOpen])
   return hint ? <div className="app-hint" role="tooltip" style={{ left: hint.left, top: hint.top }}>{hint.text}</div> : null
 }
 
@@ -626,6 +683,8 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
   const topbarRef = useRef<HTMLElement>(null)
   const sidebarToggleRef = useRef<HTMLButtonElement>(null)
   const sidebarTogglePinned = useRef(false)
+  const lastObservedImport = useRef<string | null | undefined>(undefined)
+  const lastObservedRangePreset = useRef<RangePreset | undefined>(undefined)
   const t = (key: MessageKey) => messages[language][key]
   const liveStatus = useApiData<StatusData>(apiUrl('status'), 10_000, false)
 
@@ -669,15 +728,18 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
   }, [sidebarCollapsed])
 
   useEffect(() => {
-    if (range.preset !== 'last24h') return
-    const configuredSeconds = Number(liveStatus.data?.environment.INPUT_INTERVAL_SECONDS)
-    const intervalMs = Number.isFinite(configuredSeconds) && configuredSeconds > 0 ? configuredSeconds * 1000 : 3_600_000
-    const timer = window.setInterval(() => {
+    const importedAt = liveStatus.data?.collector_status.last_import
+    if (importedAt === undefined) return
+    const previousImport = lastObservedImport.current
+    const enteredLiveRange = lastObservedRangePreset.current !== 'last24h' && range.preset === 'last24h'
+    lastObservedImport.current = importedAt
+    lastObservedRangePreset.current = range.preset
+    if (range.preset === 'last24h' && importedAt && (previousImport === undefined || importedAt !== previousImport || enteredLiveRange)) {
+      setLiveDisplayStatus('updating')
       setRange(makeRange('last24h'))
       triggerLiveRefresh()
-    }, intervalMs)
-    return () => window.clearInterval(timer)
-  }, [range.preset, liveStatus.data?.environment.INPUT_INTERVAL_SECONDS])
+    }
+  }, [range.preset, liveStatus.data?.collector_status.last_import])
 
   useEffect(() => {
     const onShortcut = (event: KeyboardEvent) => {
@@ -892,6 +954,7 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
     if (!snapshot || notificationsMarking || snapshot.request_count + snapshot.burst_count === 0) return
     notificationRefreshVersion.current += 1
     setNotificationsMarking(true)
+    closeNotifications()
     try {
       const cursors = new URLSearchParams({ request_cursor: String(snapshot.request_cursor), burst_cursor: String(snapshot.burst_cursor) })
       const response = await apiFetch(apiUrl('notifications/seen', cursors.toString()), { method: 'PUT' })
@@ -901,7 +964,6 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
       const data = await refreshed.json() as NotificationData
       setNotificationData(data)
       setNotificationSnapshot(data)
-      closeNotifications()
       setPreferencesError(false)
     } catch {
       setPreferencesError(true)
@@ -978,7 +1040,7 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
         </div>
       </main>
       <ApiActivityToast t={t} />
-      <AppHints />
+      <AppHints suppress={notificationsClosing} notificationOpen={notificationsOpen} />
       {searchOpen && <GlobalSearchDialog query={searchText} queryRange={range.query} language={language} t={t} closing={searchClosing} onClose={closeSearch} onSelect={(kind, value) => { setSelectedTrafficBucket(null); setSelectedBurstId(null); setSelectedActorIp(kind === 'actor' ? value : null); setSelectedHost(kind === 'host' ? value : null); setSelectedCategory(kind === 'category' ? value : null); setSelectedPath(kind === 'path' ? value : null); navigateToPage('requests'); closeSearch(); setSearchText('') }} />}
     </div>
   )
@@ -1532,7 +1594,9 @@ function RequestsPage({ t, language, range, onRangeChange, lastImport, burstId, 
 }
 
 function PageHeading({ title, subtitle, t, range, onRangeChange, language, lastImport }: { title: string; subtitle: string; t: (key: MessageKey) => string; range: TimeRange; onRangeChange: (range: TimeRange) => void; language: Language; lastImport: string | null | undefined }) {
-  return <div className="page-heading"><div>{range.preset === 'last24h' && <div className="live-monitoring"><i />{t('liveMonitoring')} · {t('lastImport')}: {timeText(lastImport, language)}</div>}<h1>{title}</h1><p>{subtitle}</p></div><div className="heading-actions"><DateRangePicker range={range} onChange={onRangeChange} t={t} language={language} /></div></div>
+  const displayStatus = useSyncExternalStore(subscribeLiveDisplay, getLiveDisplayStatus, getLiveDisplayStatus)
+  const displayStatusText: MessageKey = displayStatus === 'current' ? 'liveImportCurrent' : displayStatus === 'updating' ? 'liveImportUpdating' : 'liveImportPending'
+  return <div className="page-heading"><div>{range.preset === 'last24h' && <div className={`live-monitoring${displayStatus === 'updating' ? ' is-updating' : displayStatus === 'pending' ? ' is-pending' : ''}`}><i />{t('liveMonitoring')} · {t('lastImport')}: {timeText(lastImport, language)} · {t(displayStatusText)}</div>}<h1>{title}</h1><p>{subtitle}</p></div><div className="heading-actions"><DateRangePicker range={range} onChange={onRangeChange} t={t} language={language} /></div></div>
 }
 
 function DateRangePicker({ range, onChange, t, language }: { range: TimeRange; onChange: (range: TimeRange) => void; t: (key: MessageKey) => string; language: Language }) {
