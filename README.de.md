@@ -108,7 +108,7 @@ Compose bindet `./databases` für API und Collector nach `/app/databases`, `./lo
 
 ## Anwendung
 
-Die Oberfläche bietet Dashboard, Bursts, Akteure, Hosts, Kategorien, Requests und Verwaltungsfunktionen. Der Zugriff erfordert das konfigurierte Einzel-Admin-Passwort; die Sitzung läuft nach 12 Stunden ab. Sprache (Deutsch/Englisch), Theme und Zeitraum werden in der gemeinsam genutzten SQLite-Datenbank gespeichert. Einstellungen und Daten sind installationsweit gemeinsam.
+Die Oberfläche bietet Dashboard, Statistiken, Bursts, Akteure, Hosts, Kategorien, Requests und Verwaltungsfunktionen. Der Zugriff erfordert das konfigurierte Einzel-Admin-Passwort; die Sitzung läuft nach 12 Stunden ab. Sprache (Deutsch/Englisch), Theme und Zeitraum werden in der gemeinsam genutzten SQLite-Datenbank gespeichert. Einstellungen und Daten sind installationsweit gemeinsam.
 
 Die API-Routen liegen unter `/api/v1`. Nach der Anmeldung kann der Status abgerufen werden mit:
 

@@ -70,6 +70,10 @@ A healthy response includes `status: "ok"`, `database: "ok"`, `collector_status`
 
 `GET /api/v1/notifications` returns requests and bursts whose IDs are newer than the stored seen cursors. The response includes totals, up to five recent entries of each type, and the latest cursor values. `PUT /api/v1/notifications/seen?request_cursor=…&burst_cursor=…` stores the cursors in the settings table. On the first read, current maximum IDs are saved as the starting point so existing records are not reported as new.
 
+### Statistics
+
+`GET /api/v1/statistics` returns complete distributions by provider, country, host, and category for `from` and `to`, along with burst averages and extreme values. Links from distribution rows use exact filters, so a selected country or provider does not also match names that merely contain it.
+
 ### Requests
 
 `GET /api/v1/requests` returns paginated requests for a required time range. Supported filters include:
@@ -81,11 +85,15 @@ A healthy response includes `status: "ok"`, `database: "ok"`, `collector_status`
 | `actor`, `ip` | Actor IP substring |
 | `actor_id` | Exact actor ID |
 | `country`, `city`, `provider`, `asn` | Actor metadata substring |
+| `country_exact`, `provider_exact` | When `true`, match the country or provider exactly |
 | `category` | Request category substring |
 | `path` | Request path substring; set `path_exact=true` for an exact match |
 | `search` | Substring search in IP, host, country, city, provider, ASN, and request path |
 | `status_class` | HTTP status class: `2xx`, `3xx`, `4xx`, or `5xx` |
 | `burst_id` | Requests assigned to the burst |
+| `without_burst` | When `true`, return only requests without a burst assignment |
+| `burst_extreme` | `min_requests`, `max_requests`, `min_duration`, or `max_duration`: requests from bursts with that extreme in the selected time range |
+| `sort_by=burst_id` | Sort the request list by burst ID |
 | `limit`, `offset` | Pagination |
 
 The `search` parameter can be limited to a field with `field:term`, for example `host:inm.jvkh.de`, `path:/login`, or `pfad:/login`. English field names work regardless of the interface language; German aliases such as `pfad`, `land`, `stadt`, `anbieter`, and `kategorie` are also recognized. The Requests page additionally supports `ip`, `country`, `city`, `provider`, `asn`, `category`, `method`, `status`, `scheme`, and `ua`. Unknown field names are treated as ordinary free text. New interface languages can add their field names as search aliases.
@@ -94,7 +102,7 @@ The `search` parameter can be limited to a field with `field:term`, for example 
 
 `sort_by` and `sort_order` control ordering. Supported columns are `start_utc`, `request_method`, `request_path`, `user_agent`, `downstream_status`, `actor_ip`, `host`, `duration`, and `downstream_content_size`; direction is `asc` or `desc`.
 
-The `actor` and `host` filters use substring matching by default. Set `actor_exact=true`, `host_exact=true`, or `category_exact=true` to match the value exactly.
+The `actor` and `host` filters use substring matching by default. Set `actor_exact=true`, `host_exact=true`, `country_exact=true`, `provider_exact=true`, or `category_exact=true` to match the value exactly. When `burst_extreme` is supplied, the response also includes `burst_extreme_value` and `matching_burst_count`. Multiple bursts can tie for a minimum or maximum, in which case requests from all tied bursts are shown.
 
 ```sh
 curl -G 'http://localhost:8000/api/v1/requests' \
@@ -105,7 +113,7 @@ curl -G 'http://localhost:8000/api/v1/requests' \
   --data-urlencode 'limit=50'
 ```
 
-The response contains `items`, `total`, `limit`, `offset`, `from`, and `to`. Each item includes the request ID and time, actor and available geolocation/provider data, host, method, path, scheme, status, response size, and duration. `GET /api/v1/requests/{id}` returns one request with actor, host, and category data; an unknown ID returns HTTP 404.
+The response contains `items`, `total`, `limit`, `offset`, `from`, and `to`. Each item includes the request ID and time, actor and available geolocation/provider data, host, `burst_id` (`null` when the request is not assigned to a burst), method, path, scheme, status, response size, and duration. `GET /api/v1/requests/{id}` returns one request with actor, host, and category data; an unknown ID returns HTTP 404.
 
 ### Actors
 
@@ -139,11 +147,13 @@ curl -G 'http://localhost:8000/api/v1/bursts' \
 
 ### Request counts, hosts, and categories
 
-`GET /api/v1/request_counts` returns counts in equally sized time buckets. Required parameters: `from`, `to`, and `bars` (1–500). Optional filters: `host`, `actor_ip`, `actor_id`, `category`, `path`, `path_exact`, `burst_id`, `search`, and `status_class`. The response includes `items` with `from`, `to`, `read_count`, `write_count`, `other_count`, and `total_count` for each bucket; empty buckets have zero counts.
+`GET /api/v1/request_counts` returns counts in equally sized time buckets. Required parameters: `from`, `to`, and `bars` (1–500). Optional filters: `host`, `actor_ip`, `actor_id`, `category`, `path`, `path_exact`, `burst_id`, `without_burst`, `search`, and `status_class`. The response includes `items` with `from`, `to`, `read_count`, `write_count`, `other_count`, and `total_count` for each bucket; empty buckets have zero counts.
 
 `GET /api/v1/categories` requires `from` and `to`, with an optional `category` substring filter. Results are grouped by category and include read/write/other method counts and HTTP/HTTPS/other-scheme counts. `sort_by` supports `category_name`, `total_count`, `read_count`, `write_count`, `other_count`, `http_count`, `https_count`, `other_scheme_count`, `traffic_share`, and `https_share`; `sort_order` is `asc` or `desc`.
 
 `GET /api/v1/hosts` has the same time range and count breakdown, grouped by host, with an optional `host` substring filter and `known=own|foreign` filter. Each host includes a `known` flag; `known_count` reports the configured number of known hosts. `sort_by` supports `host`, `total_count`, `read_count`, `write_count`, `other_count`, `http_count`, `https_count`, `other_scheme_count`, and `https_share`; `sort_order` is `asc` or `desc`.
+
+`GET /api/v1/statistics` returns the leading providers, countries, hosts, and categories for `from` and `to`. `limit` sets the number of rows per group (default 10, maximum 50). `request_count` is the absolute count; `share_percent` is relative to all requests in the selected period. Since a request can have multiple categories, category shares can add up to more than 100%.
 
 ### Read and change stored settings
 

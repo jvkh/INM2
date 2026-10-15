@@ -35,6 +35,10 @@ def get_request_counts(
     bucket_timezone: str | None = Query(default=None, description="IANA timezone for calendar-aligned buckets"),
     host: str | None = Query(default=None, min_length=1),
     host_exact: bool = Query(default=False, description="Match the host exactly"),
+    country: str | None = Query(default=None, min_length=1),
+    country_exact: bool = Query(default=False),
+    provider: str | None = Query(default=None, min_length=1),
+    provider_exact: bool = Query(default=False),
     actor_ip: str | None = Query(default=None, min_length=1, description="Actor IP substring"),
     actor_ip_exact: bool = Query(default=False, description="Match the actor IP exactly"),
     actor_id: int | None = Query(default=None, ge=1),
@@ -43,6 +47,8 @@ def get_request_counts(
     path: str | None = Query(default=None, min_length=1, description="Request-path substring"),
     path_exact: bool = Query(default=False, description="Match the request path exactly"),
     burst_id: int | None = Query(default=None, ge=1),
+    burst_extreme: Literal["min_requests", "max_requests", "min_duration", "max_duration"] | None = Query(default=None),
+    without_burst: bool = Query(default=False, description="Count only requests that are not assigned to a burst"),
     search: str | None = Query(default=None, min_length=1, description="Search across request fields; qualify with field:value such as host:example.org or pfad:/login"),
     status_class: Literal["2xx", "3xx", "4xx", "5xx"] | None = Query(default=None),
 ) -> dict[str, Any]:
@@ -62,6 +68,12 @@ def get_request_counts(
             "EXISTS (SELECT 1 FROM host AS fh WHERE fh.host_id = r.host_id AND fh.name LIKE ?)"
         )
         filter_parameters.append(host if host_exact else f"%{host}%")
+    for field, value, exact in (("country", country, country_exact), ("provider", provider, provider_exact)):
+        if value is not None:
+            column = f"TRIM(fa.{field})" if exact else f"fa.{field}"
+            operator = "=" if exact else "LIKE"
+            filter_conditions.append(f"EXISTS (SELECT 1 FROM actor AS fa WHERE fa.actor_id = r.actor_id AND {column} {operator} ?)")
+            filter_parameters.append(value if exact else f"%{value}%")
     if actor_ip is not None:
         filter_conditions.append(
             "EXISTS (SELECT 1 FROM actor AS fa WHERE fa.actor_id = r.actor_id AND fa.ip = ?)" if actor_ip_exact else
@@ -94,6 +106,25 @@ def get_request_counts(
             "EXISTS (SELECT 1 FROM burst_request AS br WHERE br.burst_id = ? AND br.request_id = r.request_id)"
         )
         filter_parameters.append(burst_id)
+    if burst_extreme is not None:
+        if burst_extreme.endswith("requests"):
+            outer_value, inner_value = "be.read_count + be.write_count + be.other_count", "read_count + write_count + other_count"
+        else:
+            outer_value = "(julianday(be.end_time) - julianday(be.start_time))"
+            inner_value = "(julianday(end_time) - julianday(start_time))"
+        aggregate = "MIN" if burst_extreme.startswith("min_") else "MAX"
+        filter_conditions.append(
+            f"""EXISTS (
+                SELECT 1 FROM burst_request AS bre
+                JOIN burst AS be ON be.burst_id = bre.burst_id
+                WHERE bre.request_id = r.request_id
+                  AND be.start_time >= ? AND be.start_time < ?
+                  AND {outer_value} = (SELECT {aggregate}({inner_value}) FROM burst WHERE start_time >= ? AND start_time < ?)
+            )"""
+        )
+        filter_parameters.extend([start, end, start, end])
+    if without_burst:
+        filter_conditions.append("NOT EXISTS (SELECT 1 FROM burst_request AS br WHERE br.request_id = r.request_id)")
     if search is not None:
         field, term = parse_search(search)
         if not term:

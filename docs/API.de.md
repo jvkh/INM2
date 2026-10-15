@@ -74,6 +74,10 @@ Bei erfolgreichem Zugriff enthält die Antwort `status: "ok"`, `database: "ok"`,
 
 `GET /api/v1/notifications` liefert Requests und Bursts, deren IDs neuer als die gespeicherten Gesehen-Cursor sind. Die Antwort enthält die Gesamtzahlen, bis zu fünf aktuelle Einträge je Typ sowie die neuesten Cursorwerte. `PUT /api/v1/notifications/seen?request_cursor=…&burst_cursor=…` speichert diese Cursor in der Settings-Tabelle. Beim ersten Abruf werden die aktuellen Höchst-IDs als Ausgangsstand gespeichert, damit bereits vorhandene Datensätze nicht als neu gemeldet werden.
 
+### Statistiken
+
+`GET /api/v1/statistics` liefert für `from` und `to` die vollständigen Verteilungen nach Provider, Land, Host und Kategorie sowie Burst-Durchschnitts- und Extremwerte. Die Verknüpfungen aus den Statistiklisten setzen exakte Filter, damit beispielsweise ein ausgewähltes Land nicht versehentlich Teiltreffer anderer Ländernamen liefert.
+
 ### Requests
 
 `GET /api/v1/requests` liefert paginierte Einzelrequests in einem Pflichtzeitraum. Unterstützte Filter:
@@ -85,11 +89,15 @@ Bei erfolgreichem Zugriff enthält die Antwort `status: "ok"`, `database: "ok"`,
 | `actor`, `ip` | Akteur-IP, Teilzeichenfolge |
 | `actor_id` | Akteur-ID, exakt |
 | `country`, `city`, `provider`, `asn` | Akteur-Metadaten, Teilzeichenfolge |
+| `country_exact`, `provider_exact` | Bei `true` wird das Land bzw. der Provider exakt verglichen |
 | `category` | Request-Kategoriename, Teilzeichenfolge |
 | `path` | Request-Pfad, Teilzeichenfolge; mit `path_exact=true` exakt |
 | `search` | Teilzeichenfolgensuche in IP, Host, Land, Stadt, Provider, ASN und Request-Pfad |
 | `status_class` | HTTP-Statusklasse: `2xx`, `3xx`, `4xx` oder `5xx` |
 | `burst_id` | Requests, die dem Burst zugeordnet sind |
+| `without_burst` | Auf `true`: nur Requests ohne Burst-Zuordnung |
+| `burst_extreme` | `min_requests`, `max_requests`, `min_duration` oder `max_duration`: nur Requests aus Bursts mit dem jeweiligen Extremwert im gewählten Zeitraum |
+| `sort_by=burst_id` | Requestliste nach der Burst-ID sortieren |
 | `limit`, `offset` | Seitennavigation |
 
 Bei `search` kann das Feld mit `feld:begriff` eingeschränkt werden, zum Beispiel `host:inm.jvkh.de`, `path:/login` oder `pfad:/login`. Die englischen Feldnamen funktionieren unabhängig von der Sprache der Oberfläche; zusätzlich werden deutsche Namen wie `pfad`, `land`, `stadt`, `anbieter` und `kategorie` erkannt. Auf der Requests-Seite sind außerdem `ip`, `country`, `city`, `provider`, `asn`, `category`, `method`, `status`, `scheme` und `ua` verfügbar. Unbekannte Feldnamen werden als normale Freitextsuche behandelt. Weitere Oberflächensprachen können ihre Bezeichnungen als Suchalias ergänzen.
@@ -98,7 +106,7 @@ Bei `search` kann das Feld mit `feld:begriff` eingeschränkt werden, zum Beispie
 
 Zusätzlich steuern `sort_by` und `sort_order` die Sortierung. Unterstützte Spalten: `start_utc`, `request_method`, `request_path`, `user_agent`, `downstream_status`, `actor_ip`, `host`, `duration` und `downstream_content_size`; Richtung: `asc` oder `desc`.
 
-Die Filter `actor` und `host` suchen standardmäßig nach Teilzeichenfolgen. Mit `actor_exact=true`, `host_exact=true` beziehungsweise `category_exact=true` wird exakt verglichen.
+Die Filter `actor` und `host` suchen standardmäßig nach Teilzeichenfolgen. Mit `actor_exact=true`, `host_exact=true`, `country_exact=true`, `provider_exact=true` beziehungsweise `category_exact=true` wird exakt verglichen. Die Antwort enthält bei `burst_extreme` zusätzlich `burst_extreme_value` und `matching_burst_count`. Mehrere Bursts können denselben Minimal- oder Maximalwert haben; die Requests aller dieser Bursts werden gemeinsam angezeigt.
 
 ```sh
 curl -G 'http://localhost:8000/api/v1/requests' \
@@ -109,7 +117,7 @@ curl -G 'http://localhost:8000/api/v1/requests' \
   --data-urlencode 'limit=50'
 ```
 
-Die Antwort enthält `items`, `total`, `limit`, `offset`, `from` und `to`. Ein Item enthält unter anderem Request-ID und -Zeit, Akteur und dessen Geo-/Providerdaten, Host, Methode, Pfad, Scheme, Statuscode, Antwortgröße und Dauer.
+Die Antwort enthält `items`, `total`, `limit`, `offset`, `from` und `to`. Ein Item enthält unter anderem Request-ID und -Zeit, Akteur und dessen Geo-/Providerdaten, Host, `burst_id` (bei nicht zugeordneten Requests `null`), Methode, Pfad, Scheme, Statuscode, Antwortgröße und Dauer.
 
 `GET /api/v1/requests/{id}` liefert einen Request mit Akteur-, Host- und Kategorieinformationen. Eine unbekannte ID ergibt HTTP 404.
 
@@ -155,7 +163,7 @@ curl 'http://localhost:8000/api/v1/burst_requests/42'
 
 ### Zeitreihe der Requestzahlen
 
-`GET /api/v1/request_counts` liefert gleich breite Zeitintervalle für Diagramme. Pflichtparameter: `from`, `to` und `bars` (1 bis 500). Optionale Filter: `host`, `actor_ip`, `actor_id`, `category`, `path`, `path_exact`, `burst_id`, `search` und `status_class`.
+`GET /api/v1/request_counts` liefert gleich breite Zeitintervalle für Diagramme. Pflichtparameter: `from`, `to` und `bars` (1 bis 500). Optionale Filter: `host`, `actor_ip`, `actor_id`, `category`, `path`, `path_exact`, `burst_id`, `without_burst`, `search` und `status_class`.
 
 ```sh
 curl -G 'http://localhost:8000/api/v1/request_counts' \
@@ -180,6 +188,8 @@ curl -G 'http://localhost:8000/api/v1/categories' \
 ```
 
 `GET /api/v1/hosts` liefert dieselben Zählarten gruppiert nach Host. `host` ist ein optionaler Teilzeichenfolgefilter.
+
+`GET /api/v1/statistics` liefert für `from` und `to` die jeweils häufigsten Provider, Länder, Hosts und Kategorien. `limit` begrenzt die Anzahl je Gruppe (Standard 10, maximal 50). `request_count` ist die absolute Zahl; `share_percent` bezieht sich auf alle Requests im Zeitraum. Da ein Request mehreren Kategorien zugeordnet sein kann, können sich Kategorieanteile auf mehr als 100 % summieren.
 
 ```sh
 curl -G 'http://localhost:8000/api/v1/hosts' \

@@ -24,6 +24,7 @@ from api.notifications import router as notifications_router
 from api.metric_trends import router as metric_trends_router
 from api.request_paths import router as request_paths_router
 from api.logging_view import router as logging_router
+from api.statistics import router as statistics_router
 
 configure_file_logging("api")
 
@@ -77,6 +78,7 @@ app.include_router(operations_router, prefix="/api/v1")
 app.include_router(notifications_router, prefix="/api/v1")
 app.include_router(metric_trends_router, prefix="/api/v1")
 app.include_router(request_paths_router, prefix="/api/v1")
+app.include_router(statistics_router, prefix="/api/v1")
 app.include_router(logging_router, prefix="/api/v1")
 app.include_router(status_router, prefix="/api/v1")
 app.include_router(request_counts_router, prefix="/api/v1")
