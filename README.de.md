@@ -14,7 +14,7 @@ INM2 verarbeitet Traefik-Access-Logs und zeigt Requests, Akteure, Hosts, Kategor
 - Zugriff auf Traefik-Access-Logs im JSON-Zeilenformat
 - Für die optionale IP-Geolokalisierung: lokal bereitgestellte MaxMind GeoLite2 City- und/oder ASN-Datenbanken samt Nutzungsberechtigung
 
-Das Compose-Projekt baut alle drei Images lokal. Es veröffentlicht die UI an Host-Port `3000` und die API an Host-Port `8000`. Der interne Steuerport des Collectors (`8001`) wird nicht auf dem Host veröffentlicht. Es sind keine Benutzerkonten oder Zugangsschutz konfiguriert; betreibe die veröffentlichten Ports daher nur in einem entsprechend geschützten Netzwerk.
+Das Compose-Projekt baut alle drei Images lokal. Es veröffentlicht die UI an Host-Port `3000` und die API an Host-Port `8000`. Der interne Steuerport des Collectors (`8001`) wird nicht auf dem Host veröffentlicht. Die API verlangt ein eigenes Admin-Passwort und eine signierte Sitzung. Ein vorgeschalteter Reverse-Proxy-Zugangsschutz kann zusätzlich bestehen bleiben.
 
 ## Installation und erster Start
 
@@ -30,6 +30,28 @@ Bearbeite `.env` und setze `LOG_FILES` auf den Pfad zur Traefik-Access-Logdatei 
 LOG_FILES=traefik:/logs/access.log
 ```
 
+Speichere das Admin-Passwort nicht selbst in `.env`. Erzeuge stattdessen verdeckt einen scrypt-Hash:
+
+```sh
+docker compose run --rm --no-deps --entrypoint python api -m api.password_hash
+```
+
+Das Programm fragt das Passwort zweimal ohne Anzeige ab. Trage die ausgegebene Hash-Zeile und einen separaten Sitzungsschlüssel in `.env` ein:
+
+```dotenv
+INM2_ADMIN_PASSWORD_HASH='<Hash-Ausgabe>'
+INM2_AUTH_SECRET=<ausgabe-von-openssl-rand-hex-32>
+INM2_COOKIE_SECURE=true
+INM2_TOTP_ENABLED=true
+INM2_TOTP_SECRET=<Base32-Schlüssel>
+```
+
+Den Sitzungsschlüssel erzeugst du mit `openssl rand -hex 32`. Bewahre `.env` geschützt auf. `INM2_COOKIE_SECURE=true` muss bei HTTPS aktiviert bleiben; nur für lokale HTTP-Entwicklung kann es auf `false` gesetzt werden. Beim Start ohne gültigen Hash oder Sitzungsschlüssel verweigert die API den Start. Zum Passwortwechsel erstellst du einen neuen Hash und startest den API-Dienst neu; ein Wechsel des Sitzungsschlüssels meldet alle bestehenden Sitzungen ab. Der Hash ist mit scrypt abgeleitet; ein langes, einzigartiges Passwort bleibt wichtig.
+
+Für den zweiten Faktor erzeuge einen Schlüssel mit `docker compose run --rm --no-deps --entrypoint python api -m api.totp_secret`. Übernimm die ausgegebene `INM2_TOTP_SECRET`-Zeile in `.env` und richte die Authenticator-App mit dem angezeigten Einrichtungsschlüssel oder URI ein. `INM2_TOTP_ENABLED=true` verlangt den Code; `false` lässt die Anmeldung passwortbasiert. Ist TOTP aktiviert, verweigert die API den Start ohne gültigen Schlüssel. Gerätezeit synchron halten. Codes gelten 30 Sekunden und sind während der Laufzeit der API nur einmal verwendbar.
+
+Wenn dein Passwort ein `$` enthält, setze es in `.env` in einfache Anführungszeichen, damit Compose es nicht als Variablenreferenz interpretiert.
+
 Die Logdatei muss für den Collector lesbar und beschreibbar sein: Erfolgreich importierte Zeilen werden aus dem Dateipräfix entfernt. Richte bei Bedarf eine separate Archivierung außerhalb dieser Arbeitsdatei ein.
 
 Lege die Datenverzeichnisse an und starte die Anwendung:
@@ -39,11 +61,11 @@ mkdir -p logs databases/geoip
 docker compose up -d --build
 ```
 
-Öffne anschließend [http://localhost:3000](http://localhost:3000). Die API ist unter [http://localhost:8000](http://localhost:8000) erreichbar; ihre interaktive Dokumentation steht unter [http://localhost:8000/docs](http://localhost:8000/docs). Beim Start werden fällige Collector-Jobs unmittelbar ausgeführt. Der Import verarbeitet nur vollständige JSON-Zeilen im konfigurierten Traefik-Format.
+Für lokalen Zugriff über HTTP setze `INM2_COOKIE_SECURE=false`; bei HTTPS-Zugriff bleibt der Wert `true`. Öffne anschließend [http://localhost:3000](http://localhost:3000) und melde dich mit dem Admin-Passwort an. Die API ist unter Port `8000` erreichbar; auch die interaktive Dokumentation ist geschützt. Beim Start werden fällige Collector-Jobs unmittelbar ausgeführt. Der Import verarbeitet nur vollständige JSON-Zeilen im konfigurierten Traefik-Format.
 
 ## Konfiguration
 
-Compose lädt die Collector-Einstellungen aus `.env`. Die Datei `.env.example` enthält die empfohlenen Startwerte dieses Repositorys. Leere oder nicht gesetzte Werte greifen auf die in `common/env.py` definierten Standardwerte zurück; diese können von den Beispielwerten abweichen.
+Compose lädt die Collector- und Authentifizierungseinstellungen aus `.env`. Die Datei `.env.example` enthält die empfohlenen Startwerte dieses Repositorys. Leere oder nicht gesetzte Collector-Werte greifen auf die in `common/env.py` definierten Standardwerte zurück; Authentifizierungswerte sind erforderlich.
 
 | Variable | Beispielwert / Standard | Bedeutung |
 | --- | --- | --- |
@@ -59,6 +81,11 @@ Compose lädt die Collector-Einstellungen aus `.env`. Die Datei `.env.example` e
 | `GEOLITE_ASN_DB` | `/geoip/GeoLite2-ASN.mmdb` | Containerpfad zur optionalen ASN-Datenbank. |
 | `IGNORE_REQUEST_ROUTES` | leer | Semikolongetrennte `host/pfadpräfix`-Einträge, die beim Import übersprungen werden. Host muss Traefiks `RequestHost` entsprechen. |
 | `KNOWN_HOSTS` | leer | Semikolongetrennte eigene Hostnamen; jeder Eintrag gilt auch für alle Subdomains und wird auf der Host-Seite markiert und filterbar. |
+| `INM2_ADMIN_PASSWORD_HASH` | erforderlich | scrypt-Hash des Einzel-Admin-Passworts; erzeugt im API-Container mit dem oben gezeigten Befehl. Das Klartextpasswort gehört nicht in `.env`. |
+| `INM2_AUTH_SECRET` | erforderlich | Geheimer Sitzungsschlüssel, mindestens 32 Bytes; mit `openssl rand -hex 32` erzeugen. |
+| `INM2_COOKIE_SECURE` | `true` | Setzt das Sitzungs-Cookie nur über HTTPS. Nur für lokale HTTP-Entwicklung auf `false` setzen. |
+| `INM2_TOTP_ENABLED` | `false` | Verlangt zusätzlich zum Passwort einen sechsstelligen TOTP-Code, wenn auf `true` gesetzt. |
+| `INM2_TOTP_SECRET` | erforderlich, wenn TOTP aktiviert ist | Geheimer Base32-Schlüssel für die Authenticator-App; mit `python -m api.totp_secret` erzeugen und geschützt aufbewahren. |
 
 ### GeoLite2-Datenbanken (optional)
 
@@ -81,12 +108,12 @@ Compose bindet `./databases` für API und Collector nach `/app/databases`, `./lo
 
 ## Anwendung
 
-Die Oberfläche bietet Dashboard, Bursts, Akteure, Hosts, Kategorien, Requests und Verwaltungsfunktionen. Sprache (Deutsch/Englisch), Theme und Zeitraum werden in der gemeinsam genutzten SQLite-Datenbank gespeichert. Es gibt keine Benutzerkonten; Einstellungen und Daten sind installationsweit gemeinsam.
+Die Oberfläche bietet Dashboard, Bursts, Akteure, Hosts, Kategorien, Requests und Verwaltungsfunktionen. Der Zugriff erfordert das konfigurierte Einzel-Admin-Passwort; die Sitzung läuft nach 12 Stunden ab. Sprache (Deutsch/Englisch), Theme und Zeitraum werden in der gemeinsam genutzten SQLite-Datenbank gespeichert. Einstellungen und Daten sind installationsweit gemeinsam.
 
-Die API-Routen liegen unter `/api/v1`. Der Status kann abgerufen werden mit:
+Die API-Routen liegen unter `/api/v1`. Nach der Anmeldung kann der Status abgerufen werden mit:
 
 ```sh
-curl http://localhost:8000/api/v1/status
+curl -b cookies.txt https://inm2.example.org/api/v1/status
 ```
 
 Weitere API-Beschreibung und Beispiele stehen in [docs/API.de.md](docs/API.de.md). Die geplante Wartung entfernt inaktive Akteure und abhängige Daten gemäß `MAINTENANCE_INACTIVE_DAYS`.

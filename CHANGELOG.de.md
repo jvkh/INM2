@@ -10,6 +10,11 @@ Es sind bislang keine veröffentlichten Versions-Tags vorhanden. Daher werden ke
 
 ## Unveröffentlicht
 
+- Einzel-Admin-Anmeldung für UI und API mit signiertem, zeitlich begrenztem Sitzungscookie, CSRF-Origin-Prüfung und Drosselung fehlgeschlagener Anmeldungen.
+- Klartextpasswort durch einen scrypt-Hash in der Konfiguration ersetzt.
+- Optional konfigurierbare TOTP-Zwei-Faktor-Anmeldung für den Einzel-Admin ergänzt.
+- API- und UI-Dokumentation um erforderliche Authentifizierungsvariablen und Login-Beispiele ergänzt.
+
 
 ## 0.1.1 - 2026-10.12
 

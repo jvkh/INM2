@@ -3,11 +3,13 @@
 from contextlib import asynccontextmanager
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 from common.database import Database
 from common.logging_setup import configure_file_logging
 from common.version import APP_VERSION
+from api.auth import auth_middleware_response, validate_auth_config
+from api.auth import router as auth_router
 from api.actors import router as actors_router
 from api.bursts import router as bursts_router
 from api.categories import router as categories_router
@@ -31,6 +33,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Try to open the database without preventing the API from starting."""
+    validate_auth_config()
     logger.info("API started; opening database connection")
     app.state.database = None
     try:
@@ -51,6 +54,19 @@ app = FastAPI(
     version=APP_VERSION,
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def require_admin_session(request: Request, call_next):
+    rejection = auth_middleware_response(request)
+    if rejection is not None:
+        return rejection
+    response = await call_next(request)
+    response.headers.setdefault("Cache-Control", "no-store")
+    return response
+
+
+app.include_router(auth_router, prefix="/api/v1")
 app.include_router(requests_router, prefix="/api/v1")
 app.include_router(actors_router, prefix="/api/v1")
 app.include_router(bursts_router, prefix="/api/v1")

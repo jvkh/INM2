@@ -14,7 +14,7 @@ INM2 processes Traefik access logs and displays requests, actors, hosts, categor
 - Access to Traefik access logs in JSON-lines format
 - For optional IP geolocation: locally supplied MaxMind GeoLite2 City and/or ASN databases, obtained under the applicable terms
 
-The Compose project builds all three images locally. It publishes the UI on host port `3000` and the API on host port `8000`. The collector's internal control port (`8001`) is not published on the host. No user accounts or access control are configured; expose these ports only on a suitably protected network.
+The Compose project builds all three images locally. It publishes the UI on host port `3000` and the API on host port `8000`. The collector's internal control port (`8001`) is not published on the host. The API requires its own administrator password and signed session. A reverse-proxy access layer can remain in front of it as an additional barrier.
 
 ## Installation and first start
 
@@ -30,6 +30,26 @@ Edit `.env` and set `LOG_FILES` to the path of the Traefik access log **inside t
 LOG_FILES=traefik:/logs/access.log
 ```
 
+Do not put the administrator password itself in `.env`. Generate a scrypt hash instead; the prompt hides the password:
+
+```sh
+docker compose run --rm --no-deps --entrypoint python api -m api.password_hash
+```
+
+Enter the password twice when prompted, then put the generated hash and a separate session signing secret in `.env`:
+
+```dotenv
+INM2_ADMIN_PASSWORD_HASH='<hash-output>'
+INM2_AUTH_SECRET=<output-of-openssl-rand-hex-32>
+INM2_COOKIE_SECURE=true
+INM2_TOTP_ENABLED=true
+INM2_TOTP_SECRET=<Base32-secret>
+```
+
+Generate the secret with `openssl rand -hex 32`. Keep `.env` private. Leave `INM2_COOKIE_SECURE=true` when using HTTPS; set it to `false` only for local HTTP development. The API refuses to start if the hash or signing secret is missing or invalid. To change the password, generate a new hash and restart the API service; changing the signing secret signs out every active session. The hash uses scrypt; use a long, unique password.
+
+To configure the second factor, generate a key with `docker compose run --rm --no-deps --entrypoint python api -m api.totp_secret`. Copy the printed `INM2_TOTP_SECRET` line into `.env` and set up your authenticator app using the displayed setup key or URI. `INM2_TOTP_ENABLED=true` requires the code; `false` keeps password-only sign-in. When enabled, the API refuses to start without a valid secret. Keep the device clock synchronized. Codes are valid for 30 seconds and can be used only once during the API process lifetime.
+
 The collector must have read and write access to the log file: after a successful import, processed lines are removed from the beginning of the file. Arrange separate archival outside this working file if needed.
 
 Create the data directories and start the application:
@@ -39,11 +59,11 @@ mkdir -p logs databases/geoip
 docker compose up -d --build
 ```
 
-Then open [http://localhost:3000](http://localhost:3000). The API is available at [http://localhost:8000](http://localhost:8000), with interactive documentation at [http://localhost:8000/docs](http://localhost:8000/docs). Due jobs run immediately when the collector starts. Imports process only complete JSON lines in the configured Traefik format.
+For local HTTP access, set `INM2_COOKIE_SECURE=false`; leave it `true` for HTTPS access. Then open [http://localhost:3000](http://localhost:3000) and sign in with the administrator password. The API is available on port `8000`; its interactive documentation is also protected. Due jobs run immediately when the collector starts. Imports process only complete JSON lines in the configured Traefik format.
 
 ## Configuration
 
-Compose loads collector settings from `.env`. `.env.example` contains this repository's recommended starting values. Empty or unset values fall back to the defaults defined in `common/env.py`; those may differ from the example values.
+Compose loads collector and authentication settings from `.env`. `.env.example` contains this repository's recommended starting values. Empty or unset collector values fall back to the defaults defined in `common/env.py`; authentication values are required.
 
 | Variable | Example value / default | Description |
 | --- | --- | --- |
@@ -59,6 +79,11 @@ Compose loads collector settings from `.env`. `.env.example` contains this repos
 | `GEOLITE_ASN_DB` | `/geoip/GeoLite2-ASN.mmdb` | Container path to the optional ASN database. |
 | `IGNORE_REQUEST_ROUTES` | empty | Semicolon-separated `host/path-prefix` entries to skip during import. Host must match Traefik's `RequestHost`. |
 | `KNOWN_HOSTS` | empty | Semicolon-separated host names belonging to this installation; each entry also matches all subdomains and is shown/filterable as an own host. |
+| `INM2_ADMIN_PASSWORD_HASH` | required | scrypt hash for the single administrator password, generated inside the API container with the command above. Do not store the plaintext password in `.env`. |
+| `INM2_AUTH_SECRET` | required | Private session signing secret, at least 32 bytes; generate with `openssl rand -hex 32`. |
+| `INM2_COOKIE_SECURE` | `true` | Sends the session cookie only over HTTPS. Set to `false` only for local HTTP development. |
+| `INM2_TOTP_ENABLED` | `false` | Requires a six-digit TOTP code in addition to the password when set to `true`. |
+| `INM2_TOTP_SECRET` | required when TOTP is enabled | Secret Base32 key for the authenticator app; generate with `python -m api.totp_secret` and keep it protected. |
 
 ### GeoLite2 databases (optional)
 
@@ -81,12 +106,12 @@ Compose mounts `./databases` at `/app/databases` for both API and collector, `./
 
 ## Using the application
 
-The UI provides Dashboard, Bursts, Actors, Hosts, Categories, Requests, and administration features. Language (German/English), theme, and time range are stored in the shared SQLite database. There are no user accounts; settings and data are shared across the installation.
+The UI provides Dashboard, Bursts, Actors, Hosts, Categories, Requests, and administration features. Access requires the configured single administrator password; sessions expire after 12 hours. Language (German/English), theme, and time range are stored in the shared SQLite database. Settings and data are shared across the installation.
 
-API routes are under `/api/v1`. Check the status with:
+API routes are under `/api/v1`. After signing in, check the status with:
 
 ```sh
-curl http://localhost:8000/api/v1/status
+curl -b cookies.txt https://inm2.example.org/api/v1/status
 ```
 
 See [docs/API.en.md](docs/API.en.md) for further API documentation and examples. Scheduled maintenance removes inactive actors and dependent data according to `MAINTENANCE_INACTIVE_DAYS`.

@@ -36,6 +36,11 @@ services:
     environment:
       COLLECTOR_CONTROL_URL: http://collector:8001
       INM2_LOG_DIR: /logs
+      INM2_ADMIN_PASSWORD_HASH: ${INM2_ADMIN_PASSWORD_HASH:-}
+      INM2_AUTH_SECRET: ${INM2_AUTH_SECRET:?Set INM2_AUTH_SECRET in .env}
+      INM2_COOKIE_SECURE: ${INM2_COOKIE_SECURE:-true}
+      INM2_TOTP_ENABLED: ${INM2_TOTP_ENABLED:-false}
+      INM2_TOTP_SECRET: ${INM2_TOTP_SECRET:-}
     restart: unless-stopped
     volumes:
       - ./databases:/app/databases

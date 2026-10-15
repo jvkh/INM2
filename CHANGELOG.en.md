@@ -10,6 +10,12 @@ There are no published version tags in the repository yet. No earlier releases a
 
 ## Unreleased
 
+- Added optional TOTP two-factor sign-in for the single administrator.
+- Added single-administrator sign-in for the UI and API with a signed, expiring session cookie, CSRF origin checks, and throttling for failed login attempts.
+- Replaced the plaintext password configuration with a scrypt password hash.
+- Documented required authentication settings and authenticated API usage.
+
+
 ## 0.1.1 - 2026-10.12
 
 ### Added

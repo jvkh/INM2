@@ -6,10 +6,24 @@ This guide describes the HTTP API and collector operations for developers and op
 
 ## Connection and interactive documentation
 
-In the Compose setup, the API is published at `http://localhost:8000`. Data routes are under `/api/v1`. FastAPI also provides interactive OpenAPI documentation at [http://localhost:8000/docs](http://localhost:8000/docs).
+All API routes except `POST /api/v1/auth/login` and `GET /api/v1/auth/session` require a valid administrator session. When `INM2_TOTP_ENABLED=true`, login must also include `totp_code` with a current six-digit authenticator code. The web UI signs in and manages the session cookie automatically. `/docs` is also protected.
+
+For scripts, save the cookie after signing in. Use HTTPS and set `Origin` to the same address:
 
 ```sh
-curl http://localhost:8000/api/v1/status
+curl -c cookies.txt -b cookies.txt \\
+  -H 'Origin: https://inm2.example.org' -H 'Content-Type: application/json' \\
+  -d '{"password":"YOUR-ADMIN-PASSWORD","totp_code":"123456"}' \\
+  https://inm2.example.org/api/v1/auth/login
+curl -b cookies.txt https://inm2.example.org/api/v1/status
+```
+
+Sessions expire after 12 hours. Mutating `POST`, `PUT`, `PATCH`, and `DELETE` requests also require a matching `Origin` header.
+
+The API examples below assume an authenticated session. With `curl`, add `-b cookies.txt`; for mutating requests also add `-H 'Origin: https://inm2.example.org'`. Replace the example address with the host you actually use to reach the API.
+
+```sh
+curl -b cookies.txt https://inm2.example.org/api/v1/status
 ```
 
 The API returns JSON. Query parameters are used for `GET` and `PUT` routes; `PUT` requests do not require a JSON body.
@@ -43,7 +57,7 @@ Unrecognized or missing URL schemes are counted as `other_scheme_count` in HTTP/
 `GET /api/v1/status` reports API/database health, stored collector status, and supported non-sensitive configuration values. It does not expose credentials or arbitrary process environment variables.
 
 ```sh
-curl http://localhost:8000/api/v1/status
+curl -b cookies.txt https://inm2.example.org/api/v1/status
 ```
 
 A healthy response includes `status: "ok"`, `database: "ok"`, `collector_status`, and `environment`. `collector_status.import_file` is populated while a file is being processed. `collector_status.last_import_file` retains the most recently started filename after an import finishes. If the status handler cannot read the database or settings, it still returns HTTP 200 with `status: "degraded"`, `database: "unavailable"`, and an unavailable collector status.
@@ -142,7 +156,7 @@ curl -G 'http://localhost:8000/api/v1/params' --data-urlencode 'group_name=colle
 
 `PUT /api/v1/params` requires `group_name` and `name`. If `value` is present, it is saved or updated; if omitted, the setting is deleted. An explicitly empty value can be saved with `value=`.
 
-The UI stores language, theme, time range, and other preferences in the `ui_preferences` group. Since the application has no user accounts, these preferences are shared by everyone using the installation. Updating the settings table does not change Docker environment variables. Values from `.env` are read when containers start; restart the affected service after editing `.env`.
+The UI stores language, theme, time range, and other preferences in the `ui_preferences` group. The single administrator login protects access; settings remain shared across the installation. Updating the settings table does not change Docker environment variables. Values from `.env` are read when containers start; restart the affected service after editing `.env`.
 
 ```sh
 curl -X PUT -G 'http://localhost:8000/api/v1/params' \

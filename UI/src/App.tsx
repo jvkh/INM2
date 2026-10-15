@@ -1,8 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent, type ReactNode } from 'react'
 import {
   Activity, ArrowDown, ArrowDownRight, ArrowRight, ArrowUp, ArrowUpRight, Bell, Blocks, BookOpenText, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CircleHelp,
   Clock3, Command, Database, FileText, Filter, Globe2, LayoutDashboard, List, LockKeyhole, LockOpen, Menu,
-  Network, Search, Settings, Settings2, ShieldAlert, SkipBack, SkipForward, Sun, Trash2, Users, X,
+  Network, Search, Settings, Settings2, ShieldAlert, SkipBack, SkipForward, Sun, Trash2, Users, X, LogOut,
 } from 'lucide-react'
 import { messages, type Language, type MessageKey } from './i18n'
 
@@ -252,7 +252,7 @@ function useApiData<T>(url: string | null, pollIntervalMs = 0, showActivityToast
     if (showToastForRequest) updatePendingApiRequests(1)
     if (dataRef.current === null) setLoading(true)
     setError(null)
-    fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } })
+    apiFetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } })
       .then(async (response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
         return response.json() as Promise<T>
@@ -281,6 +281,14 @@ function apiUrl(path: string, query?: string, extras?: Record<string, string>) {
   return `/api/v1/${path}${params.size ? `?${params.toString()}` : ''}`
 }
 
+async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const response = await fetch(input, { ...init, credentials: 'same-origin' })
+  if (response.status === 401 && !String(input).includes('/auth/')) {
+    window.dispatchEvent(new Event('inm2-auth-expired'))
+  }
+  return response
+}
+
 type MetricTrendKey = 'request_count' | 'error_request_count' | 'write_request_count' | 'burst_count' | 'actor_count' | 'new_actor_count' | 'country_count' | 'host_count' | 'category_count' | 'top_host_request_count' | 'top_category_request_count' | 'https_share' | 'burst_actor_count' | 'burst_request_count' | 'avg_burst_duration' | 'avg_requests_per_actor'
 type MetricTrend = { current: number; previous: number; change_percent: number; direction: 'up' | 'down' | 'steady' }
 type MetricTrendResponse = { metrics: Partial<Record<MetricTrendKey, MetricTrend>> }
@@ -293,7 +301,7 @@ function useMetricTrends(range: TimeRange, page: string, filters: Record<string,
   useEffect(() => {
     const controller = new AbortController()
     setLoading(true)
-    fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } })
+    apiFetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } })
       .then(async (response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
         return response.json() as Promise<MetricTrendResponse>
@@ -556,7 +564,7 @@ function activityText(activity: string | undefined, t: (key: MessageKey) => stri
   return activity || '—'
 }
 
-function App() {
+function DashboardApp({ onLogout }: { onLogout: () => void }) {
   const [language, setLanguage] = useState<Language>('de')
   const [theme, setTheme] = useState<Theme>('midnight')
   const [systemPrefersDark, setSystemPrefersDark] = useState(() => typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches)
@@ -668,7 +676,7 @@ function App() {
 
   useEffect(() => {
     const controller = new AbortController()
-    fetch(apiUrl('params', undefined, { group_name: preferenceGroup }), { signal: controller.signal, headers: { Accept: 'application/json' } })
+    apiFetch(apiUrl('params', undefined, { group_name: preferenceGroup }), { signal: controller.signal, headers: { Accept: 'application/json' } })
       .then(async (response) => {
         if (response.status === 404) return null
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
@@ -720,7 +728,7 @@ function App() {
     const poll = () => {
       const refreshVersion = notificationRefreshVersion.current
       controller = new AbortController()
-      fetch(apiUrl('notifications'), { signal: controller.signal, headers: { Accept: 'application/json' } })
+      apiFetch(apiUrl('notifications'), { signal: controller.signal, headers: { Accept: 'application/json' } })
         .then(async (response) => { if (!response.ok) throw new Error(`HTTP ${response.status}`); return response.json() as Promise<NotificationData> })
         .then((result) => { if (!stopped && refreshVersion === notificationRefreshVersion.current) setNotificationData(result) })
         .catch(() => { /* Keep the last known notification state during temporary API failures. */ })
@@ -747,7 +755,7 @@ function App() {
     preferenceSaves.current[name]?.abort()
     const controller = new AbortController()
     preferenceSaves.current[name] = controller
-    fetch(apiUrl('params', undefined, { group_name: preferenceGroup, name, value }), { method: 'PUT', signal: controller.signal })
+    apiFetch(apiUrl('params', undefined, { group_name: preferenceGroup, name, value }), { method: 'PUT', signal: controller.signal })
       .then((response) => { if (!response.ok) throw new Error(`HTTP ${response.status}`) })
       .then(() => { if (!controller.signal.aborted) setPreferencesError(false) })
       .catch(() => { if (!controller.signal.aborted) setPreferencesError(true) })
@@ -857,9 +865,9 @@ function App() {
     setNotificationsMarking(true)
     try {
       const cursors = new URLSearchParams({ request_cursor: String(snapshot.request_cursor), burst_cursor: String(snapshot.burst_cursor) })
-      const response = await fetch(apiUrl('notifications/seen', cursors.toString()), { method: 'PUT' })
+      const response = await apiFetch(apiUrl('notifications/seen', cursors.toString()), { method: 'PUT' })
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const refreshed = await fetch(apiUrl('notifications'), { headers: { Accept: 'application/json' } })
+      const refreshed = await apiFetch(apiUrl('notifications'), { headers: { Accept: 'application/json' } })
       if (!refreshed.ok) throw new Error(`HTTP ${refreshed.status}`)
       const data = await refreshed.json() as NotificationData
       setNotificationData(data)
@@ -929,6 +937,7 @@ function App() {
           <div className="topbar-actions">
             <label className="search-trigger"><Search size={16} /><input ref={searchInputRef} value={searchText} placeholder={t('search')} aria-label={t('search')} onChange={(event) => { const value = event.target.value; setSearchText(value); if (value.trim()) openSearch(); else closeSearch() }} onKeyDown={(event) => { if (event.key === 'Enter' && searchText.trim()) { event.preventDefault(); openSearch() } }} /><kbd><Command size={11} /> K</kbd></label>
             <span className="topbar-divider" />
+            <button className="icon-button auth-logout" type="button" onClick={onLogout} aria-label={language === 'de' ? 'Abmelden' : 'Sign out'} title={language === 'de' ? 'Abmelden' : 'Sign out'}><LogOut size={17} /></button>
             <div className="notification-wrap"><button className="icon-button notification-button" aria-label={t('notifications')} data-hint={notificationData ? `${t('notifications')} · ${t('newRequestsSince')}: ${dateText(notificationData.request_since_utc, language)}` : t('notifications')} aria-expanded={notificationsOpen && !notificationsClosing} onClick={toggleNotifications}><Bell size={18} />{notificationData && notificationData.request_count + notificationData.burst_count > 0 && <span className="notification-badge">{numberText(notificationData.request_count + notificationData.burst_count, language)}</span>}</button>{notificationsOpen && <NotificationPopover data={notificationSnapshot ?? notificationData} t={t} language={language} marking={notificationsMarking} closing={notificationsClosing} onMarkRead={markNotificationsRead} onClose={closeNotifications} onSelect={(item) => { setSelectedTrafficBucket(null); setSelectedBurstId(item.type === 'burst' ? item.id : null); setSelectedActorIp(item.type === 'request' ? item.actorIp : null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests'); closeNotifications() }} />}</div>
           </div>
         </header>
@@ -974,16 +983,16 @@ function GlobalSearchDialog({ query, queryRange, language, t, onClose, onSelect,
       const requests: { kind: 'actors' | 'hosts' | 'categories' | 'paths'; promise: Promise<Response> }[] = []
       const options = { signal: controller.signal, headers: { Accept: 'application/json' } }
       if (!parsed.field || actorFields.includes(parsed.field)) {
-        requests.push({ kind: 'actors', promise: fetch(apiUrl('actors', queryRange, { global_search: parsed.field ? `${parsed.field}:${parsed.term}` : term, sort_by: 'request_count', sort_order: 'desc', limit: '100', offset: '0' }), options) })
+        requests.push({ kind: 'actors', promise: apiFetch(apiUrl('actors', queryRange, { global_search: parsed.field ? `${parsed.field}:${parsed.term}` : term, sort_by: 'request_count', sort_order: 'desc', limit: '100', offset: '0' }), options) })
       }
       if (!parsed.field || parsed.field === 'host') {
-        requests.push({ kind: 'hosts', promise: fetch(apiUrl('hosts', queryRange, { host: parsed.field ? parsed.term : term, sort_by: 'total_count', sort_order: 'desc' }), options) })
+        requests.push({ kind: 'hosts', promise: apiFetch(apiUrl('hosts', queryRange, { host: parsed.field ? parsed.term : term, sort_by: 'total_count', sort_order: 'desc' }), options) })
       }
       if (!parsed.field || parsed.field === 'category') {
-        requests.push({ kind: 'categories', promise: fetch(apiUrl('categories', queryRange, { category: parsed.field ? parsed.term : term, sort_by: 'total_count', sort_order: 'desc' }), options) })
+        requests.push({ kind: 'categories', promise: apiFetch(apiUrl('categories', queryRange, { category: parsed.field ? parsed.term : term, sort_by: 'total_count', sort_order: 'desc' }), options) })
       }
       if (!parsed.field || parsed.field === 'path') {
-        requests.push({ kind: 'paths', promise: fetch(apiUrl('request_paths', queryRange, { search: parsed.field ? parsed.term : term, limit: '100' }), options) })
+        requests.push({ kind: 'paths', promise: apiFetch(apiUrl('request_paths', queryRange, { search: parsed.field ? parsed.term : term, limit: '100' }), options) })
       }
       Promise.all(requests.map(async ({ kind, promise }) => {
         const response = await promise
@@ -1194,7 +1203,7 @@ function ActorsPage({ t, language, range, onRangeChange, lastImport, sort, onSor
     setDeletingActor(true)
     setDeleteActorError('')
     try {
-      const response = await fetch(apiUrl(`actors/${actorToDelete.actor_id}`), { method: 'DELETE', headers: { Accept: 'application/json' } })
+      const response = await apiFetch(apiUrl(`actors/${actorToDelete.actor_id}`), { method: 'DELETE', headers: { Accept: 'application/json' } })
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       setActorToDelete(null)
       if (actors.length === 1 && pageIndex > 0) setPageIndex((value) => Math.max(0, value - 1))
@@ -1597,7 +1606,7 @@ function LogServicePanel({ service, t }: { service: LogService; t: (key: Message
     setResetting(true)
     setActionError('')
     try {
-      const response = await fetch(apiUrl('logs', undefined, { service }), { method: 'DELETE' })
+      const response = await apiFetch(apiUrl('logs', undefined, { service }), { method: 'DELETE' })
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       logs.reload()
     } catch (reason) {
@@ -1637,7 +1646,7 @@ function AdministrationPage({ t, language }: { t: (key: MessageKey) => string; l
     setOperationMessage('')
     setOperationError('')
     try {
-      const response = await fetch(apiUrl(operation), { method: 'PUT', signal: nextController.signal })
+      const response = await apiFetch(apiUrl(operation), { method: 'PUT', signal: nextController.signal })
       const body = await response.json().catch(() => ({})) as { status?: string; activity?: string; detail?: string; error?: { message?: string } }
       if (!response.ok) throw new Error(body.error?.message || body.detail || `HTTP ${response.status}`)
       setOperationMessage(operation === 'import' ? t('importAccepted') : t('maintenanceAccepted'))
@@ -1699,6 +1708,91 @@ function AdminAction({ icon: Icon, title, description, actionLabel, onClick, dis
 
 function ConfigGroup({ title, rows }: { title: string; rows: string[][] }) {
   return <div className="config-group"><h3>{title}</h3>{rows.map(([name, value, hint]) => <div className="config-row" key={name}><div><strong>{name}</strong><span>{hint}</span></div><code>{value}</code></div>)}</div>
+}
+
+function AdminLogin({ onLogin, sessionCheckFailed = false, totpRequired = false }: { onLogin: () => void; sessionCheckFailed?: boolean; totpRequired?: boolean }) {
+  const [password, setPassword] = useState('')
+  const [totpCode, setTotpCode] = useState('')
+  const [error, setError] = useState('')
+  const [pending, setPending] = useState(false)
+  const german = navigator.language.toLowerCase().startsWith('de')
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setPending(true)
+    setError('')
+    try {
+      const response = await fetch('/api/v1/auth/login', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ password, totp_code: totpCode }),
+      })
+      if (!response.headers.get('content-type')?.includes('application/json')) {
+        const finalPath = new URL(response.url).pathname
+        const responseDescription = response.redirected ? (german ? 'umgeleitet' : 'redirected') : (german ? 'ohne JSON-Antwort' : 'without a JSON response')
+        setError(german
+          ? `Die API-Anfrage wurde ${responseDescription} (HTTP ${response.status}, Ziel ${finalPath}). Prüfe, ob /api/v1/auth/login direkt die API erreicht.`
+          : `The API request was ${responseDescription} (HTTP ${response.status}, destination ${finalPath}). Check that /api/v1/auth/login reaches the API directly.`)
+        return
+      }
+      if (!response.ok) {
+        setError(response.status === 429 ? (german ? 'Zu viele Versuche. Bitte später erneut versuchen.' : 'Too many attempts. Please try again later.') : response.status === 401 ? (german ? (totpRequired ? 'Passwort oder Authenticator-Code ist nicht korrekt.' : 'Das Passwort ist nicht korrekt.') : (totpRequired ? 'The password or authenticator code is incorrect.' : 'The password is incorrect.')) : (german ? 'Anmeldung derzeit nicht möglich.' : 'Sign-in is currently unavailable.'))
+        return
+      }
+      const result = await response.json() as { authenticated?: boolean }
+      if (!result.authenticated) {
+        setError(german ? 'Die Anmeldung wurde nicht bestätigt.' : 'The sign-in was not confirmed.')
+        return
+      }
+      setPassword('')
+      onLogin()
+    } catch {
+      setError(german ? 'Die API ist momentan nicht erreichbar.' : 'The API is currently unavailable.')
+    } finally {
+      setPending(false)
+    }
+  }
+  return (
+    <main className="auth-screen">
+      <form className="auth-card" onSubmit={submit}>
+        <div className="auth-brand"><span><Activity size={20} /></span><strong>INM<span>2</span></strong></div>
+        <h1>{german ? 'Anmelden' : 'Sign in'}</h1>
+        <p>{german ? 'Gib dein Admin-Passwort ein, um fortzufahren.' : 'Enter your admin password to continue.'}</p>
+        {sessionCheckFailed && <div className="auth-error" role="status">{german ? 'Der Sitzungsstatus konnte nicht geprüft werden. Du kannst die Anmeldung trotzdem versuchen.' : 'The session could not be checked. You can still try to sign in.'}</div>}
+        <label htmlFor="admin-password">{german ? 'Passwort' : 'Password'}</label>
+        <input id="admin-password" type="password" autoComplete="current-password" required minLength={1} maxLength={1024} value={password} onChange={(event) => setPassword(event.target.value)} autoFocus />
+        {totpRequired && <><label htmlFor="admin-totp" className="auth-totp-label">{german ? 'Authenticator-Code' : 'Authenticator code'}</label><input id="admin-totp" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required value={totpCode} onChange={(event) => setTotpCode(event.target.value.replace(/\D/g, '').slice(0, 6))} /></>}
+        {error && <div className="auth-error" role="alert">{error}</div>}
+        <button className="auth-submit" type="submit" disabled={pending || !password || (totpRequired && totpCode.length !== 6)}>{pending ? (german ? 'Wird angemeldet …' : 'Signing in …') : (german ? 'Anmelden' : 'Sign in')}</button>
+      </form>
+    </main>
+  )
+}
+
+function App() {
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null)
+  const [sessionError, setSessionError] = useState(false)
+  const [totpRequired, setTotpRequired] = useState(false)
+  const german = navigator.language.toLowerCase().startsWith('de')
+  useEffect(() => {
+    let active = true
+    fetch('/api/v1/auth/session', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        return response.json() as Promise<{ authenticated: boolean; totp_required?: boolean }>
+      })
+      .then((result) => { if (active) { setTotpRequired(Boolean(result.totp_required)); setAuthenticated(result.authenticated) } })
+      .catch(() => { if (active) { setSessionError(true); setTotpRequired(true); setAuthenticated(false) } })
+    const expired = () => setAuthenticated(false)
+    window.addEventListener('inm2-auth-expired', expired)
+    return () => { active = false; window.removeEventListener('inm2-auth-expired', expired) }
+  }, [])
+  const logout = async () => {
+    try { await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'same-origin' }) } finally { setAuthenticated(false) }
+  }
+  if (authenticated === null) return <div className="preferences-loading">{german ? 'Verbindung wird geprüft …' : 'Checking connection …'}</div>
+  if (!authenticated) return <AdminLogin sessionCheckFailed={sessionError} totpRequired={totpRequired} onLogin={() => { setSessionError(false); setAuthenticated(true) }} />
+  return <DashboardApp onLogout={logout} />
 }
 
 export default App

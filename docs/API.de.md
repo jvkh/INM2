@@ -6,12 +6,26 @@ Diese Anleitung richtet sich an Entwickler, die Daten aus dem Internet Noise Mon
 
 ## Verbindung und interaktive Dokumentation
 
-Die API wird im Compose-Setup unter `http://localhost:8000` veröffentlicht. Alle Datenrouten liegen unter `/api/v1`. FastAPI stellt zusätzlich unter [http://localhost:8000/docs](http://localhost:8000/docs) eine interaktive OpenAPI-Ansicht bereit.
+Alle API-Routen außer `POST /api/v1/auth/login` und `GET /api/v1/auth/session` benötigen eine gültige Admin-Sitzung. Wenn `INM2_TOTP_ENABLED=true` gesetzt ist, muss der Login zusätzlich `totp_code` mit einem aktuellen sechsstelligen Authenticator-Code enthalten. Die Weboberfläche meldet sich an und verwaltet das Sitzungscookie automatisch. Auch `/docs` ist geschützt.
+
+Für Skripte kann das Cookie nach der Anmeldung in einer Cookie-Datei gespeichert werden. Verwende HTTPS und setze beim Login den `Origin`-Header auf dieselbe Adresse:
+
+```sh
+curl -c cookies.txt -b cookies.txt \\
+  -H 'Origin: https://inm2.example.org' -H 'Content-Type: application/json' \\
+  -d '{"password":"DEIN-ADMIN-PASSWORT","totp_code":"123456"}' \\
+  https://inm2.example.org/api/v1/auth/login
+curl -b cookies.txt https://inm2.example.org/api/v1/status
+```
+
+Die Sitzung ist auf 12 Stunden begrenzt. Schreibende `POST`-, `PUT`-, `PATCH`- und `DELETE`-Aufrufe werden zusätzlich nur mit einem passenden `Origin`-Header akzeptiert.
+
+Die folgenden API-Beispiele setzen eine angemeldete Sitzung voraus. Für `curl` ergänze `-b cookies.txt`; bei schreibenden Aufrufen zusätzlich `-H 'Origin: https://inm2.example.org'`. Ersetze die Beispieladresse durch den Host, über den du die API tatsächlich aufrufst.
 
 Beispiel für einen Aufruf:
 
 ```sh
-curl 'http://localhost:8000/api/v1/status'
+curl -b cookies.txt 'https://inm2.example.org/api/v1/status'
 ```
 
 Die API liefert JSON. `GET`- und `PUT`-Aufrufe verwenden Query-Parameter; `PUT` benötigt keinen JSON-Request-Body.
@@ -47,7 +61,7 @@ Bei HTTP-/HTTPS-Zählungen werden nicht erkannte oder fehlende Schemes separat a
 `GET /api/v1/status` meldet den API-/Datenbankstatus, den gespeicherten Collector-Status und die unterstützten, unkritischen Konfigurationswerte. Die Umgebungsvariablen werden mit ihren wirksamen Werten zurückgegeben; Zugangsdaten oder beliebige Prozessvariablen sind nicht Teil dieser Ausgabe.
 
 ```sh
-curl 'http://localhost:8000/api/v1/status'
+curl -b cookies.txt 'https://inm2.example.org/api/v1/status'
 ```
 
 Bei erfolgreichem Zugriff enthält die Antwort `status: "ok"`, `database: "ok"`, `collector_status` und `environment`. `collector_status.import_file` enthält die gerade verarbeitete Datei; `collector_status.last_import_file` behält den zuletzt begonnenen Dateinamen auch nach Abschluss des Imports bei. Kann die Statusabfrage die Datenbank oder die Einstellungen nicht lesen, liefert sie weiterhin HTTP 200 mit `status: "degraded"`, `database: "unavailable"` und einem nicht verfügbaren Collector-Status.
@@ -189,7 +203,7 @@ curl -G 'http://localhost:8000/api/v1/params' \
 
 `PUT /api/v1/params` benötigt immer `group_name` und `name`. Ist `value` angegeben, wird der Wert gespeichert oder aktualisiert. Fehlt `value`, wird der Eintrag gelöscht. Ein ausdrücklich leerer Wert lässt sich mit `value=` speichern.
 
-Die UI speichert Sprache, Farbschema und Zeitraum in der Gruppe `ui_preferences`. Da die Anwendung keine Benutzerkonten hat, gelten diese Einstellungen gemeinsam für alle Zugriffe auf dieselbe Installation.
+Die UI speichert Sprache, Farbschema und Zeitraum in der Gruppe `ui_preferences`. Das Einzel-Admin-Login schützt den Zugriff; Einstellungen gelten weiterhin installationsweit gemeinsam.
 
 ```sh
 curl -X PUT -G 'http://localhost:8000/api/v1/params' \
