@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent, type ReactNode } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent, type ReactNode } from 'react'
 import {
   Activity, ArrowDown, ArrowDownRight, ArrowRight, ArrowUp, ArrowUpRight, BarChart3, Bell, Blocks, BookOpenText, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CircleHelp,
   Clock3, Command, Database, FileText, Filter, Globe2, LayoutDashboard, List, LockKeyhole, LockOpen, Menu,
@@ -78,7 +78,8 @@ type RangePreset = 'last24h' | 'today' | 'yesterday' | 'last6h' | 'last7d' | 'la
 type DashboardChartMode = 'requests' | 'bursts'
 type TimeRange = { from: Date; to: Date; preset: RangePreset; query: string }
 type TrafficBucket = { from: string; to: string }
-type UiPreferences = { language?: Language; theme?: Theme; lastPage?: PageKey; sidebarCollapsed?: boolean; systemNavOpen?: boolean; helpNavOpen?: boolean; dashboardChartMode?: DashboardChartMode; timeRange?: { preset: RangePreset; from?: string; to?: string }; tablePageSizes?: Partial<Record<TableKey, PageSize>>; burstSort?: BurstSort; burstFilters?: BurstFilters; actorSort?: ActorSort; actorFilters?: ActorFilters; hostSort?: HostSort; hostFilters?: HostFilters; categorySort?: CategorySort; categoryFilters?: CategoryFilters; requestSort?: RequestSort; requestFilters?: RequestFilters }
+type StatisticsSection = 'overview' | 'traffic' | 'patterns' | 'hostsActors' | 'insights'
+type UiPreferences = { language?: Language; theme?: Theme; lastPage?: PageKey; sidebarCollapsed?: boolean; systemNavOpen?: boolean; helpNavOpen?: boolean; dashboardChartMode?: DashboardChartMode; statisticsSection?: StatisticsSection; timeRange?: { preset: RangePreset; from?: string; to?: string }; tablePageSizes?: Partial<Record<TableKey, PageSize>>; burstSort?: BurstSort; burstFilters?: BurstFilters; actorSort?: ActorSort; actorFilters?: ActorFilters; hostSort?: HostSort; hostFilters?: HostFilters; categorySort?: CategorySort; categoryFilters?: CategoryFilters; requestSort?: RequestSort; requestFilters?: RequestFilters }
 type ApiResult<T> = { items: T[]; total?: number; known_count?: number; summary?: Record<string, number | null> }
 type ActorItem = { actor_id: number; ip: string; first_time: string; last_time: string; provider: string | null; asn: string | null; city: string | null; country: string | null; request_count: number; total_request_count: number; burst_count: number }
 type BurstItem = { burst_id: number; actor_ip: string; country: string | null; provider: string | null; asn: string | null; city: string | null; host: string | null; known: number; start_time: string; end_time: string; avg_count: number; read_count: number; write_count: number; other_count: number }
@@ -98,8 +99,10 @@ type LogService = 'collector' | 'api' | 'ui_access' | 'ui_error'
 type LogResponse = { service: LogService; content: string; truncated: boolean }
 type BurstResponse = { summary: Record<string, number | null>; items: BurstItem[]; total?: number; limit: number; offset: number }
 type CountItem = { read_count: number; write_count: number; other_count: number; total_count?: number; from?: string; to?: string }
-type StatisticsItem = { name: string | null; request_count: number; share_percent: number; known?: number }
-type StatisticsResponse = { total_requests: number; burst_count: number; avg_requests_per_burst: number | null; min_requests_per_burst: number | null; max_requests_per_burst: number | null; avg_burst_duration_seconds: number | null; min_burst_duration_seconds: number | null; max_burst_duration_seconds: number | null; min_duration_request_count: number | null; max_duration_request_count: number | null; providers: StatisticsItem[]; countries: StatisticsItem[]; hosts: StatisticsItem[]; categories: StatisticsItem[] }
+type StatisticsItem = { name: string | null; request_count: number; share_percent: number; known?: number; status_class?: string; total_count?: number }
+type StatisticsBucket = { from: string; to: string; known_count?: number; other_count?: number; actor_count?: number; host_count?: number }
+type StatisticsResponse = { total_requests: number; burst_count: number; burst_request_count: number; non_burst_request_count: number; burst_request_share_percent: number; avg_requests_per_burst: number | null; min_requests_per_burst: number | null; max_requests_per_burst: number | null; avg_burst_duration_seconds: number | null; min_burst_duration_seconds: number | null; max_burst_duration_seconds: number | null; min_duration_request_count: number | null; max_duration_request_count: number | null; providers: StatisticsItem[]; countries: StatisticsItem[]; hosts: StatisticsItem[]; categories: StatisticsItem[]; status_codes: StatisticsItem[]; burst_sizes: StatisticsItem[]; methods: StatisticsItem[]; paths: StatisticsItem[]; host_traffic: StatisticsBucket[]; new_entities: StatisticsBucket[]; request_gaps: StatisticsItem[] }
+type StatisticsInsights = { error_hosts: StatisticsItem[]; error_paths: StatisticsItem[]; active_actors: (StatisticsItem & { provider: string | null; asn: string | null; country: string | null; city: string | null })[]; weekday_hours: { weekday: number; hour: number; request_count: number }[]; status_trend: { bucket_index: number; from_utc: string; to_utc: string; status_1xx: number; status_2xx: number; status_3xx: number; status_4xx: number; status_5xx: number }[] }
 type BurstExtreme = 'min_requests' | 'max_requests' | 'min_duration' | 'max_duration'
 type StatisticRequestFilter = { field: 'provider' | 'country'; value: string }
 type BurstChartItem = Pick<BurstItem, 'burst_id' | 'start_time' | 'end_time' | 'avg_count' | 'read_count' | 'write_count' | 'other_count' | 'actor_ip' | 'provider' | 'asn' | 'city' | 'country' | 'host'>
@@ -384,6 +387,7 @@ function parsePreferences(items: { name: string; value: string | null }[]): UiPr
   if (values.system_nav_open === 'true' || values.system_nav_open === 'false') preferences.systemNavOpen = values.system_nav_open === 'true'
   if (values.help_nav_open === 'true' || values.help_nav_open === 'false') preferences.helpNavOpen = values.help_nav_open === 'true'
   if (values.dashboard_chart_mode === 'requests' || values.dashboard_chart_mode === 'bursts') preferences.dashboardChartMode = values.dashboard_chart_mode
+  if (values.statistics_section === 'overview' || values.statistics_section === 'traffic' || values.statistics_section === 'patterns' || values.statistics_section === 'hostsActors' || values.statistics_section === 'insights') preferences.statisticsSection = values.statistics_section
   if (values.table_page_sizes) {
     try {
       const parsed = JSON.parse(values.table_page_sizes) as Partial<Record<TableKey, number>>
@@ -642,6 +646,7 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
   const [systemNavOpen, setSystemNavOpen] = useState(true)
   const [helpNavOpen, setHelpNavOpen] = useState(true)
   const [dashboardChartMode, setDashboardChartMode] = useState<DashboardChartMode>('requests')
+  const [statisticsSection, setStatisticsSection] = useState<StatisticsSection>('overview')
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchClosing, setSearchClosing] = useState(false)
   const [searchText, setSearchText] = useState('')
@@ -769,6 +774,7 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
         if (saved.systemNavOpen !== undefined) setSystemNavOpen(saved.systemNavOpen)
         if (saved.helpNavOpen !== undefined) setHelpNavOpen(saved.helpNavOpen)
         if (saved.dashboardChartMode) setDashboardChartMode(saved.dashboardChartMode)
+        if (saved.statisticsSection) setStatisticsSection(saved.statisticsSection)
         const initialPage = pageFromUrl() ?? saved.lastPage ?? 'dashboard'
         setActivePage(initialPage)
         writePageToUrl(initialPage, true)
@@ -855,6 +861,7 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
   const toggleSystemNavigation = () => { const next = !systemNavOpen; setSystemNavOpen(next); savePreference('system_nav_open', String(next)) }
   const toggleHelpNavigation = () => { const next = !helpNavOpen; setHelpNavOpen(next); savePreference('help_nav_open', String(next)) }
   const updateDashboardChartMode = (value: DashboardChartMode) => { setDashboardChartMode(value); savePreference('dashboard_chart_mode', value) }
+  const updateStatisticsSection = (value: StatisticsSection) => { setStatisticsSection(value); savePreference('statistics_section', value) }
   useEffect(() => {
     const onPopState = () => {
       const page = pageFromUrl() ?? 'dashboard'
@@ -1034,7 +1041,7 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
         </header>
 
         <div className="content-wrap">
-          {activePage === 'bursts' ? <BurstsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.bursts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('bursts', size)} sort={burstSort} onSortChange={updateBurstSort} filters={burstFilters} onFiltersChange={updateBurstFilters} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'actors' ? <ActorsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.actors ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('actors', size)} sort={actorSort} onSortChange={updateActorSort} filters={actorFilters} onFiltersChange={updateActorFilters} onActorSelect={(ip) => { setSelectedTrafficBucket(null); setSelectedActorIp(ip); setSelectedBurstId(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'hosts' ? <HostsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.hosts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('hosts', size)} sort={hostSort} onSortChange={updateHostSort} filters={hostFilters} onFiltersChange={updateHostFilters} onHostSelect={(host) => { setSelectedTrafficBucket(null); setSelectedHost(host); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'categories' ? <CategoriesPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.categories ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('categories', size)} sort={categorySort} onSortChange={updateCategorySort} filters={categoryFilters} onFiltersChange={updateCategoryFilters} onCategorySelect={(category) => { setSelectedTrafficBucket(null); setSelectedCategory(category); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'requests' ? <RequestsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.requests ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('requests', size)} burstId={selectedBurstId} burstExtreme={selectedBurstExtreme} statisticFilter={selectedStatisticFilter} actorIp={selectedActorIp} host={selectedHost} category={selectedCategory} path={selectedPath} trafficBucket={selectedTrafficBucket} onTrafficBucketClear={() => setSelectedTrafficBucket(null)} filters={requestFilters} onFiltersChange={updateRequestFilters} sort={requestSort} onSortChange={updateRequestSort} onBurstClear={() => setSelectedBurstId(null)} onBurstExtremeClear={() => setSelectedBurstExtreme(null)} onStatisticFilterClear={() => setSelectedStatisticFilter(null)} onActorClear={() => setSelectedActorIp(null)} onHostClear={() => setSelectedHost(null)} onCategoryClear={() => setSelectedCategory(null)} onPathClear={() => setSelectedPath(null)} /> : activePage === 'statistics' ? <StatisticsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} onBurstExtremeSelect={(extreme) => { setSelectedStatisticFilter(null); setSelectedTrafficBucket(null); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); setSelectedBurstExtreme(extreme); updateRequestFilters({ ...defaultRequestFilters }); navigateToPage('requests') }} onDistributionSelect={(kind, value) => { setSelectedTrafficBucket(null); setSelectedBurstExtreme(null); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedPath(null); updateRequestFilters({ ...defaultRequestFilters }); if (kind === 'host') { setSelectedStatisticFilter(null); setSelectedHost(value); setSelectedCategory(null) } else if (kind === 'category') { setSelectedStatisticFilter(null); setSelectedCategory(value); setSelectedHost(null) } else { setSelectedStatisticFilter({ field: kind, value }); setSelectedHost(null); setSelectedCategory(null) } navigateToPage('requests') }} /> : activePage === 'administration' ? <AdministrationPage t={t} language={language} /> : activePage === 'categoryGuide' ? <CategoryGuidePage t={t} /> : activePage === 'burstGuide' ? <BurstGuidePage t={t} /> : activePage === 'countGuide' ? <CountGuidePage t={t} /> : activePage === 'hostGuide' ? <HostGuidePage t={t} /> : activePage === 'pathsGuide' ? <PathsGuidePage t={t} /> : activePage === 'logging' ? <LoggingPage t={t} /> : <DashboardPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} chartMode={dashboardChartMode} onChartModeChange={updateDashboardChartMode} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} onBucketSelect={(bucket) => { setSelectedTrafficBucket(bucket); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} />}
+          {activePage === 'bursts' ? <BurstsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.bursts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('bursts', size)} sort={burstSort} onSortChange={updateBurstSort} filters={burstFilters} onFiltersChange={updateBurstFilters} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'actors' ? <ActorsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.actors ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('actors', size)} sort={actorSort} onSortChange={updateActorSort} filters={actorFilters} onFiltersChange={updateActorFilters} onActorSelect={(ip) => { setSelectedTrafficBucket(null); setSelectedActorIp(ip); setSelectedBurstId(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'hosts' ? <HostsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.hosts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('hosts', size)} sort={hostSort} onSortChange={updateHostSort} filters={hostFilters} onFiltersChange={updateHostFilters} onHostSelect={(host) => { setSelectedTrafficBucket(null); setSelectedHost(host); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'categories' ? <CategoriesPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.categories ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('categories', size)} sort={categorySort} onSortChange={updateCategorySort} filters={categoryFilters} onFiltersChange={updateCategoryFilters} onCategorySelect={(category) => { setSelectedTrafficBucket(null); setSelectedCategory(category); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'requests' ? <RequestsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.requests ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('requests', size)} burstId={selectedBurstId} burstExtreme={selectedBurstExtreme} statisticFilter={selectedStatisticFilter} actorIp={selectedActorIp} host={selectedHost} category={selectedCategory} path={selectedPath} trafficBucket={selectedTrafficBucket} onTrafficBucketClear={() => setSelectedTrafficBucket(null)} filters={requestFilters} onFiltersChange={updateRequestFilters} sort={requestSort} onSortChange={updateRequestSort} onBurstClear={() => setSelectedBurstId(null)} onBurstExtremeClear={() => setSelectedBurstExtreme(null)} onStatisticFilterClear={() => setSelectedStatisticFilter(null)} onActorClear={() => setSelectedActorIp(null)} onHostClear={() => setSelectedHost(null)} onCategoryClear={() => setSelectedCategory(null)} onPathClear={() => setSelectedPath(null)} /> : activePage === 'statistics' ? <StatisticsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} section={statisticsSection} onSectionChange={updateStatisticsSection} onBurstExtremeSelect={(extreme) => { setSelectedStatisticFilter(null); setSelectedTrafficBucket(null); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); setSelectedBurstExtreme(extreme); updateRequestFilters({ ...defaultRequestFilters }); navigateToPage('requests') }} onDistributionSelect={(kind, value) => { setSelectedTrafficBucket(null); setSelectedBurstExtreme(null); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedPath(null); updateRequestFilters({ ...defaultRequestFilters }); if (kind === 'actor') { setSelectedStatisticFilter(null); setSelectedActorIp(value); setSelectedHost(null); setSelectedCategory(null) } else if (kind === 'path') { setSelectedStatisticFilter(null); setSelectedPath(value); setSelectedHost(null); setSelectedCategory(null) } else if (kind === 'host') { setSelectedStatisticFilter(null); setSelectedHost(value); setSelectedCategory(null) } else if (kind === 'category') { setSelectedStatisticFilter(null); setSelectedCategory(value); setSelectedHost(null) } else { setSelectedStatisticFilter({ field: kind, value }); setSelectedHost(null); setSelectedCategory(null) } navigateToPage('requests') }} /> : activePage === 'administration' ? <AdministrationPage t={t} language={language} /> : activePage === 'categoryGuide' ? <CategoryGuidePage t={t} /> : activePage === 'burstGuide' ? <BurstGuidePage t={t} /> : activePage === 'countGuide' ? <CountGuidePage t={t} /> : activePage === 'hostGuide' ? <HostGuidePage t={t} /> : activePage === 'pathsGuide' ? <PathsGuidePage t={t} /> : activePage === 'logging' ? <LoggingPage t={t} /> : <DashboardPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} chartMode={dashboardChartMode} onChartModeChange={updateDashboardChartMode} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} onBucketSelect={(bucket) => { setSelectedTrafficBucket(bucket); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} />}
 
           <footer className="page-footer"><span>INM2 <b>·</b> Internet Noise Monitor</span><div className="footer-controls">{preferencesError && <span className="preferences-error">{t('preferencesError')}</span>}<label><span>{t('theme')}</span><select value={theme} onChange={(event) => updateTheme(event.target.value as Theme)} aria-label={t('theme')}><option value="auto">{t('themeAuto')}</option><option value="cloud">{t('themeCloud')}</option><option value="midnight">{t('themeMidnight')}</option><option value="moss">{t('themeMoss')}</option></select><Sun size={14} /></label><label><span>{t('language')}</span><select value={language} onChange={(event) => updateLanguage(event.target.value as Language)} aria-label={t('language')}><option value="de">DE</option><option value="en">EN</option></select></label><span className="version-label">v{__APP_VERSION__}</span></div></footer>
         </div>
@@ -1320,17 +1327,44 @@ function DashboardPage({ t, language, range, onRangeChange, lastImport, onBurstS
   </>
 }
 
-function StatisticsPage({ t, language, range, onRangeChange, lastImport, onBurstExtremeSelect, onDistributionSelect }: RangePageProps & { onBurstExtremeSelect: (extreme: BurstExtreme) => void; onDistributionSelect: (kind: 'provider' | 'country' | 'host' | 'category', value: string) => void }) {
+function StatisticsPage({ t, language, range, onRangeChange, lastImport, section, onSectionChange, onBurstExtremeSelect, onDistributionSelect }: RangePageProps & { section: StatisticsSection; onSectionChange: (section: StatisticsSection) => void; onBurstExtremeSelect: (extreme: BurstExtreme) => void; onDistributionSelect: (kind: 'provider' | 'country' | 'host' | 'category' | 'actor' | 'path', value: string) => void }) {
   const result = useApiData<StatisticsResponse>(apiUrl('statistics', range.query))
-  const retry = () => result.reload()
+  const traffic = useApiData<ApiResult<CountItem>>(apiUrl('request_counts', range.query, trafficBucketOptions(range)))
+  const insightQuery = section === 'insights' || section === 'hostsActors' ? apiUrl('statistics/insights', range.query, { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' }) : null
+  const insights = useApiData<StatisticsInsights>(insightQuery)
+  const retry = () => { result.reload(); if (section === 'traffic') traffic.reload(); if (insightQuery) insights.reload() }
   const requestsText = (count: number | null) => `${numberText(count, language)} ${count === 1 ? t('requestSingular') : t('requestsLabel')}`
   return <>
     <PageHeading title={t('statistics')} subtitle={t('statisticsSubtitle')} t={t} language={language} range={range} onRangeChange={onRangeChange} lastImport={lastImport} />
     <PageDataState loading={result.loading} error={result.error} retry={retry} t={t} />
     <div className="statistics-total"><BarChart3 size={15} /><span>{t('statisticsTotal')}: <strong>{result.data ? numberText(result.data.total_requests, language) : '—'}</strong></span>{result.loading && <><span className="loading-spinner statistics-spinner" /><span>{t('statisticsLoading')}</span></>}</div>
+    <nav className="statistics-tabs" aria-label={t('statisticsSections')}>
+      {(['overview', 'traffic', 'patterns', 'hostsActors', 'insights'] as const).map((key) => <button type="button" key={key} className={section === key ? 'active' : ''} aria-current={section === key ? 'page' : undefined} onClick={() => onSectionChange(key)}>{t(key === 'overview' ? 'statisticsOverview' : key === 'traffic' ? 'statisticsTimeSeries' : key === 'patterns' ? 'statisticsPatterns' : key === 'hostsActors' ? 'statisticsActorsHosts' : 'statisticsInsights')}</button>)}
+    </nav>
+    {section === 'traffic' && <TrafficTimeline items={traffic.data?.items ?? []} loading={traffic.loading} language={language} t={t} />}
+    {section === 'patterns' && <section className="statistics-grid statistics-patterns-grid">
+      <StatisticsBarsPanel title={t('statisticsStatusCodes')} description={t('statisticsStatusCodesNote')} items={result.data?.status_codes ?? null} loading={result.loading && !result.data} error={Boolean(result.error)} t={t} language={language} />
+      <StatisticsBarsPanel title={t('statisticsTopPaths')} description={t('statisticsTopPathsNote')} items={result.data?.paths ?? null} loading={result.loading && !result.data} error={Boolean(result.error)} t={t} language={language} />
+      <StatisticsBarsPanel title={t('statisticsBurstSizes')} description={t('statisticsBurstSizesNote')} items={result.data?.burst_sizes ?? null} loading={result.loading && !result.data} error={Boolean(result.error)} t={t} language={language} />
+      <StatisticsBarsPanel title={t('statisticsRequestGaps')} description={t('statisticsRequestGapsNote')} items={result.data?.request_gaps ?? null} loading={result.loading && !result.data} error={Boolean(result.error)} t={t} language={language} />
+      <StatisticsBarsPanel title={t('statisticsMethods')} description={t('statisticsMethodsNote')} items={result.data?.methods ?? null} loading={result.loading && !result.data} error={Boolean(result.error)} t={t} language={language} />
+    </section>}
+    {section === 'hostsActors' && <section className="statistics-grid">
+      <DualSeriesTimeline title={t('statisticsHostTrafficTimeline')} description={t('statisticsHostTrafficNote')} items={result.data?.host_traffic ?? []} loading={result.loading && !result.data} t={t} language={language} series={[{ key: 'known_count', label: t('knownHosts'), color: 'known' }, { key: 'other_count', label: t('foreignHosts'), color: 'unknown' }]} />
+      <DualSeriesTimeline title={t('statisticsNewActorsHosts')} description={t('statisticsNewActorsHostsNote')} items={result.data?.new_entities ?? []} loading={result.loading && !result.data} t={t} language={language} series={[{ key: 'actor_count', label: t('actors'), color: 'actors' }, { key: 'host_count', label: t('hosts'), color: 'hosts' }]} />
+      <DistributionPanel title={t('statisticsActiveActors')} items={insights.data?.active_actors ?? null} loading={insights.loading && !insights.data} error={Boolean(insights.error)} t={t} language={language} actorDetails onItemSelect={(value) => onDistributionSelect('actor', value)} />
+    </section>}
+    {section === 'insights' && <section className="statistics-grid statistics-insights-grid">
+      <DistributionPanel title={t('statisticsErrorHosts')} description={t('statisticsErrorHostsNote')} countLabel={t('statisticsErrorRequests')} items={insights.data?.error_hosts ?? null} loading={insights.loading && !insights.data} error={Boolean(insights.error)} t={t} language={language} onItemSelect={(value) => onDistributionSelect('host', value)} />
+      <DistributionPanel title={t('statisticsErrorPaths')} description={t('statisticsErrorPathsNote')} countLabel={t('statisticsErrorRequests')} items={insights.data?.error_paths ?? null} loading={insights.loading && !insights.data} error={Boolean(insights.error)} t={t} language={language} onItemSelect={(value) => onDistributionSelect('path', value)} />
+      <WeekdayHourHeatmap items={insights.data?.weekday_hours ?? []} loading={insights.loading} error={Boolean(insights.error)} language={language} t={t} />
+      <StatusTrendTimeline items={insights.data?.status_trend ?? []} loading={insights.loading} error={Boolean(insights.error)} language={language} t={t} />
+    </section>}
+    {section === 'overview' && <>
     <section className="statistics-burst-metrics">
       <MetricCard t={t} language={language} label={t('avgRequestsPerBurst')} value={result.data?.avg_requests_per_burst == null ? '—' : decimalText(result.data.avg_requests_per_burst, language)} icon={Activity} iconClass="blue" caption={result.data ? <><span>{numberText(result.data.burst_count, language)} {t('burstsInPeriod')} · </span><button type="button" className="statistics-extreme-link" onClick={() => onBurstExtremeSelect('min_requests')} disabled={result.data.min_requests_per_burst == null}>{t('minimumValue')} {result.data.min_requests_per_burst == null ? '—' : requestsText(result.data.min_requests_per_burst)}</button><span> · </span><button type="button" className="statistics-extreme-link" onClick={() => onBurstExtremeSelect('max_requests')} disabled={result.data.max_requests_per_burst == null}>{t('maximumValue')} {result.data.max_requests_per_burst == null ? '—' : requestsText(result.data.max_requests_per_burst)}</button></> : result.error ? t('apiUnavailable') : t('statisticsLoading')} />
       <MetricCard t={t} language={language} label={t('avgBurstDuration')} value={result.data?.avg_burst_duration_seconds == null ? '—' : preciseSecondsText(result.data.avg_burst_duration_seconds, language)} icon={Clock3} iconClass="violet" caption={result.data ? <><button type="button" className="statistics-extreme-link" onClick={() => onBurstExtremeSelect('min_duration')} disabled={result.data.min_burst_duration_seconds == null}>{t('minimumValue')} {result.data.min_burst_duration_seconds == null ? '—' : `${preciseSecondsText(result.data.min_burst_duration_seconds, language)} (${requestsText(result.data.min_duration_request_count)})`}</button><span> · </span><button type="button" className="statistics-extreme-link" onClick={() => onBurstExtremeSelect('max_duration')} disabled={result.data.max_burst_duration_seconds == null}>{t('maximumValue')} {result.data.max_burst_duration_seconds == null ? '—' : `${preciseSecondsText(result.data.max_burst_duration_seconds, language)} (${requestsText(result.data.max_duration_request_count)})`}</button></> : result.error ? t('apiUnavailable') : t('statisticsLoading')} />
+      <MetricCard t={t} language={language} label={t('statisticsBurstShare')} value={result.data ? `${decimalText(result.data.burst_request_share_percent, language)}%` : '—'} icon={Activity} iconClass="green" caption={result.data ? `${numberText(result.data.burst_request_count, language)} ${t('statisticsRequests')} · ${numberText(result.data.non_burst_request_count, language)} ${t('statisticsRequestsWithoutBurst')}` : result.error ? t('apiUnavailable') : t('statisticsLoading')} />
     </section>
     <section className="statistics-grid">
       <DistributionPanel title={t('statisticsProviders')} items={result.data?.providers ?? null} loading={result.loading && !result.data} error={Boolean(result.error)} t={t} language={language} onItemSelect={(value) => onDistributionSelect('provider', value)} />
@@ -1338,10 +1372,132 @@ function StatisticsPage({ t, language, range, onRangeChange, lastImport, onBurst
       <DistributionPanel title={t('statisticsHosts')} items={result.data?.hosts ?? null} loading={result.loading && !result.data} error={Boolean(result.error)} t={t} language={language} onItemSelect={(value) => onDistributionSelect('host', value)} />
       <DistributionPanel title={t('statisticsCategories')} items={result.data?.categories ?? null} loading={result.loading && !result.data} error={Boolean(result.error)} t={t} language={language} note={t('statisticsCategoryNote')} onItemSelect={(value) => onDistributionSelect('category', value)} />
     </section>
+    </>}
   </>
 }
 
-function DistributionPanel({ title, items, loading, error, t, language, country = false, note, onItemSelect }: { title: string; items: StatisticsItem[] | null; loading: boolean; error: boolean; t: (key: MessageKey) => string; language: Language; country?: boolean; note?: string; onItemSelect: (value: string) => void }) {
+function TrafficTimeline({ items, loading, language, t }: { items: CountItem[]; loading: boolean; language: Language; t: (key: MessageKey) => string }) {
+  const max = Math.max(1, ...items.map((item) => item.total_count ?? (item.read_count + item.write_count + item.other_count)))
+  const formatter = new Intl.DateTimeFormat(language === 'de' ? 'de-DE' : 'en-US', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })
+  return <section className="panel statistics-timeline-panel">
+    <div className="panel-header"><div><h2>{t('statisticsTimeSeries')}</h2><p>{t('trafficDescription')}</p></div>{loading && <span className="statistics-loading-inline"><span className="loading-spinner" />{t('statisticsLoading')}</span>}</div>
+    {items.length ? <>
+      <div className="statistics-legend"><span><i className="read" />{t('readRequests')}</span><span><i className="write" />{t('writeRequests')}</span><span><i className="other" />{t('otherRequests')}</span></div>
+      <div className="statistics-timeline statistics-request-timeline" role="img" aria-label={t('statisticsTimeSeries')}>
+        {items.map((item, index) => {
+          const read = item.read_count || 0, write = item.write_count || 0, other = item.other_count || 0
+          const total = item.total_count ?? read + write + other
+          const label = item.from ? formatter.format(new Date(item.from)) : String(index + 1)
+          return <div className="statistics-time-slot" key={`${item.from ?? index}`} title={`${label}–${item.to ? formatter.format(new Date(item.to)) : ''} · ${numberText(total, language)} ${t('statisticsRequests')}\n${t('readRequests')}: ${numberText(read, language)} · ${t('writeRequests')}: ${numberText(write, language)} · ${t('otherRequests')}: ${numberText(other, language)}`}>
+            <div className="statistics-time-bar"><i className="read" style={{ height: `${read / max * 100}%` }} /><i className="write" style={{ height: `${write / max * 100}%` }} /><i className="other" style={{ height: `${other / max * 100}%` }} /></div>
+            {(index === 0 || index === items.length - 1 || index % Math.max(1, Math.ceil(items.length / 6)) === 0) && <small>{label}</small>}
+          </div>
+        })}
+      </div>
+    </> : <p className="statistics-empty">{loading ? t('statisticsLoading') : t('statisticsNoData')}</p>}
+  </section>
+}
+
+function DualSeriesTimeline({ title, description, items, loading, t, language, series }: { title: string; description: string; items: StatisticsBucket[]; loading: boolean; t: (key: MessageKey) => string; language: Language; series: { key: 'known_count' | 'other_count' | 'actor_count' | 'host_count'; label: string; color: string }[] }) {
+  const max = Math.max(1, ...items.map((item) => series.reduce((sum, entry) => sum + (item[entry.key] ?? 0), 0)))
+  const formatter = new Intl.DateTimeFormat(language === 'de' ? 'de-DE' : 'en-US', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })
+  return <section className="panel statistics-timeline-panel">
+    <div className="panel-header"><div><h2>{title}</h2><p>{description}</p></div>{loading && <span className="statistics-loading-inline"><span className="loading-spinner" />{t('statisticsLoading')}</span>}</div>
+    {items.length ? <>
+      <div className="statistics-legend">{series.map((entry) => <span key={entry.key}><i className={entry.color} />{entry.label}</span>)}</div>
+      <div className="statistics-timeline statistics-dual-timeline" role="img" aria-label={title}>
+        {items.map((item, index) => {
+          const values = series.map((entry) => ({ ...entry, count: item[entry.key] ?? 0 }))
+          const total = values.reduce((sum, entry) => sum + entry.count, 0)
+          const label = formatter.format(new Date(item.from))
+          return <div className="statistics-time-slot" key={item.from} title={`${label}–${formatter.format(new Date(item.to))} · ${values.map((entry) => `${entry.label}: ${numberText(entry.count, language)}`).join(' · ')}`}>
+            <div className="statistics-time-bar">{values.map((entry) => <i key={entry.key} className={entry.color} style={{ height: `${entry.count / max * 100}%` }} />)}</div>
+            {(index === 0 || index === items.length - 1 || index % Math.max(1, Math.ceil(items.length / 6)) === 0) && <small>{label}</small>}
+            <span className="statistics-sr-only">{numberText(total, language)}</span>
+          </div>
+        })}
+      </div>
+    </> : <p className="statistics-empty">{t('statisticsNoData')}</p>}
+  </section>
+}
+
+function WeekdayHourHeatmap({ items, loading, error, language, t }: { items: StatisticsInsights['weekday_hours']; loading: boolean; error: boolean; language: Language; t: (key: MessageKey) => string }) {
+  const counts = Array.from({ length: 7 }, () => Array<number>(24).fill(0))
+  for (const item of items) counts[item.weekday]?.splice(item.hour, 1, item.request_count)
+  const max = Math.max(1, ...items.map((item) => item.request_count))
+  const days = Array.from({ length: 7 }, (_, index) => new Intl.DateTimeFormat(language === 'de' ? 'de-DE' : 'en-US', { weekday: 'short' }).format(new Date(Date.UTC(2024, 0, 1 + index))))
+  return <section className="panel statistics-panel statistics-heatmap-panel">
+    <div className="panel-header"><div><h2>{t('statisticsWeekdayHour')}</h2><p>{t('statisticsWeekdayHourNote')}</p></div>{loading && <span className="statistics-loading-inline"><span className="loading-spinner" />{t('statisticsLoading')}</span>}</div>
+    {error ? <p className="statistics-empty">{t('apiUnavailable')}</p> : loading && items.length === 0 ? <div className="statistics-panel-state"><span className="loading-spinner" />{t('statisticsLoading')}</div> : !loading && items.length === 0 ? <p className="statistics-empty">{t('statisticsNoData')}</p> : <div className="statistics-heatmap-scroll"><div className="statistics-heatmap">
+      <span className="statistics-heatmap-corner" />{Array.from({ length: 24 }, (_, hour) => <small key={hour}>{hour % 3 === 0 ? String(hour).padStart(2, '0') : ''}</small>)}
+      {counts.map((hours, weekday) => <Fragment key={weekday}><strong>{days[weekday]}</strong>{hours.map((count, hour) => <span key={hour} className="statistics-heat-cell" title={`${days[weekday]} ${String(hour).padStart(2, '0')}:00 · ${numberText(count, language)} ${t('statisticsRequests')}`} style={{ opacity: count ? 0.12 + count / max * 0.88 : 0.035 }} />)}</Fragment>)}
+    </div></div>}
+  </section>
+}
+
+function StatusTrendTimeline({ items, loading, error, language, t }: { items: StatisticsInsights['status_trend']; loading: boolean; error: boolean; language: Language; t: (key: MessageKey) => string }) {
+  const keys = ['status_1xx', 'status_2xx', 'status_3xx', 'status_4xx', 'status_5xx'] as const
+  const labels = ['status1xx', 'status2xx', 'status3xx', 'status4xx', 'status5xx'] as const
+  const colors = ['status-1xx', 'status-2xx', 'status-3xx', 'status-4xx', 'status-5xx'] as const
+  const max = Math.max(1, ...items.map((item) => keys.reduce((sum, key) => sum + (item[key] || 0), 0)))
+  const formatter = new Intl.DateTimeFormat(language === 'de' ? 'de-DE' : 'en-US', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  return <section className="panel statistics-timeline-panel statistics-status-trend-panel">
+    <div className="panel-header"><div><h2>{t('statisticsStatusTrend')}</h2><p>{t('statisticsStatusTrendNote')}</p></div>{loading && <span className="statistics-loading-inline"><span className="loading-spinner" />{t('statisticsLoading')}</span>}</div>
+    {error ? <p className="statistics-empty">{t('apiUnavailable')}</p> : items.length ? <><div className="statistics-legend">{keys.map((key, index) => <span key={key}><i className={colors[index]} />{t(labels[index])}</span>)}</div><div className="statistics-timeline statistics-status-trend">
+      {items.map((item, index) => {
+        const total = keys.reduce((sum, key) => sum + (item[key] || 0), 0)
+        const start = new Date(item.from_utc)
+        const end = new Date(item.to_utc)
+        const label = formatter.format(start)
+        return <div className="statistics-time-slot" key={item.bucket_index} title={`${formatter.format(start)} – ${formatter.format(end)} · ${numberText(total, language)} ${t('statisticsRequests')}\n${keys.map((key, i) => `${t(labels[i])}: ${numberText(item[key], language)}`).join(' · ')}`}>
+          <div className="statistics-time-bar">{keys.map((key, i) => <i key={key} className={colors[i]} style={{ height: `${(item[key] || 0) / max * 100}%` }} />)}</div>
+          {(index === 0 || index === Math.floor((items.length - 1) / 2) || index === items.length - 1) && <small>{label}</small>}
+        </div>
+      })}
+    </div></> : <p className="statistics-empty">{loading ? t('statisticsLoading') : t('statisticsNoData')}</p>}
+  </section>
+}
+
+function StatisticsBarsPanel({ title, description, items, loading, error, t, language }: { title: string; description?: string; items: StatisticsItem[] | null; loading: boolean; error: boolean; t: (key: MessageKey) => string; language: Language }) {
+  const rows = items ?? []
+  const max = Math.max(1, ...rows.map((item) => item.request_count))
+  const isStatusPanel = title === t('statisticsStatusCodes')
+  const statusDescriptions: Record<number, [string, string]> = {
+    100: ['Weiterverarbeitung', 'Continue'], 101: ['Protokollwechsel', 'Switching Protocols'], 102: ['Wird verarbeitet', 'Processing'], 103: ['Frühe Hinweise', 'Early Hints'],
+    200: ['Erfolgreich', 'OK'], 201: ['Erstellt', 'Created'], 202: ['Angenommen', 'Accepted'], 204: ['Keine Inhalte', 'No Content'], 206: ['Teilinhalt', 'Partial Content'],
+    300: ['Mehrere Möglichkeiten', 'Multiple Choices'], 301: ['Dauerhaft verschoben', 'Moved Permanently'], 302: ['Vorübergehend gefunden', 'Found'], 303: ['Siehe andere Adresse', 'See Other'], 304: ['Unverändert', 'Not Modified'], 307: ['Vorübergehend umgeleitet', 'Temporary Redirect'], 308: ['Dauerhaft umgeleitet', 'Permanent Redirect'],
+    400: ['Ungültige Anfrage', 'Bad Request'], 401: ['Anmeldung erforderlich', 'Unauthorized'], 403: ['Zugriff verweigert', 'Forbidden'], 404: ['Nicht gefunden', 'Not Found'], 405: ['Methode nicht erlaubt', 'Method Not Allowed'], 408: ['Zeitüberschreitung', 'Request Timeout'], 409: ['Konflikt', 'Conflict'], 410: ['Nicht mehr verfügbar', 'Gone'], 413: ['Anfrage zu groß', 'Content Too Large'], 418: ['Ungewöhnliche Anfrage', "I'm a Teapot"], 422: ['Inhalt nicht verarbeitbar', 'Unprocessable Content'], 429: ['Zu viele Anfragen', 'Too Many Requests'],
+    500: ['Interner Serverfehler', 'Internal Server Error'], 501: ['Nicht implementiert', 'Not Implemented'], 502: ['Ungültige Antwort eines Upstreams', 'Bad Gateway'], 503: ['Dienst nicht verfügbar', 'Service Unavailable'], 504: ['Zeitüberschreitung eines Upstreams', 'Gateway Timeout'],
+  }
+  const statusClassMeaning = (name: string) => {
+    const group = Number(name.slice(0, 1))
+    const meanings = language === 'de' ? ['Informativ', 'Erfolgreich', 'Umleitung', 'Clientfehler', 'Serverfehler'] : ['Informational', 'Success', 'Redirection', 'Client error', 'Server error']
+    return meanings[group - 1] ?? name
+  }
+  return <section className="panel statistics-panel">
+    <div className="panel-header"><div><h2>{title}</h2><p>{description ?? (items ? `${numberText(rows.length, language)} ${t('statisticsEntries')}` : t('statisticsAllEntries'))}</p></div></div>
+    {loading ? <div className="statistics-panel-state"><span className="loading-spinner" />{t('statisticsLoading')}</div> : error ? <p className="statistics-empty">{t('apiUnavailable')}</p> : isStatusPanel ? <div className="statistics-status-groups">{[1, 2, 3, 4, 5].map((hundreds) => {
+      const className = `${hundreds}xx`
+      const groupRows = rows.filter((item) => item.status_class === className)
+      const groupTotal = groupRows.reduce((sum, item) => sum + item.request_count, 0)
+      return <section className="statistics-status-group" key={className}>
+        <h3>{className} <small>{t('statusGroupMeaning')}: {statusClassMeaning(className)}</small></h3>
+        {groupRows.length ? groupRows.map((item) => {
+          const code = Number(item.name)
+          const description = statusDescriptions[code]?.[language === 'de' ? 0 : 1] ?? (language === 'de' ? 'Sonstiger Status' : 'Other status')
+          return <div className="statistics-horizontal-row status-code-row" key={code}>
+            <span>{code} <small>– {description}</small></span><div className="statistics-horizontal-track"><i style={{ width: `${item.request_count / max * 100}%` }} /></div><strong>{numberText(item.request_count, language)}</strong><small>{decimalText(item.share_percent, language)}%</small>
+          </div>
+        }) : <p className="statistics-group-empty">{t('noStatusesInGroup')}</p>}
+        <span className="statistics-group-total">{t('statisticsGroupTotal')}: {numberText(groupTotal, language)}</span>
+      </section>
+    })}</div> : rows.length ? <div className="statistics-horizontal-bars">{rows.map((item) => <div className="statistics-horizontal-row" key={item.name} title={title === t('statisticsTopPaths') ? (item.name ?? undefined) : undefined}>
+      <span>{item.name}</span><div className="statistics-horizontal-track"><i style={{ width: `${item.request_count / max * 100}%` }} /></div><strong>{numberText(item.request_count, language)}</strong><small>{decimalText(item.share_percent, language)}%</small>
+    </div>)}</div> : <p className="statistics-empty">{t('statisticsNoData')}</p>}
+  </section>
+}
+
+function DistributionPanel({ title, description, countLabel, items, loading, error, t, language, country = false, actorDetails = false, note, onItemSelect }: { title: string; description?: string; countLabel?: string; items: StatisticsItem[] | null; loading: boolean; error: boolean; t: (key: MessageKey) => string; language: Language; country?: boolean; actorDetails?: boolean; note?: string; onItemSelect: (value: string) => void }) {
   const [page, setPage] = useState(0)
   const [search, setSearch] = useState('')
   const pageSize = 10
@@ -1352,13 +1508,13 @@ function DistributionPanel({ title, items, loading, error, t, language, country 
   const visibleRows = filteredRows.slice(Math.min(page, pageCount - 1) * pageSize, (Math.min(page, pageCount - 1) + 1) * pageSize)
   useEffect(() => setPage(0), [normalizedSearch])
   return <section className="panel statistics-panel">
-    <div className="panel-header"><div><h2>{title}</h2><p>{items ? `${numberText(filteredRows.length, language)} ${t('statisticsEntries')}` : t('statisticsAllEntries')}</p></div></div>
+    <div className="panel-header"><div><h2>{title}</h2><p>{description ?? (items ? `${numberText(filteredRows.length, language)} ${t('statisticsEntries')}` : t('statisticsAllEntries'))}</p></div></div>
     <label className="statistics-search"><Search size={14} /><input type="search" value={search} placeholder={t('statisticsSearch')} aria-label={`${t('statisticsSearch')} · ${title}`} onChange={(event) => setSearch(event.target.value)} /></label>
     {loading ? <div className="statistics-panel-state"><span className="loading-spinner" />{t('statisticsLoading')}</div> : error ? <p className="statistics-empty">{t('apiUnavailable')}</p> : rows.length ? <div className="statistics-list">
-      <div className="statistics-label-row"><span /><span /><span>{t('statisticsRequests')}</span><span>{t('statisticsShare')}</span></div>
+      <div className="statistics-label-row"><span /><span /><span>{countLabel ?? t('statisticsRequests')}</span><span>{t('statisticsShare')}</span></div>
       {visibleRows.map((item, index) => <div className="statistics-row" key={`${item.name ?? 'unknown'}-${index + page * pageSize}`}>
         <span className="statistics-rank">{page * pageSize + index + 1}</span>
-        <div className="statistics-name-cell">{item.name ? <button type="button" className={`statistics-name table-link${item.known ? ' known-host-name' : ''}`} onClick={() => onItemSelect(item.name!)}>{country && <span className="country-flag" title={item.name}>{countryFlag(item.name)}</span>}{item.name}</button> : <span className="statistics-name">{t('unknown')}</span>}<span className="statistics-share-track"><i style={{ width: `${Math.min(item.share_percent, 100)}%` }} /></span></div>
+        <div className="statistics-name-cell">{item.name ? <button type="button" className={`statistics-name table-link${item.known ? ' known-host-name' : ''}`} onClick={() => onItemSelect(item.name!)}>{country && <span className="country-flag" title={item.name}>{countryFlag(item.name)}</span>}{item.name}</button> : <span className="statistics-name">{t('unknown')}</span>}{actorDetails && <span className="statistics-actor-details">{[(item as StatisticsInsights['active_actors'][number]).provider, (item as StatisticsInsights['active_actors'][number]).asn, (item as StatisticsInsights['active_actors'][number]).country ? `${countryFlag((item as StatisticsInsights['active_actors'][number]).country)} ${(item as StatisticsInsights['active_actors'][number]).country}` : null, (item as StatisticsInsights['active_actors'][number]).city].map((value) => value?.trim()).filter(Boolean).join(' · ') || t('unknown')}</span>}<span className="statistics-share-track"><i style={{ width: `${Math.min(item.share_percent, 100)}%` }} /></span></div>
         <strong>{numberText(item.request_count, language)}</strong>
         <span className="statistics-percent">{decimalText(item.share_percent, language)}%</span>
       </div>)}
