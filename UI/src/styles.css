@@ -296,3 +296,7 @@ button { color: inherit; cursor: pointer; }
   .sidebar.sidebar-collapsed .nav-section-toggle span,
   .sidebar.sidebar-collapsed .nav-section-toggle > svg:last-child { display: block; }
 }
+
+@media (max-width: 560px) {
+  .actor-filter-controls .country-filter { flex: 1 1 100%; }
+}
