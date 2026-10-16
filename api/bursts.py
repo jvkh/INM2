@@ -226,6 +226,7 @@ def get_burst_counts(
     bucket_minutes: int | None = Query(default=None, ge=1, le=4320),
     bucket_anchor: datetime | None = Query(default=None),
     bucket_timezone: str | None = Query(default=None),
+    include_bursts: bool = Query(default=True, description="Include burst details for dashboard tooltips"),
 ) -> dict[str, Any]:
     """Return all bursts grouped into the dashboard's time buckets."""
     start_dt = from_.replace(tzinfo=timezone.utc) if from_.tzinfo is None else from_.astimezone(timezone.utc)
@@ -274,35 +275,51 @@ def get_burst_counts(
     bucket_cte = f"buckets(bucket_index, start_utc, end_utc) AS (VALUES {bucket_values})"
     bucket_parameters = [value for index, (bucket_start, bucket_end) in enumerate(fixed_buckets) for value in (index, _utc_timestamp(bucket_start), _utc_timestamp(bucket_end))]
     database = get_database(request)
-    rows = database.query(
-        f"""WITH {bucket_cte}
-            SELECT buckets.bucket_index, bursts.burst_id, bursts.start_time, bursts.end_time,
-                   bursts.avg_count, bursts.read_count, bursts.write_count, bursts.other_count,
-                   actors.ip AS actor_ip, actors.provider, actors.asn, actors.city, actors.country,
-                   hosts.name AS host
-            FROM buckets
-            LEFT JOIN burst AS bursts
-              ON bursts.start_time >= buckets.start_utc AND bursts.start_time < buckets.end_utc
-            LEFT JOIN actor AS actors ON actors.actor_id = bursts.actor_id
-            LEFT JOIN host AS hosts ON hosts.host_id = bursts.host_id
-            ORDER BY buckets.bucket_index, bursts.start_time, bursts.burst_id""",
-        bucket_parameters,
-    )
+    if include_bursts:
+        rows = database.query(
+            f"""WITH {bucket_cte}
+                SELECT buckets.bucket_index, bursts.burst_id, bursts.start_time, bursts.end_time,
+                       bursts.avg_count, bursts.read_count, bursts.write_count, bursts.other_count,
+                       actors.ip AS actor_ip, actors.provider, actors.asn, actors.city, actors.country,
+                       hosts.name AS host
+                FROM buckets
+                LEFT JOIN burst AS bursts
+                  ON bursts.start_time >= buckets.start_utc AND bursts.start_time < buckets.end_utc
+                LEFT JOIN actor AS actors ON actors.actor_id = bursts.actor_id
+                LEFT JOIN host AS hosts ON hosts.host_id = bursts.host_id
+                ORDER BY buckets.bucket_index, bursts.start_time, bursts.burst_id""",
+            bucket_parameters,
+        )
+    else:
+        rows = database.query(
+            f"""WITH {bucket_cte}
+                SELECT buckets.bucket_index, COUNT(bursts.burst_id) AS burst_count
+                FROM buckets
+                LEFT JOIN burst AS bursts
+                  ON bursts.start_time >= buckets.start_utc AND bursts.start_time < buckets.end_utc
+                GROUP BY buckets.bucket_index
+                ORDER BY buckets.bucket_index""",
+            bucket_parameters,
+        )
     items: list[dict[str, Any]] = [
         {"from": _utc_timestamp(bucket_start), "to": _utc_timestamp(bucket_end), "burst_count": 0, "bursts": []}
         for bucket_start, bucket_end in fixed_buckets
     ]
-    for row in rows:
-        if row["burst_id"] is None:
-            continue
-        item = items[row["bucket_index"]]
-        item["burst_count"] += 1
-        item["bursts"].append({
-            "burst_id": row["burst_id"], "start_time": row["start_time"], "end_time": row["end_time"],
-            "avg_count": row["avg_count"], "read_count": row["read_count"], "write_count": row["write_count"],
-            "other_count": row["other_count"], "actor_ip": row["actor_ip"], "provider": row["provider"],
-            "asn": row["asn"], "city": row["city"], "country": row["country"], "host": row["host"],
-        })
+    if include_bursts:
+        for row in rows:
+            if row["burst_id"] is None:
+                continue
+            item = items[row["bucket_index"]]
+            item["burst_count"] += 1
+            item["bursts"].append({
+                "burst_id": row["burst_id"], "start_time": row["start_time"], "end_time": row["end_time"],
+                "avg_count": row["avg_count"], "read_count": row["read_count"], "write_count": row["write_count"],
+                "other_count": row["other_count"], "actor_ip": row["actor_ip"], "provider": row["provider"],
+                "asn": row["asn"], "city": row["city"], "country": row["country"], "host": row["host"],
+            })
+    else:
+        for row in rows:
+            items[row["bucket_index"]]["burst_count"] = row["burst_count"]
     return {"items": items, "from": _utc_timestamp(start_dt), "to": _utc_timestamp(end_dt), "bars": len(fixed_buckets)}
 
 

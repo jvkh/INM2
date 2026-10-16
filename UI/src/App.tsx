@@ -274,6 +274,12 @@ function rangeTick(range: TimeRange, fraction: number, language: Language, timeO
   return new Intl.DateTimeFormat(locale, options).format(value)
 }
 
+function timelineAxisLabels(range: TimeRange, from: string | undefined, to: string | undefined, language: Language) {
+  if (!from || !to) return []
+  const chartRange = { ...range, from: new Date(from), to: new Date(to) }
+  return [0, .25, .5, .75, 1].map((fraction) => rangeTick(chartRange, fraction, language, range.preset === 'last24h'))
+}
+
 function useApiData<T>(url: string | null, pollIntervalMs = 0, showActivityToast = true, refreshOnLiveTick = true) {
   const refreshTick = useSyncExternalStore(subscribeLiveRefresh, getLiveRefreshTick, getLiveRefreshTick)
   const effectiveRefreshTick = refreshOnLiveTick ? refreshTick : 0
@@ -1330,18 +1336,21 @@ function DashboardPage({ t, language, range, onRangeChange, lastImport, onBurstS
 function StatisticsPage({ t, language, range, onRangeChange, lastImport, section, onSectionChange, onBurstExtremeSelect, onDistributionSelect }: RangePageProps & { section: StatisticsSection; onSectionChange: (section: StatisticsSection) => void; onBurstExtremeSelect: (extreme: BurstExtreme) => void; onDistributionSelect: (kind: 'provider' | 'country' | 'host' | 'category' | 'actor' | 'path', value: string) => void }) {
   const result = useApiData<StatisticsResponse>(apiUrl('statistics', range.query))
   const traffic = useApiData<ApiResult<CountItem>>(apiUrl('request_counts', range.query, trafficBucketOptions(range)))
+  const burstTraffic = useApiData<BurstChartResponse>(section === 'traffic' ? apiUrl('burst_counts', range.query, { ...trafficBucketOptions(range), include_bursts: 'false' }) : null)
   const insightQuery = section === 'insights' || section === 'hostsActors' ? apiUrl('statistics/insights', range.query, { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' }) : null
   const insights = useApiData<StatisticsInsights>(insightQuery)
-  const retry = () => { result.reload(); if (section === 'traffic') traffic.reload(); if (insightQuery) insights.reload() }
+  const retry = () => { result.reload(); if (section === 'traffic') { traffic.reload(); burstTraffic.reload() } if (insightQuery) insights.reload() }
   const requestsText = (count: number | null) => `${numberText(count, language)} ${count === 1 ? t('requestSingular') : t('requestsLabel')}`
   return <>
     <PageHeading title={t('statistics')} subtitle={t('statisticsSubtitle')} t={t} language={language} range={range} onRangeChange={onRangeChange} lastImport={lastImport} />
     <PageDataState loading={result.loading} error={result.error} retry={retry} t={t} />
-    <div className="statistics-total"><BarChart3 size={15} /><span>{t('statisticsTotal')}: <strong>{result.data ? numberText(result.data.total_requests, language) : '—'}</strong></span>{result.loading && <><span className="loading-spinner statistics-spinner" /><span>{t('statisticsLoading')}</span></>}</div>
     <nav className="statistics-tabs" aria-label={t('statisticsSections')}>
       {(['overview', 'traffic', 'patterns', 'hostsActors', 'insights'] as const).map((key) => <button type="button" key={key} className={section === key ? 'active' : ''} aria-current={section === key ? 'page' : undefined} onClick={() => onSectionChange(key)}>{t(key === 'overview' ? 'statisticsOverview' : key === 'traffic' ? 'statisticsTimeSeries' : key === 'patterns' ? 'statisticsPatterns' : key === 'hostsActors' ? 'statisticsActorsHosts' : 'statisticsInsights')}</button>)}
     </nav>
-    {section === 'traffic' && <TrafficTimeline items={traffic.data?.items ?? []} loading={traffic.loading} language={language} t={t} />}
+    {section === 'traffic' && <section className="statistics-grid statistics-time-series-grid">
+      <TrafficTimeline items={traffic.data?.items ?? []} loading={traffic.loading} language={language} range={range} t={t} />
+      <BurstTimeline items={burstTraffic.data?.items ?? []} loading={burstTraffic.loading} language={language} range={range} t={t} />
+    </section>}
     {section === 'patterns' && <section className="statistics-grid statistics-patterns-grid">
       <StatisticsBarsPanel title={t('statisticsStatusCodes')} description={t('statisticsStatusCodesNote')} items={result.data?.status_codes ?? null} loading={result.loading && !result.data} error={Boolean(result.error)} t={t} language={language} />
       <StatisticsBarsPanel title={t('statisticsTopPaths')} description={t('statisticsTopPathsNote')} items={result.data?.paths ?? null} loading={result.loading && !result.data} error={Boolean(result.error)} t={t} language={language} />
@@ -1350,15 +1359,15 @@ function StatisticsPage({ t, language, range, onRangeChange, lastImport, section
       <StatisticsBarsPanel title={t('statisticsMethods')} description={t('statisticsMethodsNote')} items={result.data?.methods ?? null} loading={result.loading && !result.data} error={Boolean(result.error)} t={t} language={language} />
     </section>}
     {section === 'hostsActors' && <section className="statistics-grid">
-      <DualSeriesTimeline title={t('statisticsHostTrafficTimeline')} description={t('statisticsHostTrafficNote')} items={result.data?.host_traffic ?? []} loading={result.loading && !result.data} t={t} language={language} series={[{ key: 'known_count', label: t('knownHosts'), color: 'known' }, { key: 'other_count', label: t('foreignHosts'), color: 'unknown' }]} />
-      <DualSeriesTimeline title={t('statisticsNewActorsHosts')} description={t('statisticsNewActorsHostsNote')} items={result.data?.new_entities ?? []} loading={result.loading && !result.data} t={t} language={language} series={[{ key: 'actor_count', label: t('actors'), color: 'actors' }, { key: 'host_count', label: t('hosts'), color: 'hosts' }]} />
-      <DistributionPanel title={t('statisticsActiveActors')} items={insights.data?.active_actors ?? null} loading={insights.loading && !insights.data} error={Boolean(insights.error)} t={t} language={language} actorDetails onItemSelect={(value) => onDistributionSelect('actor', value)} />
+      <DualSeriesTimeline title={t('statisticsHostTrafficTimeline')} description={t('statisticsHostTrafficNote')} items={result.data?.host_traffic ?? []} loading={result.loading && !result.data} t={t} language={language} range={range} series={[{ key: 'known_count', label: t('knownHosts'), color: 'known' }, { key: 'other_count', label: t('foreignHosts'), color: 'unknown' }]} />
+      <DualSeriesTimeline title={t('statisticsNewActorsHosts')} description={t('statisticsNewActorsHostsNote')} items={result.data?.new_entities ?? []} loading={result.loading && !result.data} t={t} language={language} range={range} series={[{ key: 'actor_count', label: t('actors'), color: 'actors' }, { key: 'host_count', label: t('hosts'), color: 'hosts' }]} />
+      <DistributionPanel title={t('statisticsActiveActors')} description={t('statisticsActiveActorsNote')} items={insights.data?.active_actors ?? null} loading={insights.loading && !insights.data} error={Boolean(insights.error)} t={t} language={language} actorDetails onItemSelect={(value) => onDistributionSelect('actor', value)} />
     </section>}
     {section === 'insights' && <section className="statistics-grid statistics-insights-grid">
       <DistributionPanel title={t('statisticsErrorHosts')} description={t('statisticsErrorHostsNote')} countLabel={t('statisticsErrorRequests')} items={insights.data?.error_hosts ?? null} loading={insights.loading && !insights.data} error={Boolean(insights.error)} t={t} language={language} onItemSelect={(value) => onDistributionSelect('host', value)} />
       <DistributionPanel title={t('statisticsErrorPaths')} description={t('statisticsErrorPathsNote')} countLabel={t('statisticsErrorRequests')} items={insights.data?.error_paths ?? null} loading={insights.loading && !insights.data} error={Boolean(insights.error)} t={t} language={language} onItemSelect={(value) => onDistributionSelect('path', value)} />
       <WeekdayHourHeatmap items={insights.data?.weekday_hours ?? []} loading={insights.loading} error={Boolean(insights.error)} language={language} t={t} />
-      <StatusTrendTimeline items={insights.data?.status_trend ?? []} loading={insights.loading} error={Boolean(insights.error)} language={language} t={t} />
+      <StatusTrendTimeline items={insights.data?.status_trend ?? []} loading={insights.loading} error={Boolean(insights.error)} language={language} range={range} t={t} />
     </section>}
     {section === 'overview' && <>
     <section className="statistics-burst-metrics">
@@ -1376,47 +1385,76 @@ function StatisticsPage({ t, language, range, onRangeChange, lastImport, section
   </>
 }
 
-function TrafficTimeline({ items, loading, language, t }: { items: CountItem[]; loading: boolean; language: Language; t: (key: MessageKey) => string }) {
+function TrafficTimeline({ items, loading, language, range, t }: { items: CountItem[]; loading: boolean; language: Language; range: TimeRange; t: (key: MessageKey) => string }) {
   const max = Math.max(1, ...items.map((item) => item.total_count ?? (item.read_count + item.write_count + item.other_count)))
+  const total = items.reduce((sum, item) => sum + (item.total_count ?? item.read_count + item.write_count + item.other_count), 0)
   const formatter = new Intl.DateTimeFormat(language === 'de' ? 'de-DE' : 'en-US', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })
+  const axisLabels = timelineAxisLabels(range, items[0]?.from, items[items.length - 1]?.to, language)
   return <section className="panel statistics-timeline-panel">
-    <div className="panel-header"><div><h2>{t('statisticsTimeSeries')}</h2><p>{t('trafficDescription')}</p></div>{loading && <span className="statistics-loading-inline"><span className="loading-spinner" />{t('statisticsLoading')}</span>}</div>
+    <div className="panel-header"><div><h2>{t('statisticsRequests')}</h2><p>{t('trafficDescription')}</p></div>{loading && <span className="statistics-loading-inline"><span className="loading-spinner" />{t('statisticsLoading')}</span>}</div>
     {items.length ? <>
-      <div className="statistics-legend"><span><i className="read" />{t('readRequests')}</span><span><i className="write" />{t('writeRequests')}</span><span><i className="other" />{t('otherRequests')}</span></div>
+      <div className="statistics-chart-total"><span>{t('statisticsGroupTotal')}</span><strong>{numberText(total, language)}</strong></div>
+      <div className="statistics-legend statistics-request-legend"><span><i className="read" />{t('readRequests')}</span><span><i className="write" />{t('writeRequests')}</span><span><i className="other" />{t('otherRequests')}</span></div>
       <div className="statistics-timeline statistics-request-timeline" role="img" aria-label={t('statisticsTimeSeries')}>
         {items.map((item, index) => {
           const read = item.read_count || 0, write = item.write_count || 0, other = item.other_count || 0
           const total = item.total_count ?? read + write + other
+          const hasRequests = read + write + other > 0
           const label = item.from ? formatter.format(new Date(item.from)) : String(index + 1)
           return <div className="statistics-time-slot" key={`${item.from ?? index}`} title={`${label}–${item.to ? formatter.format(new Date(item.to)) : ''} · ${numberText(total, language)} ${t('statisticsRequests')}\n${t('readRequests')}: ${numberText(read, language)} · ${t('writeRequests')}: ${numberText(write, language)} · ${t('otherRequests')}: ${numberText(other, language)}`}>
-            <div className="statistics-time-bar"><i className="read" style={{ height: `${read / max * 100}%` }} /><i className="write" style={{ height: `${write / max * 100}%` }} /><i className="other" style={{ height: `${other / max * 100}%` }} /></div>
-            {(index === 0 || index === items.length - 1 || index % Math.max(1, Math.ceil(items.length / 6)) === 0) && <small>{label}</small>}
+            <div className="statistics-time-bar">{hasRequests ? <><i className="read" style={{ height: `${read / max * 100}%` }} /><i className="write" style={{ height: `${write / max * 100}%` }} /><i className="other" style={{ height: `${other / max * 100}%` }} /></> : <i className="request-zero" />}</div>
           </div>
         })}
       </div>
+      <TimelineAxis labels={axisLabels} />
     </> : <p className="statistics-empty">{loading ? t('statisticsLoading') : t('statisticsNoData')}</p>}
   </section>
 }
 
-function DualSeriesTimeline({ title, description, items, loading, t, language, series }: { title: string; description: string; items: StatisticsBucket[]; loading: boolean; t: (key: MessageKey) => string; language: Language; series: { key: 'known_count' | 'other_count' | 'actor_count' | 'host_count'; label: string; color: string }[] }) {
+function BurstTimeline({ items, loading, language, range, t }: { items: BurstChartBucket[]; loading: boolean; language: Language; range: TimeRange; t: (key: MessageKey) => string }) {
+  const max = Math.max(1, ...items.map((item) => item.burst_count))
+  const total = items.reduce((sum, item) => sum + item.burst_count, 0)
+  const formatter = new Intl.DateTimeFormat(language === 'de' ? 'de-DE' : 'en-US', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })
+  const axisLabels = timelineAxisLabels(range, items[0]?.from, items[items.length - 1]?.to, language)
+  return <section className="panel statistics-timeline-panel">
+    <div className="panel-header"><div><h2>{t('statisticsBursts')}</h2><p>{t('burstTrafficDescription')}</p></div>{loading && <span className="statistics-loading-inline"><span className="loading-spinner" />{t('statisticsLoading')}</span>}</div>
+    {items.length ? <>
+      <div className="statistics-chart-total"><span>{t('statisticsGroupTotal')}</span><strong>{numberText(total, language)}</strong></div>
+      <div className="statistics-legend statistics-request-legend"><span><i className="burst" />{t('statisticsBursts')}</span></div>
+      <div className="statistics-timeline statistics-request-timeline" role="img" aria-label={t('statisticsBursts')}>
+        {items.map((item) => {
+          const label = formatter.format(new Date(item.from))
+          const height = item.burst_count ? Math.max(1.2, item.burst_count / max * 100) : 0
+          return <div className="statistics-time-slot" key={item.from} title={`${label}–${formatter.format(new Date(item.to))} · ${numberText(item.burst_count, language)} ${t('statisticsBursts')}`}>
+            <div className="statistics-time-bar"><i className={item.burst_count ? 'burst' : 'burst-zero'} style={{ height: `${height}%` }} /></div>
+          </div>
+        })}
+      </div>
+      <TimelineAxis labels={axisLabels} />
+    </> : <p className="statistics-empty">{loading ? t('statisticsLoading') : t('statisticsNoData')}</p>}
+  </section>
+}
+
+function DualSeriesTimeline({ title, description, items, loading, t, language, range, series }: { title: string; description: string; items: StatisticsBucket[]; loading: boolean; t: (key: MessageKey) => string; language: Language; range: TimeRange; series: { key: 'known_count' | 'other_count' | 'actor_count' | 'host_count'; label: string; color: string }[] }) {
   const max = Math.max(1, ...items.map((item) => series.reduce((sum, entry) => sum + (item[entry.key] ?? 0), 0)))
   const formatter = new Intl.DateTimeFormat(language === 'de' ? 'de-DE' : 'en-US', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })
-  return <section className="panel statistics-timeline-panel">
+  const axisLabels = timelineAxisLabels(range, items[0]?.from, items[items.length - 1]?.to, language)
+  return <section className="panel statistics-timeline-panel statistics-dual-series-panel">
     <div className="panel-header"><div><h2>{title}</h2><p>{description}</p></div>{loading && <span className="statistics-loading-inline"><span className="loading-spinner" />{t('statisticsLoading')}</span>}</div>
     {items.length ? <>
       <div className="statistics-legend">{series.map((entry) => <span key={entry.key}><i className={entry.color} />{entry.label}</span>)}</div>
       <div className="statistics-timeline statistics-dual-timeline" role="img" aria-label={title}>
-        {items.map((item, index) => {
+        {items.map((item) => {
           const values = series.map((entry) => ({ ...entry, count: item[entry.key] ?? 0 }))
           const total = values.reduce((sum, entry) => sum + entry.count, 0)
           const label = formatter.format(new Date(item.from))
           return <div className="statistics-time-slot" key={item.from} title={`${label}–${formatter.format(new Date(item.to))} · ${values.map((entry) => `${entry.label}: ${numberText(entry.count, language)}`).join(' · ')}`}>
-            <div className="statistics-time-bar">{values.map((entry) => <i key={entry.key} className={entry.color} style={{ height: `${entry.count / max * 100}%` }} />)}</div>
-            {(index === 0 || index === items.length - 1 || index % Math.max(1, Math.ceil(items.length / 6)) === 0) && <small>{label}</small>}
+            <div className="statistics-time-bar">{total > 0 ? values.map((entry) => <i key={entry.key} className={entry.color} style={{ height: `${entry.count / max * 100}%` }} />) : <i className="dual-zero" />}</div>
             <span className="statistics-sr-only">{numberText(total, language)}</span>
           </div>
         })}
       </div>
+      <TimelineAxis labels={axisLabels} />
     </> : <p className="statistics-empty">{t('statisticsNoData')}</p>}
   </section>
 }
@@ -1435,27 +1473,30 @@ function WeekdayHourHeatmap({ items, loading, error, language, t }: { items: Sta
   </section>
 }
 
-function StatusTrendTimeline({ items, loading, error, language, t }: { items: StatisticsInsights['status_trend']; loading: boolean; error: boolean; language: Language; t: (key: MessageKey) => string }) {
+function StatusTrendTimeline({ items, loading, error, language, range, t }: { items: StatisticsInsights['status_trend']; loading: boolean; error: boolean; language: Language; range: TimeRange; t: (key: MessageKey) => string }) {
   const keys = ['status_1xx', 'status_2xx', 'status_3xx', 'status_4xx', 'status_5xx'] as const
   const labels = ['status1xx', 'status2xx', 'status3xx', 'status4xx', 'status5xx'] as const
   const colors = ['status-1xx', 'status-2xx', 'status-3xx', 'status-4xx', 'status-5xx'] as const
   const max = Math.max(1, ...items.map((item) => keys.reduce((sum, key) => sum + (item[key] || 0), 0)))
   const formatter = new Intl.DateTimeFormat(language === 'de' ? 'de-DE' : 'en-US', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  const axisLabels = timelineAxisLabels(range, items[0]?.from_utc, items[items.length - 1]?.to_utc, language)
   return <section className="panel statistics-timeline-panel statistics-status-trend-panel">
     <div className="panel-header"><div><h2>{t('statisticsStatusTrend')}</h2><p>{t('statisticsStatusTrendNote')}</p></div>{loading && <span className="statistics-loading-inline"><span className="loading-spinner" />{t('statisticsLoading')}</span>}</div>
     {error ? <p className="statistics-empty">{t('apiUnavailable')}</p> : items.length ? <><div className="statistics-legend">{keys.map((key, index) => <span key={key}><i className={colors[index]} />{t(labels[index])}</span>)}</div><div className="statistics-timeline statistics-status-trend">
-      {items.map((item, index) => {
+      {items.map((item) => {
         const total = keys.reduce((sum, key) => sum + (item[key] || 0), 0)
         const start = new Date(item.from_utc)
         const end = new Date(item.to_utc)
-        const label = formatter.format(start)
         return <div className="statistics-time-slot" key={item.bucket_index} title={`${formatter.format(start)} – ${formatter.format(end)} · ${numberText(total, language)} ${t('statisticsRequests')}\n${keys.map((key, i) => `${t(labels[i])}: ${numberText(item[key], language)}`).join(' · ')}`}>
           <div className="statistics-time-bar">{keys.map((key, i) => <i key={key} className={colors[i]} style={{ height: `${(item[key] || 0) / max * 100}%` }} />)}</div>
-          {(index === 0 || index === Math.floor((items.length - 1) / 2) || index === items.length - 1) && <small>{label}</small>}
         </div>
       })}
-    </div></> : <p className="statistics-empty">{loading ? t('statisticsLoading') : t('statisticsNoData')}</p>}
+    </div><TimelineAxis labels={axisLabels} /></> : <p className="statistics-empty">{loading ? t('statisticsLoading') : t('statisticsNoData')}</p>}
   </section>
+}
+
+function TimelineAxis({ labels }: { labels: string[] }) {
+  return <div className="statistics-x-axis" aria-hidden="true">{labels.map((label, index) => <span key={index}>{label}</span>)}</div>
 }
 
 function StatisticsBarsPanel({ title, description, items, loading, error, t, language }: { title: string; description?: string; items: StatisticsItem[] | null; loading: boolean; error: boolean; t: (key: MessageKey) => string; language: Language }) {
