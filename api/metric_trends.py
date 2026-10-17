@@ -38,12 +38,21 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
         if not term:
             request_conditions.append("0")
         elif field is None:
-            request_conditions.append("(a.ip LIKE ? OR COALESCE(a.city,'') LIKE ? OR COALESCE(a.provider,'') LIKE ? OR COALESCE(a.asn,'') LIKE ?)")
-            request_params.extend([f"%{term}%"] * 4)
-        elif field in {"ip", "country", "city", "provider", "asn"}:
-            column = {"ip": "a.ip", "country": "a.country", "city": "a.city", "provider": "a.provider", "asn": "a.asn"}[field]
+            request_conditions.append("(a.ip LIKE ? OR COALESCE(a.city,'') LIKE ? OR COALESCE(a.provider,'') LIKE ? OR COALESCE(a.asn,'') LIKE ? OR a.first_time LIKE ? OR a.last_time LIKE ? OR CAST((SELECT COUNT(*) FROM request AS actor_requests WHERE actor_requests.actor_id=a.actor_id AND actor_requests.start_utc >= ? AND actor_requests.start_utc < ?) AS TEXT) LIKE ?)")
+            request_params.extend([f"%{term}%"] * 6 + [start, end, f"%{term}%"])
+        elif field in {"ip", "country", "city", "provider", "asn", "first_seen", "last_seen"}:
+            column = {"ip": "a.ip", "country": "a.country", "city": "a.city", "provider": "a.provider", "asn": "a.asn", "first_seen": "a.first_time", "last_seen": "a.last_time"}[field]
             request_conditions.append(f"COALESCE({column},'') LIKE ?")
             request_params.append(f"%{term}%")
+        elif field == "location":
+            request_conditions.append("(COALESCE(a.country,'') LIKE ? OR COALESCE(a.city,'') LIKE ? OR COALESCE(a.provider,'') LIKE ? OR COALESCE(a.asn,'') LIKE ?)")
+            request_params.extend([f"%{term}%"] * 4)
+        elif field == "actor":
+            request_conditions.append("(a.ip LIKE ? OR COALESCE(a.country,'') LIKE ? OR COALESCE(a.city,'') LIKE ? OR COALESCE(a.provider,'') LIKE ? OR COALESCE(a.asn,'') LIKE ?)")
+            request_params.extend([f"%{term}%"] * 5)
+        elif field == "requests":
+            request_conditions.append("CAST((SELECT COUNT(*) FROM request AS actor_requests WHERE actor_requests.actor_id=a.actor_id AND actor_requests.start_utc >= ? AND actor_requests.start_utc < ?) AS TEXT) LIKE ?")
+            request_params.extend([start, end, f"%{term}%"])
         elif field == "host":
             request_conditions.append("EXISTS (SELECT 1 FROM host AS sh WHERE sh.host_id=r.host_id AND sh.name LIKE ?)")
             request_params.append(f"%{term}%")
@@ -58,16 +67,47 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
         else:
             request_conditions.append("0")
     if page == "hosts" and search:
-        request_conditions.append("h.name LIKE ?")
-        request_params.append(f"%{search}%")
+        field, term = parse_search(search)
+        host_columns = {
+            "host": ["hh.name"],
+            "requests": ["CAST(COUNT(*) AS TEXT)"],
+            "read_count": ["CAST(SUM(CASE WHEN UPPER(COALESCE(hr.request_method,'')) IN ('GET','HEAD','OPTIONS') THEN 1 ELSE 0 END) AS TEXT)"],
+            "write_count": ["CAST(SUM(CASE WHEN UPPER(COALESCE(hr.request_method,'')) IN ('POST','PUT','PATCH','DELETE') THEN 1 ELSE 0 END) AS TEXT)"],
+            "other_count": ["CAST(SUM(CASE WHEN UPPER(COALESCE(hr.request_method,'')) NOT IN ('GET','HEAD','OPTIONS','POST','PUT','PATCH','DELETE') THEN 1 ELSE 0 END) AS TEXT)"],
+            "http_count": ["CAST(SUM(CASE WHEN LOWER(COALESCE(hr.request_scheme,''))='http' THEN 1 ELSE 0 END) AS TEXT)"],
+            "https_count": ["CAST(SUM(CASE WHEN LOWER(COALESCE(hr.request_scheme,''))='https' THEN 1 ELSE 0 END) AS TEXT)"],
+            "https_share": ["CAST(SUM(CASE WHEN LOWER(COALESCE(hr.request_scheme,''))='https' THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0) AS TEXT)"],
+        }
+        chosen = [column for columns in host_columns.values() for column in columns] if field is None else host_columns.get(field, [])
+        if term and chosen:
+            request_conditions.append("r.host_id IN (SELECT hr.host_id FROM request AS hr JOIN host AS hh ON hh.host_id=hr.host_id WHERE hr.start_utc >= ? AND hr.start_utc < ? GROUP BY hr.host_id, hh.name HAVING (" + " OR ".join(f"{column} LIKE ?" for column in chosen) + "))")
+            request_params.extend([start, end, *([f"%{term}%"] * len(chosen))])
+        else:
+            request_conditions.append("0")
     known_match = known_host_match_sql("h.name")
     if page == "hosts" and known == "own":
         request_conditions.append(known_match)
     elif page == "hosts" and known == "foreign":
         request_conditions.append(f"NOT {known_match}")
     if page == "categories" and search:
-        request_conditions.append("EXISTS (SELECT 1 FROM request_category AS xrc JOIN category AS xc ON xc.category_id=xrc.category_id WHERE xrc.request_id=r.request_id AND xc.category_name LIKE ?)")
-        request_params.append(f"%{search}%")
+        field, term = parse_search(search)
+        category_columns = {
+            "category": ["xc.category_name"],
+            "requests": ["CAST(COUNT(*) AS TEXT)"],
+            "read_count": ["CAST(SUM(CASE WHEN UPPER(COALESCE(cr.request_method,'')) IN ('GET','HEAD','OPTIONS') THEN 1 ELSE 0 END) AS TEXT)"],
+            "write_count": ["CAST(SUM(CASE WHEN UPPER(COALESCE(cr.request_method,'')) IN ('POST','PUT','PATCH','DELETE') THEN 1 ELSE 0 END) AS TEXT)"],
+            "other_count": ["CAST(SUM(CASE WHEN UPPER(COALESCE(cr.request_method,'')) NOT IN ('GET','HEAD','OPTIONS','POST','PUT','PATCH','DELETE') THEN 1 ELSE 0 END) AS TEXT)"],
+            "http_count": ["CAST(SUM(CASE WHEN LOWER(COALESCE(cr.request_scheme,''))='http' THEN 1 ELSE 0 END) AS TEXT)"],
+            "https_count": ["CAST(SUM(CASE WHEN LOWER(COALESCE(cr.request_scheme,''))='https' THEN 1 ELSE 0 END) AS TEXT)"],
+            "https_share": ["CAST(SUM(CASE WHEN LOWER(COALESCE(cr.request_scheme,''))='https' THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0) AS TEXT)"],
+            "traffic_share": ["CAST(COUNT(*) AS TEXT)"],
+        }
+        chosen = [column for columns in category_columns.values() for column in columns] if field is None else category_columns.get(field, [])
+        if term and chosen:
+            request_conditions.append("EXISTS (SELECT 1 FROM request_category AS xrc WHERE xrc.request_id=r.request_id AND xrc.category_id IN (SELECT xc.category_id FROM request AS cr JOIN request_category AS crc ON crc.request_id=cr.request_id JOIN category AS xc ON xc.category_id=crc.category_id WHERE cr.start_utc >= ? AND cr.start_utc < ? GROUP BY xc.category_id, xc.category_name HAVING (" + " OR ".join(f"{column} LIKE ?" for column in chosen) + "))) ")
+            request_params.extend([start, end, *([f"%{term}%"] * len(chosen))])
+        else:
+            request_conditions.append("0")
     if page == "requests":
         if incident_id is not None:
             request_conditions.append(incident_request_condition())
@@ -102,8 +142,26 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
             if not term:
                 request_conditions.append("0")
             elif field is None:
-                request_conditions.append("(a.ip LIKE ? OR COALESCE(h.name,'') LIKE ? OR COALESCE(a.country,'') LIKE ? OR COALESCE(a.city,'') LIKE ? OR COALESCE(a.provider,'') LIKE ? OR COALESCE(a.asn,'') LIKE ? OR COALESCE(r.request_path,'') LIKE ?)")
-                request_params.extend([f"%{term}%"] * 7)
+                request_conditions.append("(a.ip LIKE ? OR COALESCE(h.name,'') LIKE ? OR COALESCE(a.country,'') LIKE ? OR COALESCE(a.city,'') LIKE ? OR COALESCE(a.provider,'') LIKE ? OR COALESCE(a.asn,'') LIKE ? OR COALESCE(r.request_path,'') LIKE ? OR COALESCE(r.request_method,'') LIKE ? OR COALESCE(r.request_scheme,'') LIKE ? OR CAST(r.downstream_status AS TEXT) LIKE ? OR COALESCE(r.user_agent,'') LIKE ? OR r.start_utc LIKE ? OR CAST(r.duration AS TEXT) LIKE ? OR CAST(r.downstream_content_size AS TEXT) LIKE ? OR CAST((SELECT br.burst_id FROM burst_request AS br WHERE br.request_id=r.request_id LIMIT 1) AS TEXT) LIKE ? OR EXISTS (SELECT 1 FROM request_category AS src JOIN category AS sc ON sc.category_id=src.category_id WHERE src.request_id=r.request_id AND sc.category_name LIKE ?))")
+                request_params.extend([f"%{term}%"] * 16)
+            elif field == "burst_id":
+                request_conditions.append("CAST((SELECT br.burst_id FROM burst_request AS br WHERE br.request_id=r.request_id LIMIT 1) AS TEXT) LIKE ?")
+                request_params.append(f"%{term}%")
+            elif field == "incident_id":
+                request_conditions.append(incident_request_condition())
+                request_params.extend(incident_request_parameters(int(term)) if term.isdigit() else [0])
+            elif field in {"location", "actor"}:
+                request_conditions.append("(a.country LIKE ? OR a.city LIKE ? OR a.provider LIKE ? OR a.asn LIKE ?)")
+                request_params.extend([f"%{term}%"] * 4)
+            elif field == "time":
+                request_conditions.append("r.start_utc LIKE ?")
+                request_params.append(f"%{term}%")
+            elif field == "duration":
+                request_conditions.append("CAST(r.duration AS TEXT) LIKE ?")
+                request_params.append(f"%{term}%")
+            elif field == "response_size":
+                request_conditions.append("CAST(r.downstream_content_size AS TEXT) LIKE ?")
+                request_params.append(f"%{term}%")
             elif field == "category":
                 request_conditions.append("EXISTS (SELECT 1 FROM request_category AS src JOIN category AS sc ON sc.category_id=src.category_id WHERE src.request_id=r.request_id AND sc.category_name LIKE ?)")
                 request_params.append(f"%{term}%")
@@ -154,12 +212,30 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
             if not term:
                 burst_conditions.append("0")
             elif field is None:
-                burst_conditions.append("(CAST(b.burst_id AS TEXT) LIKE ? OR a.ip LIKE ? OR COALESCE(a.provider,'') LIKE ? OR COALESCE(a.asn,'') LIKE ? OR COALESCE(a.city,'') LIKE ?)")
-                burst_params.extend([f"%{term}%"] * 5)
+                burst_conditions.append("(CAST(b.burst_id AS TEXT) LIKE ? OR a.ip LIKE ? OR COALESCE(a.provider,'') LIKE ? OR COALESCE(a.asn,'') LIKE ? OR COALESCE(a.city,'') LIKE ? OR b.start_time LIKE ? OR b.end_time LIKE ? OR CAST((julianday(b.end_time)-julianday(b.start_time))*86400 AS TEXT) LIKE ? OR CAST(b.read_count+b.write_count+b.other_count AS TEXT) LIKE ? OR CAST(b.avg_count AS TEXT) LIKE ?)")
+                burst_params.extend([f"%{term}%"] * 10)
             elif field in {"ip", "host", "country", "city", "provider", "asn"}:
                 column = {"ip": "a.ip", "host": "h.name", "country": "a.country", "city": "a.city", "provider": "a.provider", "asn": "a.asn"}[field]
                 burst_conditions.append(f"COALESCE({column},'') LIKE ?")
                 burst_params.append(f"%{term}%")
+            elif field in {"id", "burst_id"}:
+                burst_conditions.append("CAST(b.burst_id AS TEXT) LIKE ?")
+                burst_params.append(f"%{term}%")
+            elif field == "time":
+                burst_conditions.append("b.start_time LIKE ?")
+                burst_params.append(f"%{term}%")
+            elif field == "duration":
+                burst_conditions.append("CAST((julianday(b.end_time)-julianday(b.start_time))*86400 AS TEXT) LIKE ?")
+                burst_params.append(f"%{term}%")
+            elif field == "requests":
+                burst_conditions.append("CAST(b.read_count+b.write_count+b.other_count AS TEXT) LIKE ?")
+                burst_params.append(f"%{term}%")
+            elif field == "avg_count":
+                burst_conditions.append("CAST(b.avg_count AS TEXT) LIKE ?")
+                burst_params.append(f"%{term}%")
+            elif field == "location":
+                burst_conditions.append("(a.country LIKE ? OR a.city LIKE ? OR a.provider LIKE ? OR a.asn LIKE ?)")
+                burst_params.extend([f"%{term}%"] * 4)
             else:
                 burst_conditions.append("0")
 
@@ -199,7 +275,14 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
             COALESCE((SELECT CAST(COUNT(*) AS REAL)/NULLIF(COUNT(DISTINCT actor_id),0) FROM filtered_requests),0) AS avg_requests_per_actor
     """
     row = database.query(sql, [*request_params, *burst_params, start, end])[0]
-    return {key: float(value or 0) for key, value in row.items()}
+    result = {key: float(value or 0) for key, value in row.items()}
+    if page == "dashboard":
+        incident_row = database.query(
+            "SELECT COUNT(*) AS incident_count FROM incident WHERE last_seen >= ? AND first_seen < ?",
+            [start, end],
+        )[0]
+        result["incident_count"] = float(incident_row["incident_count"] or 0)
+    return result
 
 
 @router.get("/metric_trends")

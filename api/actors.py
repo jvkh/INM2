@@ -33,14 +33,29 @@ def _append_actor_search(
     if not term:
         conditions.append("0")
     elif field is None:
-        columns = ["a.ip", "COALESCE(a.city, '')", "COALESCE(a.provider, '')", "COALESCE(a.asn, '')"]
+        columns = ["a.ip", "COALESCE(a.city, '')", "COALESCE(a.provider, '')", "COALESCE(a.asn, '')", "a.first_time", "a.last_time",
+                   "CAST((SELECT COUNT(*) FROM request AS rr WHERE rr.actor_id = a.actor_id AND rr.start_utc >= ? AND rr.start_utc < ?) AS TEXT)",
+                   "CAST((SELECT COUNT(*) FROM burst AS ab WHERE ab.actor_id = a.actor_id) AS TEXT)"]
         if include_country:
             columns.append("COALESCE(a.country, '')")
         conditions.append("(" + " OR ".join(f"{column} LIKE ?" for column in columns) + ")")
-        parameters.extend([f"%{term}%"] * len(columns))
-    elif field in {"ip", "country", "city", "provider", "asn"}:
-        column = {"ip": "a.ip", "country": "a.country", "city": "a.city", "provider": "a.provider", "asn": "a.asn"}[field]
+        # The in-range request count has two date parameters followed by its search term.
+        parameters.extend([f"%{term}%"] * 6 + [start, end, f"%{term}%", f"%{term}%"] + ([f"%{term}%"] if include_country else []))
+    elif field == "actor":
+        conditions.append("(a.ip LIKE ? OR COALESCE(a.provider,'') LIKE ? OR COALESCE(a.asn,'') LIKE ? OR COALESCE(a.country,'') LIKE ? OR COALESCE(a.city,'') LIKE ?)")
+        parameters.extend([f"%{term}%"] * 5)
+    elif field in {"ip", "country", "city", "provider", "asn", "first_seen", "last_seen"}:
+        column = {"ip": "a.ip", "country": "a.country", "city": "a.city", "provider": "a.provider", "asn": "a.asn", "first_seen": "a.first_time", "last_seen": "a.last_time"}[field]
         conditions.append(f"COALESCE({column}, '') LIKE ?")
+        parameters.append(f"%{term}%")
+    elif field == "location":
+        conditions.append("(COALESCE(a.country, '') LIKE ? OR COALESCE(a.city, '') LIKE ? OR COALESCE(a.provider, '') LIKE ? OR COALESCE(a.asn, '') LIKE ?)")
+        parameters.extend([f"%{term}%"] * 4)
+    elif field == "requests":
+        conditions.append("CAST((SELECT COUNT(*) FROM request AS rr WHERE rr.actor_id = a.actor_id AND rr.start_utc >= ? AND rr.start_utc < ?) AS TEXT) LIKE ?")
+        parameters.extend([start, end, f"%{term}%"])
+    elif field == "bursts":
+        conditions.append("CAST((SELECT COUNT(*) FROM burst AS ab WHERE ab.actor_id = a.actor_id) AS TEXT) LIKE ?")
         parameters.append(f"%{term}%")
     elif field in {"host", "path", "category", "method", "status", "scheme", "user_agent"}:
         if field == "host":

@@ -33,6 +33,9 @@ class EnvConfig:
         "LOW_SLOW_SCAN_MIN_PATHS": "12",
         "LOW_SLOW_SCAN_MIN_HOSTS": "2",
         "LOW_SLOW_SCAN_MIN_SPAN_SECONDS": "300",
+        "UNKNOWN_HOST_404_WINDOW_DAYS": "7",
+        "UNKNOWN_HOST_404_MIN_REQUESTS": "50",
+        "UNKNOWN_HOST_404_MIN_HOSTS": "3",
         "GEOLITE_CITY_DB": "/geoip/GeoLite2-City.mmdb",
         "GEOLITE_ASN_DB": "/geoip/GeoLite2-ASN.mmdb",
         "IGNORE_REQUEST_ROUTES": "",
@@ -132,6 +135,18 @@ class EnvConfig:
     @property
     def low_slow_scan_min_span_seconds(self) -> int:
         return self.get_int("LOW_SLOW_SCAN_MIN_SPAN_SECONDS")
+
+    @property
+    def unknown_host_404_window_days(self) -> int:
+        return self.get_int("UNKNOWN_HOST_404_WINDOW_DAYS")
+
+    @property
+    def unknown_host_404_min_requests(self) -> int:
+        return self.get_int("UNKNOWN_HOST_404_MIN_REQUESTS")
+
+    @property
+    def unknown_host_404_min_hosts(self) -> int:
+        return self.get_int("UNKNOWN_HOST_404_MIN_HOSTS")
 
     @property
     def ignore_request_routes(self) -> list[str]:

@@ -129,7 +129,28 @@ def get_bursts(
         if not term:
             conditions.append("0")
         elif field is None:
-            conditions.append("(CAST(b.burst_id AS TEXT) LIKE ? OR a.ip LIKE ? OR COALESCE(a.provider, '') LIKE ? OR COALESCE(a.asn, '') LIKE ? OR COALESCE(a.city, '') LIKE ?)")
+            conditions.append("(CAST(b.burst_id AS TEXT) LIKE ? OR a.ip LIKE ? OR COALESCE(a.provider, '') LIKE ? OR COALESCE(a.asn, '') LIKE ? OR COALESCE(a.country, '') LIKE ? OR COALESCE(a.city, '') LIKE ? OR h.name LIKE ? OR b.start_time LIKE ? OR CAST((julianday(b.end_time) - julianday(b.start_time)) * 86400 AS TEXT) LIKE ? OR CAST(b.read_count + b.write_count + b.other_count AS TEXT) LIKE ? OR CAST(b.avg_count AS TEXT) LIKE ?)")
+            parameters.extend([f"%{term}%"] * 11)
+        elif field in {"id", "burst_id"}:
+            conditions.append("CAST(b.burst_id AS TEXT) LIKE ?")
+            parameters.append(f"%{term}%")
+        elif field == "time":
+            conditions.append("b.start_time LIKE ?")
+            parameters.append(f"%{term}%")
+        elif field == "duration":
+            conditions.append("CAST((julianday(b.end_time) - julianday(b.start_time)) * 86400 AS TEXT) LIKE ?")
+            parameters.append(f"%{term}%")
+        elif field == "requests":
+            conditions.append("CAST(b.read_count + b.write_count + b.other_count AS TEXT) LIKE ?")
+            parameters.append(f"%{term}%")
+        elif field == "avg_count":
+            conditions.append("CAST(b.avg_count AS TEXT) LIKE ?")
+            parameters.append(f"%{term}%")
+        elif field == "location":
+            conditions.append("(a.country LIKE ? OR a.city LIKE ? OR a.provider LIKE ? OR a.asn LIKE ?)")
+            parameters.extend([f"%{term}%"] * 4)
+        elif field == "actor":
+            conditions.append("(a.ip LIKE ? OR COALESCE(a.provider,'') LIKE ? OR COALESCE(a.asn,'') LIKE ? OR COALESCE(a.country,'') LIKE ? OR COALESCE(a.city,'') LIKE ?)")
             parameters.extend([f"%{term}%"] * 5)
         elif field in {"ip", "host", "country", "city", "provider", "asn"}:
             column = {"ip": "a.ip", "host": "h.name", "country": "a.country", "city": "a.city", "provider": "a.provider", "asn": "a.asn"}[field]

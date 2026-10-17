@@ -101,6 +101,10 @@ translate() {
       printf '%s' "$text" ;;
     'Mindestüberschneidung (Prozent)') printf 'Minimum overlap (percent)' ;;
     'Mindestens verstrichene Zeit (Sekunden; 300 = 5 Minuten)') printf 'Minimum elapsed time (seconds; 300 = 5 minutes)' ;;
+    'Zeitfenster für 404-Anfragen an unbekannte Hosts (Tage)') printf 'Window for 404 requests to unknown hosts (days)' ;;
+    'Mindestzahl 404-Requests an unbekannte Hosts') printf 'Minimum 404 requests to unknown hosts' ;;
+    'Mindestzahl verschiedener unbekannter Hosts') printf 'Minimum distinct unknown hosts' ;;
+    'Wiederholte 404-Anfragen an unbekannte Hosts desselben Akteurs und User-Agents werden zusammengefasst.') printf 'Repeated 404 requests to unknown hosts from the same actor and User-Agent are grouped.' ;;
     'Akteure nach wie vielen inaktiven Tagen bereinigen?') printf 'Remove actors after how many inactive days?' ;;
     'Wie oft der Collector neue Logzeilen verarbeitet.') printf 'How often the collector processes new log lines.' ;;
     'Zeichen am Dateiende, die ausgespart werden, damit keine unvollständige Logzeile importiert wird.') printf 'Characters skipped at the end of a file to avoid importing an incomplete log line.' ;;
@@ -942,6 +946,10 @@ menu_detection() {
   load_default LOW_SLOW_SCAN_MIN_HOSTS 2; prompt_positive_integer 'Mindestens verschiedene Hosts' "$REPLY"; set_update LOW_SLOW_SCAN_MIN_HOSTS "$REPLY"
   explain 'Erster bis letzter passender Request müssen mindestens so weit auseinanderliegen.'
   load_default LOW_SLOW_SCAN_MIN_SPAN_SECONDS 300; prompt_nonnegative_integer 'Mindestens verstrichene Zeit (Sekunden; 300 = 5 Minuten)' "$REPLY"; set_update LOW_SLOW_SCAN_MIN_SPAN_SECONDS "$REPLY"
+  explain 'Wiederholte 404-Anfragen an unbekannte Hosts desselben Akteurs und User-Agents werden zusammengefasst.'
+  load_default UNKNOWN_HOST_404_WINDOW_DAYS 7; prompt_positive_integer 'Zeitfenster für 404-Anfragen an unbekannte Hosts (Tage)' "$REPLY"; set_update UNKNOWN_HOST_404_WINDOW_DAYS "$REPLY"
+  load_default UNKNOWN_HOST_404_MIN_REQUESTS 50; prompt_positive_integer 'Mindestzahl 404-Requests an unbekannte Hosts' "$REPLY"; set_update UNKNOWN_HOST_404_MIN_REQUESTS "$REPLY"
+  load_default UNKNOWN_HOST_404_MIN_HOSTS 3; prompt_positive_integer 'Mindestzahl verschiedener unbekannter Hosts' "$REPLY"; set_update UNKNOWN_HOST_404_MIN_HOSTS "$REPLY"
   if ! save_group; then return 1; fi
 }
 

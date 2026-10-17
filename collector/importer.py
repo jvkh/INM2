@@ -104,12 +104,19 @@ class Importer:
         self.low_slow_scan_min_paths = config.low_slow_scan_min_paths
         self.low_slow_scan_min_hosts = config.low_slow_scan_min_hosts
         self.low_slow_scan_min_span_seconds = config.low_slow_scan_min_span_seconds
+        self.unknown_host_404_window_seconds = config.unknown_host_404_window_days * 86400
+        self.unknown_host_404_min_requests = config.unknown_host_404_min_requests
+        self.unknown_host_404_min_hosts = config.unknown_host_404_min_hosts
         if self.low_slow_scan_window_seconds < 1:
             raise ValueError("LOW_SLOW_SCAN_WINDOW_SECONDS must be greater than zero")
         if self.low_slow_scan_min_paths < 1 or self.low_slow_scan_min_hosts < 1:
             raise ValueError("LOW_SLOW_SCAN_MIN_PATHS and LOW_SLOW_SCAN_MIN_HOSTS must be at least 1")
         if self.low_slow_scan_min_span_seconds < 0:
             raise ValueError("LOW_SLOW_SCAN_MIN_SPAN_SECONDS must not be negative")
+        if self.unknown_host_404_window_seconds < 1:
+            raise ValueError("UNKNOWN_HOST_404_WINDOW_DAYS must be greater than zero")
+        if self.unknown_host_404_min_requests < 1 or self.unknown_host_404_min_hosts < 1:
+            raise ValueError("UNKNOWN_HOST_404_MIN_REQUESTS and UNKNOWN_HOST_404_MIN_HOSTS must be at least 1")
         self.geolocator = GeoLocator(config)
         self._pending_burst_watermarks: dict[tuple[int, int | None], int] = {}
         self._pending_burst_latest: dict[tuple[int, int | None], str | None] = {}
@@ -490,13 +497,14 @@ class Importer:
         self._pending_low_slow_checks = {}
         for actor_id, event_time in low_slow_checks.items():
             self._detect_low_slow_path_scan(actor_id, event_time)
+            self._detect_unknown_host_404_activity(actor_id, event_time)
 
     def _backfill_behavior_incidents_once(self) -> None:
         """Evaluate the latest stored activity window once after upgrading."""
         rows = self.database.query(
             "SELECT value FROM settings WHERE group_name = 'collector' AND name = 'incident_detection_version'"
         )
-        if rows and rows[0]["value"] == "3":
+        if rows and rows[0]["value"] == "4":
             self._backfill_incident_metrics_once()
             return
         activity = self.database.query(
@@ -523,11 +531,59 @@ class Importer:
             except (AttributeError, ValueError):
                 continue
             self._detect_low_slow_path_scan(item["actor_id"], event_time)
+        unknown_host_404_activity = self.database.query(
+            """SELECT r.actor_id, MAX(r.start_utc) AS last_seen
+               FROM request AS r
+               LEFT JOIN host AS h ON h.host_id = r.host_id
+               WHERE r.downstream_status = 404 AND COALESCE(h.known, 0) = 0
+                 AND r.user_agent IS NOT NULL AND trim(r.user_agent) <> ''
+               GROUP BY r.actor_id"""
+        )
+        for item in unknown_host_404_activity:
+            try:
+                event_time = datetime.fromisoformat(item["last_seen"].replace("Z", "+00:00"))
+            except (AttributeError, ValueError):
+                continue
+            self._detect_unknown_host_404_activity(item["actor_id"], event_time)
         self.database.execute(
-            "INSERT INTO settings (group_name, name, value) VALUES ('collector', 'incident_detection_version', '3') "
+            "INSERT INTO settings (group_name, name, value) VALUES ('collector', 'incident_detection_version', '4') "
             "ON CONFLICT(group_name, name) DO UPDATE SET value = excluded.value"
         )
         self._backfill_incident_metrics_once()
+
+    def _detect_unknown_host_404_activity(self, actor_id: int, event_time: datetime) -> None:
+        """Group repeated 404 probes to unknown hosts by actor and User-Agent."""
+        window_start = event_time - timedelta(seconds=self.unknown_host_404_window_seconds)
+        start_text = window_start.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+        end_text = event_time.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+        rows = self.database.query(
+            """SELECT r.request_id, r.start_utc, r.request_path, r.user_agent,
+                      r.host_id, h.name AS host_name
+               FROM request AS r
+               LEFT JOIN host AS h ON h.host_id = r.host_id
+               WHERE r.actor_id = ? AND r.start_utc >= ? AND r.start_utc <= ?
+                 AND r.downstream_status = 404 AND COALESCE(h.known, 0) = 0
+                 AND r.user_agent IS NOT NULL AND trim(r.user_agent) <> ''
+               ORDER BY r.user_agent COLLATE NOCASE, r.start_utc, r.request_id""",
+            (actor_id, start_text, end_text),
+        )
+        by_user_agent: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            by_user_agent.setdefault(str(row["user_agent"]).strip(), []).append(row)
+        for user_agent, matching in by_user_agent.items():
+            hosts = {str(row["host_name"]).casefold() for row in matching if row["host_name"]}
+            if len(matching) < self.unknown_host_404_min_requests or len(hosts) < self.unknown_host_404_min_hosts:
+                continue
+            host_names = sorted({str(row["host_name"]) for row in matching if row["host_name"]}, key=str.casefold)
+            summary = {"host_count": len(hosts), "not_found_count": len(matching)}
+            self._store_behavior_incident(
+                "unknown_host_404_activity",
+                actor_id,
+                None,
+                matching,
+                additional_indicators=[f"Host: {name}" for name in host_names] + [f"User-Agent: {user_agent}"],
+                summary=summary,
+            )
 
     def _backfill_incident_metrics_once(self) -> None:
         """Rebuild stored detector metrics after summary definitions change."""
@@ -801,7 +857,12 @@ class Importer:
             key=str.casefold,
         )[:50]
         indicator_count = len(summary or {}) if incident_type in {"http_error_spike", "activity_spike"} else len(indicators)
-        active_window = self.low_slow_scan_window_seconds if incident_type == "low_slow_path_scan" else self.PATH_SCAN_WINDOW_SECONDS
+        if incident_type == "low_slow_path_scan":
+            active_window = self.low_slow_scan_window_seconds
+        elif incident_type == "unknown_host_404_activity":
+            active_window = self.unknown_host_404_window_seconds
+        else:
+            active_window = self.PATH_SCAN_WINDOW_SECONDS
         start_dt = datetime.fromisoformat(last_seen.replace("Z", "+00:00")) - timedelta(seconds=active_window)
         active_since = start_dt.isoformat(timespec="microseconds").replace("+00:00", "Z")
         connection = self.database.connection
@@ -873,6 +934,7 @@ class Importer:
     ) -> dict[str, Any]:
         """Retain detector-specific metrics as one incident extends or merges."""
         reserved = {"criteria", "host_count"}
+        current_host_count = current.get("host_count")
         by_type = dict(previous.get("criteria", {})) if isinstance(previous.get("criteria"), dict) else {}
         if not by_type and primary_type:
             legacy = {key: value for key, value in previous.items() if key not in reserved}
@@ -895,8 +957,9 @@ class Importer:
                 else:
                     combined.setdefault(key, value)
         combined["criteria"] = by_type
-        if "host_count" in previous:
-            combined["host_count"] = previous["host_count"]
+        host_counts = [value for value in (previous.get("host_count"), current_host_count) if isinstance(value, (int, float))]
+        if host_counts:
+            combined["host_count"] = max(host_counts)
         return combined
 
     @staticmethod

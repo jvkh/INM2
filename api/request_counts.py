@@ -136,9 +136,30 @@ def get_request_counts(
             filter_conditions.append("0")
         elif field is None:
             filter_conditions.append(
-                "EXISTS (SELECT 1 FROM actor AS sa WHERE sa.actor_id = r.actor_id AND (sa.ip LIKE ? OR sa.country LIKE ? OR sa.city LIKE ? OR sa.provider LIKE ? OR sa.asn LIKE ?)) OR r.request_path LIKE ? OR EXISTS (SELECT 1 FROM host AS sh WHERE sh.host_id = r.host_id AND sh.name LIKE ?)"
+                "EXISTS (SELECT 1 FROM actor AS sa WHERE sa.actor_id = r.actor_id AND (sa.ip LIKE ? OR sa.country LIKE ? OR sa.city LIKE ? OR sa.provider LIKE ? OR sa.asn LIKE ?)) OR r.request_path LIKE ? OR EXISTS (SELECT 1 FROM host AS sh WHERE sh.host_id = r.host_id AND sh.name LIKE ?) OR r.request_method LIKE ? OR r.request_scheme LIKE ? OR CAST(r.downstream_status AS TEXT) LIKE ? OR COALESCE(r.user_agent, '') LIKE ? OR r.start_utc LIKE ? OR CAST(r.duration AS TEXT) LIKE ? OR CAST(r.downstream_content_size AS TEXT) LIKE ? OR CAST((SELECT br.burst_id FROM burst_request AS br WHERE br.request_id = r.request_id LIMIT 1) AS TEXT) LIKE ? OR EXISTS (SELECT 1 FROM request_category AS src JOIN category AS sc ON sc.category_id = src.category_id WHERE src.request_id = r.request_id AND sc.category_name LIKE ?)"
             )
-            filter_parameters.extend([f"%{term}%"] * 7)
+            filter_parameters.extend([f"%{term}%"] * 16)
+        elif field == "burst_id":
+            filter_conditions.append("CAST((SELECT br.burst_id FROM burst_request AS br WHERE br.request_id = r.request_id LIMIT 1) AS TEXT) LIKE ?")
+            filter_parameters.append(f"%{term}%")
+        elif field == "incident_id":
+            filter_conditions.append(incident_request_condition())
+            filter_parameters.extend(incident_request_parameters(int(term)) if term.isdigit() else [0])
+        elif field == "location":
+            filter_conditions.append("EXISTS (SELECT 1 FROM actor AS la WHERE la.actor_id = r.actor_id AND (la.country LIKE ? OR la.city LIKE ? OR la.provider LIKE ? OR la.asn LIKE ?))")
+            filter_parameters.extend([f"%{term}%"] * 4)
+        elif field == "actor":
+            filter_conditions.append("EXISTS (SELECT 1 FROM actor AS la WHERE la.actor_id = r.actor_id AND (la.ip LIKE ? OR la.country LIKE ? OR la.city LIKE ? OR la.provider LIKE ? OR la.asn LIKE ?))")
+            filter_parameters.extend([f"%{term}%"] * 5)
+        elif field == "time":
+            filter_conditions.append("r.start_utc LIKE ?")
+            filter_parameters.append(f"%{term}%")
+        elif field == "duration":
+            filter_conditions.append("CAST(r.duration AS TEXT) LIKE ?")
+            filter_parameters.append(f"%{term}%")
+        elif field == "response_size":
+            filter_conditions.append("CAST(r.downstream_content_size AS TEXT) LIKE ?")
+            filter_parameters.append(f"%{term}%")
         elif field == "category":
             filter_conditions.append("EXISTS (SELECT 1 FROM request_category AS src JOIN category AS sc ON sc.category_id = src.category_id WHERE src.request_id = r.request_id AND sc.category_name LIKE ?)")
             filter_parameters.append(f"%{term}%")
@@ -248,6 +269,11 @@ def get_request_counts(
         [*bucket_parameters, *filter_parameters],
     )
 
+    total_row = database.query(
+        f"SELECT COUNT(*) AS total_count FROM request AS r WHERE r.start_utc >= ? AND r.start_utc < ?{extra_filters}",
+        [start, end, *filter_parameters],
+    )[0]
+
     items = []
     for row in rows:
         index = row["bucket_index"]
@@ -266,4 +292,4 @@ def get_request_counts(
             }
         )
 
-    return {"items": items, "from": start, "to": end, "bars": bucket_count}
+    return {"items": items, "from": start, "to": end, "bars": bucket_count, "total_count": total_row["total_count"] or 0}

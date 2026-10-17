@@ -155,8 +155,29 @@ def get_requests(
         if not term:
             conditions.append("0")
         elif field is None:
-            conditions.append("(a.ip LIKE ? OR h.name LIKE ? OR a.country LIKE ? OR a.city LIKE ? OR a.provider LIKE ? OR a.asn LIKE ? OR r.request_path LIKE ?)")
-            parameters.extend([f"%{term}%"] * 7)
+            conditions.append("(a.ip LIKE ? OR h.name LIKE ? OR a.country LIKE ? OR a.city LIKE ? OR a.provider LIKE ? OR a.asn LIKE ? OR r.request_path LIKE ? OR r.request_method LIKE ? OR r.request_scheme LIKE ? OR CAST(r.downstream_status AS TEXT) LIKE ? OR COALESCE(r.user_agent, '') LIKE ? OR r.start_utc LIKE ? OR CAST(r.duration AS TEXT) LIKE ? OR CAST(r.downstream_content_size AS TEXT) LIKE ? OR CAST((SELECT br.burst_id FROM burst_request AS br WHERE br.request_id = r.request_id LIMIT 1) AS TEXT) LIKE ? OR EXISTS (SELECT 1 FROM request_category AS src JOIN category AS sc ON sc.category_id = src.category_id WHERE src.request_id = r.request_id AND sc.category_name LIKE ?))")
+            parameters.extend([f"%{term}%"] * 16)
+        elif field == "burst_id":
+            conditions.append("CAST((SELECT br.burst_id FROM burst_request AS br WHERE br.request_id = r.request_id LIMIT 1) AS TEXT) LIKE ?")
+            parameters.append(f"%{term}%")
+        elif field == "incident_id":
+            conditions.append(incident_request_condition())
+            parameters.extend(incident_request_parameters(int(term)) if term.isdigit() else [0])
+        elif field == "location":
+            conditions.append("(a.country LIKE ? OR a.city LIKE ? OR a.provider LIKE ? OR a.asn LIKE ?)")
+            parameters.extend([f"%{term}%"] * 4)
+        elif field == "actor":
+            conditions.append("(a.ip LIKE ? OR COALESCE(a.country,'') LIKE ? OR COALESCE(a.city,'') LIKE ? OR COALESCE(a.provider,'') LIKE ? OR COALESCE(a.asn,'') LIKE ?)")
+            parameters.extend([f"%{term}%"] * 5)
+        elif field == "time":
+            conditions.append("r.start_utc LIKE ?")
+            parameters.append(f"%{term}%")
+        elif field == "duration":
+            conditions.append("CAST(r.duration AS TEXT) LIKE ?")
+            parameters.append(f"%{term}%")
+        elif field == "response_size":
+            conditions.append("CAST(r.downstream_content_size AS TEXT) LIKE ?")
+            parameters.append(f"%{term}%")
         elif field == "category":
             conditions.append("EXISTS (SELECT 1 FROM request_category AS src JOIN category AS sc ON sc.category_id = src.category_id WHERE src.request_id = r.request_id AND sc.category_name LIKE ?)")
             parameters.append(f"%{term}%")

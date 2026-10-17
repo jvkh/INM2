@@ -1,6 +1,7 @@
 """Traffic distribution statistics for the selected time range."""
 
 from datetime import datetime, timedelta, timezone
+import json
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -8,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from api.dependencies import get_database
 from common.known_hosts import known_host_match_sql
+from common.incidents import attach_incident_types
 
 
 router = APIRouter()
@@ -94,6 +96,60 @@ def get_statistics(
            FROM burst_values""",
         (start, end),
     )[0]
+
+    incident_summary = database.query(
+        """SELECT COUNT(*) AS incident_count,
+                  AVG(request_count) AS avg_requests_per_incident,
+                  MIN(request_count) AS min_requests_per_incident,
+                  MAX(request_count) AS max_requests_per_incident,
+                  AVG((julianday(last_seen) - julianday(first_seen)) * 86400.0) AS avg_incident_duration_seconds,
+                  MIN((julianday(last_seen) - julianday(first_seen)) * 86400.0) AS min_incident_duration_seconds,
+                  MAX((julianday(last_seen) - julianday(first_seen)) * 86400.0) AS max_incident_duration_seconds
+           FROM incident WHERE first_seen >= ? AND first_seen < ?""",
+        (start, end),
+    )[0]
+    incident_extremes: dict[str, Any] = {}
+    for key, order_by in (
+        ("min_requests_incident", "i.request_count ASC, i.incident_id ASC"),
+        ("max_requests_incident", "i.request_count DESC, i.incident_id ASC"),
+        ("min_duration_incident", "julianday(i.last_seen) - julianday(i.first_seen) ASC, i.incident_id ASC"),
+        ("max_duration_incident", "julianday(i.last_seen) - julianday(i.first_seen) DESC, i.incident_id ASC"),
+    ):
+        rows = database.query(
+            f"""SELECT i.incident_id, i.incident_type, i.first_seen, i.last_seen,
+                       i.request_count, i.indicator_count, i.indicators, i.summary,
+                       a.actor_id, a.ip AS actor_ip, a.country, a.city, a.provider, a.asn,
+                       h.name AS host
+                FROM incident AS i
+                JOIN actor AS a ON a.actor_id = i.actor_id
+                LEFT JOIN host AS h ON h.host_id = i.host_id
+                WHERE i.first_seen >= ? AND i.first_seen < ?
+                ORDER BY {order_by} LIMIT 1""",
+            (start, end),
+        )
+        incident = rows[0] if rows else None
+        if incident is not None:
+            for field, fallback in (("indicators", []), ("summary", {})):
+                try:
+                    incident[field] = json.loads(incident[field] or ("[]" if field == "indicators" else "{}"))
+                except (TypeError, ValueError):
+                    incident[field] = fallback
+            attach_incident_types(database, [incident])
+        incident_extremes[key] = incident
+    incident_request_count = database.query(
+        """SELECT COUNT(DISTINCT ir.request_id) AS request_count
+           FROM incident AS i
+           JOIN incident_request AS ir ON ir.incident_id = i.incident_id
+           JOIN request AS r ON r.request_id = ir.request_id
+           WHERE i.first_seen >= ? AND i.first_seen < ?
+             AND r.start_utc >= ? AND r.start_utc < ?""",
+        (start, end, start, end),
+    )[0]["request_count"]
+    result.update(incident_summary)
+    result.update(incident_extremes)
+    result["incident_request_count"] = incident_request_count
+    result["non_incident_request_count"] = total - incident_request_count
+    result["incident_request_share_percent"] = incident_request_count * 100 / total if total else 0
 
     status_rows = database.query(
         """SELECT downstream_status AS code, COUNT(*) AS request_count
@@ -246,7 +302,7 @@ def get_statistics(
     result["non_burst_request_count"] = total - burst_request_count
     result["burst_request_share_percent"] = burst_request_count * 100 / total if total else 0
 
-    return {"total_requests": total, **burst_summary, "from": start, "to": end, **result}
+    return {"total_requests": total, **burst_summary, **result, "from": start, "to": end}
 
 
 @router.get("/statistics/insights")
@@ -272,8 +328,9 @@ def get_statistics_insights(
         ("error_hosts", "h.name", "JOIN host AS h ON h.host_id = r.host_id"),
         ("error_paths", "NULLIF(TRIM(r.request_path), '')", ""),
     ):
+        known_column = f", CASE WHEN {known_host_match_sql('h.name')} THEN 1 ELSE 0 END AS known" if key == "error_hosts" else ""
         rows = database.query(
-            f"""SELECT {grouping} AS name,
+            f"""SELECT {grouping} AS name{known_column},
                        SUM(CASE WHEN r.downstream_status BETWEEN 400 AND 599 THEN 1 ELSE 0 END) AS request_count,
                        COUNT(*) AS total_count
                 FROM request AS r {joins}

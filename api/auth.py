@@ -95,6 +95,20 @@ def _session_signature(payload: str, secret: bytes) -> str:
     return hmac.new(secret, payload.encode("ascii"), hashlib.sha256).hexdigest()
 
 
+def _set_session_cookie(response: Response, config: AuthConfig) -> None:
+    payload = f"{int(time.time())}.{secrets.token_urlsafe(18)}"
+    token = f"{payload}.{_session_signature(payload, config.signing_secret)}"
+    response.set_cookie(
+        COOKIE_NAME,
+        token,
+        max_age=SESSION_SECONDS,
+        httponly=True,
+        secure=config.cookie_secure,
+        samesite="strict",
+        path="/",
+    )
+
+
 def is_authenticated(request: Request) -> bool:
     token = request.cookies.get(COOKIE_NAME, "")
     try:
@@ -197,6 +211,16 @@ def get_session(request: Request) -> dict[str, bool]:
     return {"authenticated": is_authenticated(request), "totp_required": get_auth_config().totp_enabled}
 
 
+@router.post("/auth/activity")
+def record_activity(request: Request, response: Response) -> dict[str, bool]:
+    """Extend the session after explicit browser activity, not background polling."""
+    if not is_authenticated(request):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    _set_session_cookie(response, get_auth_config())
+    response.headers["Cache-Control"] = "no-store"
+    return {"authenticated": True}
+
+
 def _verify_totp(code: str, secret: bytes, now: int | None = None) -> bool:
     """Validate a six-digit RFC 6238 code and reject a previously used time step."""
     global _last_totp_counter
@@ -244,17 +268,7 @@ def login(body: LoginBody, request: Request, response: Response) -> dict[str, bo
         _record_login_failure(client_key)
         raise HTTPException(status_code=401, detail="Incorrect password or authenticator code")
     _clear_login_failures(client_key)
-    payload = f"{int(time.time())}.{secrets.token_urlsafe(18)}"
-    token = f"{payload}.{_session_signature(payload, config.signing_secret)}"
-    response.set_cookie(
-        COOKIE_NAME,
-        token,
-        max_age=SESSION_SECONDS,
-        httponly=True,
-        secure=config.cookie_secure,
-        samesite="strict",
-        path="/",
-    )
+    _set_session_cookie(response, config)
     response.headers["Cache-Control"] = "no-store"
     return {"authenticated": True}
 

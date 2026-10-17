@@ -121,6 +121,9 @@ Compose lädt Collector- und Authentifizierungseinstellungen aus `.env`. Zusätz
 | `LOW_SLOW_SCAN_MIN_PATHS` | `12` | Erforderliche unterschiedliche sensible oder fehlerhafte Pfade. Daraus ergibt sich bereits die Mindestzahl an Requests. |
 | `LOW_SLOW_SCAN_MIN_HOSTS` | `2` | Erforderliche verschiedene Hosts. |
 | `LOW_SLOW_SCAN_MIN_SPAN_SECONDS` | `300` | Mindestdauer zwischen erstem und letztem passenden Request (5 Minuten). |
+| `UNKNOWN_HOST_404_WINDOW_DAYS` | `7` | Rollierendes Zeitfenster für wiederholte 404-Anfragen an unbekannte Hosts. |
+| `UNKNOWN_HOST_404_MIN_REQUESTS` | `50` | Mindestzahl solcher Requests desselben Akteurs und User-Agents. |
+| `UNKNOWN_HOST_404_MIN_HOSTS` | `3` | Mindestzahl verschiedener unbekannter Hosts für einen Incident. |
 | `GEOLITE_CITY_DB` | `/geoip/GeoLite2-City.mmdb` | Containerpfad zur optionalen City-Datenbank. |
 | `GEOLITE_ASN_DB` | `/geoip/GeoLite2-ASN.mmdb` | Containerpfad zur optionalen ASN-Datenbank. |
 | `IGNORE_REQUEST_ROUTES` | leer | Semikolongetrennte `host/pfadpräfix`-Einträge, die beim Import übersprungen werden. Host muss Traefiks `RequestHost` entsprechen. |
@@ -152,7 +155,7 @@ Compose bindet `./databases` für API und Collector nach `/app/databases` und `.
 
 ## Anwendung
 
-Die Oberfläche bietet Dashboard, Statistiken, Bursts, Akteure, Hosts, Kategorien, Requests und Verwaltungsfunktionen. Der Zugriff erfordert das konfigurierte Einzel-Admin-Passwort; die Sitzung läuft nach 12 Stunden ab. Sprache (Deutsch/Englisch), Theme und Zeitraum werden in der gemeinsam genutzten SQLite-Datenbank gespeichert. Einstellungen und Daten sind installationsweit gemeinsam.
+Die Oberfläche bietet Dashboard, Statistiken, Bursts, Akteure, Hosts, Kategorien, Requests und Verwaltungsfunktionen. Der Zugriff erfordert das konfigurierte Einzel-Admin-Passwort; nach 12 Stunden ohne Benutzeraktivität wird eine erneute Anmeldung erforderlich. Automatische Hintergrundaktualisierungen verlängern die Sitzung nicht. Sprache (Deutsch/Englisch), Theme und Zeitraum werden in der gemeinsam genutzten SQLite-Datenbank gespeichert. Einstellungen und Daten sind installationsweit gemeinsam.
 
 Die API-Routen liegen unter `/api/v1`. Nach der Anmeldung kann der Status abgerufen werden mit:
 

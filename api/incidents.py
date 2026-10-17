@@ -8,13 +8,14 @@ from fastapi import APIRouter, Body, HTTPException, Path, Query, Request
 
 from api.dependencies import get_database
 from common.incidents import attach_incident_types
+from common.search import parse_search
 
 
 router = APIRouter()
 IncidentType = Literal[
     "path_scan", "failed_login", "sensitive_file_access", "exploit_response",
     "write_activity", "http_error_spike", "scanner_activity", "activity_spike",
-    "dormant_host_activity", "low_slow_path_scan",
+    "dormant_host_activity", "low_slow_path_scan", "unknown_host_404_activity",
 ]
 
 
@@ -52,9 +53,38 @@ def get_incidents(
         conditions.append("EXISTS (SELECT 1 FROM incident_criterion AS ic WHERE ic.incident_id = i.incident_id AND ic.incident_type = ?)")
         parameters.append(incident_type)
     if search:
-        term = f"%{search.strip()}%"
-        conditions.append("(a.ip LIKE ? OR a.provider LIKE ? OR a.asn LIKE ? OR a.country LIKE ? OR a.city LIKE ? OR h.name LIKE ? OR i.indicators LIKE ? OR i.summary LIKE ? OR EXISTS (SELECT 1 FROM incident_request AS ir JOIN request AS r ON r.request_id = ir.request_id JOIN host AS ih ON ih.host_id = r.host_id WHERE ir.incident_id = i.incident_id AND ih.name LIKE ?) OR EXISTS (SELECT 1 FROM incident_criterion AS ic WHERE ic.incident_id = i.incident_id AND ic.incident_type LIKE ?))")
-        parameters.extend((term, term, term, term, term, term, term, term, term, term))
+        field, value = parse_search(search)
+        if not value:
+            conditions.append("0")
+        elif field is None:
+            term = f"%{value}%"
+            conditions.append("(CAST(i.incident_id AS TEXT) LIKE ? OR i.first_seen LIKE ? OR i.last_seen LIKE ? OR CAST((julianday(i.last_seen) - julianday(i.first_seen)) * 86400 AS TEXT) LIKE ? OR CAST(i.request_count AS TEXT) LIKE ? OR CAST(i.indicator_count AS TEXT) LIKE ? OR a.ip LIKE ? OR a.provider LIKE ? OR a.asn LIKE ? OR a.country LIKE ? OR a.city LIKE ? OR h.name LIKE ? OR i.indicators LIKE ? OR i.summary LIKE ? OR i.state LIKE ? OR EXISTS (SELECT 1 FROM incident_criterion AS itc WHERE itc.incident_id=i.incident_id AND itc.incident_type LIKE ?) OR EXISTS (SELECT 1 FROM incident_request AS ir JOIN request AS r ON r.request_id = ir.request_id JOIN host AS ih ON ih.host_id = r.host_id WHERE ir.incident_id = i.incident_id AND ih.name LIKE ?))")
+            parameters.extend((term,) * 17)
+        else:
+            term = f"%{value}%"
+            expressions = {
+                "id": "CAST(i.incident_id AS TEXT)",
+                "incident_id": "CAST(i.incident_id AS TEXT)",
+                "incident_type": "i.incident_type", "time": "i.first_seen",
+                "duration": "CAST((julianday(i.last_seen) - julianday(i.first_seen)) * 86400 AS TEXT)",
+                "requests": "CAST(i.request_count AS TEXT)", "indicators": "i.indicators",
+                "state": "i.state", "status": "i.state", "ip": "a.ip", "country": "a.country", "city": "a.city",
+                "provider": "a.provider", "asn": "a.asn", "host": "h.name",
+            }
+            if field == "actor":
+                conditions.append("(a.ip LIKE ? OR COALESCE(a.provider,'') LIKE ? OR COALESCE(a.asn,'') LIKE ? OR COALESCE(a.country,'') LIKE ? OR COALESCE(a.city,'') LIKE ?)")
+                parameters.extend([term] * 5)
+            elif field == "location":
+                conditions.append("(a.country LIKE ? OR a.city LIKE ? OR a.provider LIKE ? OR a.asn LIKE ?)")
+                parameters.extend([term] * 4)
+            elif field == "incident_type":
+                conditions.append("EXISTS (SELECT 1 FROM incident_criterion AS ic WHERE ic.incident_id = i.incident_id AND ic.incident_type LIKE ?)")
+                parameters.append(term)
+            elif field in expressions:
+                conditions.append(f"{expressions[field]} LIKE ?")
+                parameters.append(term)
+            else:
+                conditions.append("0")
 
     database = get_database(request)
     joins = """FROM incident AS i
@@ -68,7 +98,23 @@ def get_incidents(
         "request_count": "i.request_count", "state": "i.state",
     }
     order_by = f"{sort_expressions[sort_by]} {sort_order.upper()}, i.incident_id DESC"
-    total = database.query(f"SELECT COUNT(*) AS total {joins} WHERE {where}", parameters)[0]["total"]
+    summary = database.query(
+        f"""SELECT COUNT(*) AS incident_count, COUNT(DISTINCT i.actor_id) AS actor_count,
+                   COALESCE(SUM(CASE WHEN i.state = 'open' THEN 1 ELSE 0 END), 0) AS open_count,
+                   COALESCE(SUM(CASE WHEN i.state = 'acknowledged' THEN 1 ELSE 0 END), 0) AS acknowledged_count,
+                   COALESCE(SUM(CASE WHEN i.state = 'resolved' THEN 1 ELSE 0 END), 0) AS resolved_count
+            {joins} WHERE {where}""",
+        parameters,
+    )[0]
+    request_count = database.query(
+        f"""SELECT COUNT(DISTINCT ir.request_id) AS request_count
+            {joins}
+            LEFT JOIN incident_request AS ir ON ir.incident_id = i.incident_id
+            WHERE {where}""",
+        parameters,
+    )[0]["request_count"]
+    summary["request_count"] = request_count
+    total = summary["incident_count"]
     items = database.query(
         f"""SELECT i.incident_id, i.incident_type, i.first_seen, i.last_seen,
                    i.request_count, i.indicator_count, i.indicators, i.summary, i.state,
@@ -90,7 +136,7 @@ def get_incidents(
         except (TypeError, ValueError):
             item["summary"] = {}
     attach_incident_types(database, items)
-    return {"items": items, "total": total, "limit": limit, "offset": offset, "from": start, "to": end}
+    return {"items": items, "total": total, "summary": summary, "limit": limit, "offset": offset, "from": start, "to": end}
 
 
 @router.get("/incident_statistics")

@@ -119,6 +119,9 @@ Compose loads collector and authentication settings from `.env`. Compose also re
 | `LOW_SLOW_SCAN_MIN_PATHS` | `12` | Required distinct sensitive or error paths; this already implies the minimum request count. |
 | `LOW_SLOW_SCAN_MIN_HOSTS` | `2` | Required distinct hosts. |
 | `LOW_SLOW_SCAN_MIN_SPAN_SECONDS` | `300` | Minimum time between the first and last matching request (5 minutes). |
+| `UNKNOWN_HOST_404_WINDOW_DAYS` | `7` | Rolling window for repeated 404 requests to unknown hosts. |
+| `UNKNOWN_HOST_404_MIN_REQUESTS` | `50` | Minimum number of such requests from the same actor and User-Agent. |
+| `UNKNOWN_HOST_404_MIN_HOSTS` | `3` | Minimum number of distinct unknown hosts for an incident. |
 | `GEOLITE_CITY_DB` | `/geoip/GeoLite2-City.mmdb` | Container path to the optional City database. |
 | `GEOLITE_ASN_DB` | `/geoip/GeoLite2-ASN.mmdb` | Container path to the optional ASN database. |
 | `IGNORE_REQUEST_ROUTES` | empty | Semicolon-separated `host/path-prefix` entries to skip during import. Host must match Traefik's `RequestHost`. |
@@ -150,7 +153,7 @@ Compose mounts `./databases` at `/app/databases` for both API and collector and 
 
 ## Using the application
 
-The UI provides Dashboard, Bursts, Actors, Hosts, Categories, Requests, and administration features. Access requires the configured single administrator password; sessions expire after 12 hours. Language (German/English), theme, and time range are stored in the shared SQLite database. Settings and data are shared across the installation.
+The UI provides Dashboard, Bursts, Actors, Hosts, Categories, Requests, and administration features. Access requires the configured single administrator password; a new sign-in is required after 12 hours without user activity. Automatic background refreshes do not extend the session. Language (German/English), theme, and time range are stored in the shared SQLite database. Settings and data are shared across the installation.
 
 API routes are under `/api/v1`. The status is available after sign-in at:
 
