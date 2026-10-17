@@ -20,7 +20,6 @@ project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 rsync -avz --human-readable --progress \
   --exclude='/.git/' \
   --exclude='/.env' \
-  --exclude='/.env.*' \
   --exclude='/docker-compose.yml' \
   --exclude='/databases/' \
   --exclude='/logs/' \

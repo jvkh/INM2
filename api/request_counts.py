@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from api.dependencies import get_database
+from common.incidents import incident_request_condition, incident_request_parameters
 from common.search import parse_search
 
 
@@ -42,6 +43,7 @@ def get_request_counts(
     actor_ip: str | None = Query(default=None, min_length=1, description="Actor IP substring"),
     actor_ip_exact: bool = Query(default=False, description="Match the actor IP exactly"),
     actor_id: int | None = Query(default=None, ge=1),
+    incident_id: int | None = Query(default=None, ge=1, description="Requests belonging to an incident"),
     category: str | None = Query(default=None, min_length=1),
     category_exact: bool = Query(default=False, description="Match the category name exactly"),
     path: str | None = Query(default=None, min_length=1, description="Request-path substring"),
@@ -83,6 +85,9 @@ def get_request_counts(
     if actor_id is not None:
         filter_conditions.append("r.actor_id = ?")
         filter_parameters.append(actor_id)
+    if incident_id is not None:
+        filter_conditions.append(incident_request_condition())
+        filter_parameters.extend(incident_request_parameters(incident_id))
     if category is not None:
         filter_conditions.append(
             """EXISTS (

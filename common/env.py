@@ -14,6 +14,12 @@ class EnvConfig:
     """
 
     DEFAULTS: dict[str, str] = {
+        "INM2_UI_PORT": "3000",
+        "INM2_API_PORT": "8000",
+        "INM2_COOKIE_SECURE": "true",
+        "INM2_TOTP_ENABLED": "false",
+        "INPUT_LOG_DIR": "./logs",
+        "GEOLITE_DB_DIR": "./databases/geoip",
         "LOG_FILES": "",
         "INPUT_INTERVAL_SECONDS": "3600",
         "INPUT_SAVE_MARGIN_CHARACTERS": "4096",
@@ -22,6 +28,11 @@ class EnvConfig:
         "BURST_MAX_GAP_SECONDS": "5",
         "BURST_MIN_REQUESTS": "5",
         "BURST_WINDOW_SECONDS": "60",
+        "INCIDENT_MERGE_OVERLAP_PERCENT": "80",
+        "LOW_SLOW_SCAN_WINDOW_SECONDS": "10800",
+        "LOW_SLOW_SCAN_MIN_PATHS": "12",
+        "LOW_SLOW_SCAN_MIN_HOSTS": "2",
+        "LOW_SLOW_SCAN_MIN_SPAN_SECONDS": "300",
         "GEOLITE_CITY_DB": "/geoip/GeoLite2-City.mmdb",
         "GEOLITE_ASN_DB": "/geoip/GeoLite2-ASN.mmdb",
         "IGNORE_REQUEST_ROUTES": "",
@@ -60,7 +71,7 @@ class EnvConfig:
         return [item.strip() for item in value.split(";") if item.strip()]
 
     def as_dict(self) -> dict[str, str]:
-        """Return all supported application variables with their effective values."""
+        """Return all supported non-secret settings with their effective values."""
         return {
             name: self.get(name, default) or ""
             for name, default in self.DEFAULTS.items()
@@ -97,6 +108,30 @@ class EnvConfig:
     @property
     def burst_window_seconds(self) -> int:
         return self.get_int("BURST_WINDOW_SECONDS")
+
+    @property
+    def incident_merge_overlap_percent(self) -> int:
+        """Minimum temporal overlap percentage required to combine incidents."""
+        value = self.get_int("INCIDENT_MERGE_OVERLAP_PERCENT")
+        if not 0 <= value <= 100:
+            raise ValueError("INCIDENT_MERGE_OVERLAP_PERCENT must be between 0 and 100")
+        return value
+
+    @property
+    def low_slow_scan_window_seconds(self) -> int:
+        return self.get_int("LOW_SLOW_SCAN_WINDOW_SECONDS")
+
+    @property
+    def low_slow_scan_min_paths(self) -> int:
+        return self.get_int("LOW_SLOW_SCAN_MIN_PATHS")
+
+    @property
+    def low_slow_scan_min_hosts(self) -> int:
+        return self.get_int("LOW_SLOW_SCAN_MIN_HOSTS")
+
+    @property
+    def low_slow_scan_min_span_seconds(self) -> int:
+        return self.get_int("LOW_SLOW_SCAN_MIN_SPAN_SECONDS")
 
     @property
     def ignore_request_routes(self) -> list[str]:

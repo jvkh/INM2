@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 
+from common.env import EnvConfig
 from common.status import CollectorStatus
 
 
@@ -35,7 +36,14 @@ def get_status(request: Request) -> dict[str, Any]:
 
         database.query("SELECT 1")
         collector_status = CollectorStatus.read_snapshot(database)
-        environment = collector_status.pop("environment", {})
+        stored_environment = collector_status.pop("environment", {})
+        environment = {
+            name: value
+            for name, value in stored_environment.items()
+            if name in EnvConfig.DEFAULTS
+            and name != "INM2_COLLECTOR_PORT"
+            and not any(token in name.upper() for token in ("SECRET", "PASSWORD", "TOKEN"))
+        }
         collector_status["available"] = True
         return {
             "status": "ok",

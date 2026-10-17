@@ -58,7 +58,54 @@ class Database:
             raise FileNotFoundError(f"Database schema not found: {self.schema_path}")
         with self._lock:
             self.connection.executescript(self.schema_path.read_text(encoding="utf-8"))
+            self._migrate_incident_table()
+            self._migrate_incident_summary()
+            self.connection.execute(
+                "INSERT OR IGNORE INTO incident_criterion (incident_id, incident_type) SELECT incident_id, incident_type FROM incident"
+            )
             self.connection.commit()
+
+    def _migrate_incident_table(self) -> None:
+        """Move legacy path-scan findings into the shared incident schema."""
+        tables = {row[0] for row in self.connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )}
+        if "path_scan_incident" not in tables:
+            return
+        columns = {row[1] for row in self.connection.execute("PRAGMA table_info(path_scan_incident)")}
+        if {"distinct_path_count", "matched_paths"}.issubset(columns):
+            self.connection.execute(
+                """INSERT OR IGNORE INTO incident (
+                       incident_id, incident_type, actor_id, host_id, first_seen, last_seen,
+                       request_count, indicator_count, indicators, state
+                   ) SELECT incident_id, 'path_scan', actor_id, host_id, first_seen, last_seen,
+                            request_count, distinct_path_count, matched_paths, state
+                     FROM path_scan_incident"""
+            )
+            self.connection.execute(
+                """INSERT OR IGNORE INTO incident_request (incident_id, request_id)
+                   SELECT i.incident_id, r.request_id
+                   FROM incident AS i
+                   JOIN request AS r ON r.actor_id = i.actor_id
+                     AND r.host_id IS i.host_id
+                     AND r.start_utc >= i.first_seen AND r.start_utc <= i.last_seen
+                   WHERE i.incident_type = 'path_scan' AND EXISTS (
+                       SELECT 1 FROM request_category AS rc
+                       JOIN category AS c ON c.category_id = rc.category_id
+                       WHERE rc.request_id = r.request_id AND c.category_name IN (
+                           'sensible Dateien', 'Webshell', 'Datenbank-Dienste', 'CMS-Aufrufe',
+                           'Admin-Zugriffe', 'Informationslecks', 'Schwachstellensuche', 'Container-Dienste'
+                       )
+                   )"""
+            )
+        self.connection.execute("DROP TABLE path_scan_incident")
+
+    def _migrate_incident_summary(self) -> None:
+        """Add type-specific metrics and remove the unsupported new-origin finding."""
+        columns = {row[1] for row in self.connection.execute("PRAGMA table_info(incident)")}
+        if "summary" not in columns:
+            self.connection.execute("ALTER TABLE incident ADD COLUMN summary TEXT NOT NULL DEFAULT '{}'")
+        self.connection.execute("DELETE FROM incident WHERE incident_type = 'new_origin'")
 
     def execute(
         self,

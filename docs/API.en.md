@@ -8,19 +8,19 @@ This guide describes the HTTP API and collector operations for developers and op
 
 All API routes except `POST /api/v1/auth/login` and `GET /api/v1/auth/session` require a valid administrator session. When `INM2_TOTP_ENABLED=true`, login must also include `totp_code` with a current six-digit authenticator code. The web UI signs in and manages the session cookie automatically. `/docs` is also protected.
 
-For scripts, save the cookie after signing in. Use HTTPS and set `Origin` to the same address:
+For scripts, the cookie can be saved after sign-in. HTTPS is required, and `Origin` must match the request address:
 
 ```sh
 curl -c cookies.txt -b cookies.txt \\
   -H 'Origin: https://inm2.example.org' -H 'Content-Type: application/json' \\
-  -d '{"password":"YOUR-ADMIN-PASSWORD","totp_code":"123456"}' \\
+  -d '{"password":"ADMIN-PASSWORD","totp_code":"123456"}' \\
   https://inm2.example.org/api/v1/auth/login
 curl -b cookies.txt https://inm2.example.org/api/v1/status
 ```
 
 Sessions expire after 12 hours. Mutating `POST`, `PUT`, `PATCH`, and `DELETE` requests also require a matching `Origin` header.
 
-The API examples below assume an authenticated session. With `curl`, add `-b cookies.txt`; for mutating requests also add `-H 'Origin: https://inm2.example.org'`. Replace the example address with the host you actually use to reach the API.
+The API examples below assume an authenticated session. With `curl`, the cookie is passed using `-b cookies.txt`; mutating requests also require `-H 'Origin: https://inm2.example.org'`. The example host must match the address used for API access.
 
 ```sh
 curl -b cookies.txt https://inm2.example.org/api/v1/status
@@ -50,7 +50,7 @@ Unrecognized or missing URL schemes are counted as `other_scheme_count` in HTTP/
 
 ### Metric trends
 
-`GET /api/v1/metric_trends` returns metrics for the selected range and the immediately preceding range of equal duration. `from` and `to` are required; `page` can be `dashboard`, `bursts`, `actors`, `hosts`, `categories`, or `requests`. List views accept their active filters so the trend reflects the same selection. Each entry in `metrics` contains current and previous values, percentage change, and direction (`up`, `down`, `steady`). Changes of up to 5% are steady. An empty comparison range returns `0%` and `steady`.
+`GET /api/v1/metric_trends` returns metrics for the selected range and the immediately preceding range of equal duration. `from` and `to` are required; `page` can be `dashboard`, `bursts`, `actors`, `hosts`, `categories`, or `requests`. The requests view also accepts `incident_id`, so its metrics match the incident request list. Each entry in `metrics` contains current and previous values, percentage change, and direction (`up`, `down`, `steady`). Changes of up to 5% are steady. An empty comparison range returns `0%` and `steady`.
 
 ### Status
 
@@ -68,7 +68,15 @@ A healthy response includes `status: "ok"`, `database: "ok"`, `collector_status`
 
 ### New data notifications
 
-`GET /api/v1/notifications` returns requests and bursts whose IDs are newer than the stored seen cursors. The response includes totals, up to five recent entries of each type, and the latest cursor values. `PUT /api/v1/notifications/seen?request_cursor=…&burst_cursor=…` stores the cursors in the settings table. On the first read, current maximum IDs are saved as the starting point so existing records are not reported as new.
+`GET /api/v1/notifications` returns requests, bursts, and incidents whose IDs are newer than the stored seen cursors. The response includes totals, up to five recent entries of each type, and the latest cursor values. `PUT /api/v1/notifications/seen?request_cursor=…&burst_cursor=…&incident_cursor=…` stores the cursors in the settings table. On the first read, current maximum IDs are saved as the starting point so existing records are not reported as new.
+
+The collector stores all detections in the shared `incident` table, with exact request membership in `incident_request`. Besides path scans (8 distinct sensitive paths), it detects failed-login clusters (5 responses 401/403), error spikes (20 responses 400+), write requests to admin/auth/API paths (5), scanner User-Agents (5), and a request-rate spike (50 requests) per source IP and host within 10 minutes. Three or more requests after at least 30 days without host activity also create an investigation lead. Error spikes show error count and non-error response share; request spikes show average, minimum, and maximum requests per second. 2xx responses to sensitive-file and exploit probes are flagged individually. These rules are heuristics and do not prove a successful attack or disclosure.
+
+`GET /api/v1/incidents` returns paginated incidents overlapping the required `from` to `to` time range. Optional filters are `search` (IP, provider, ASN, country, city, host, or indicator), `incident_type`, and `state` (`open`, `acknowledged`, `resolved`). `incident_type` optionally filters by `path_scan`, `failed_login`, `sensitive_file_access`, `exploit_response`, `write_activity`, `http_error_spike`, `scanner_activity`, `activity_spike`, `dormant_host_activity`, or `low_slow_path_scan`. `sort_by` supports `incident_id`, `incident_type`, `first_seen`, `last_seen`, `actor_ip`, `host`, `indicator_count`, `request_count`, and `state`; `sort_order` is `asc` or `desc`. Responses include `incident_type`, `incident_types` (all matched criteria), `indicator_count`, `indicators`, type-specific metrics in `summary`, and the IP with its provider, ASN, country, and city.
+
+`GET /api/v1/incident_statistics` aggregates incidents in the selected period by type, detection time, actor, and host. It keeps incident counts separate from linked request counts; one request may be linked to multiple incidents. Error and request-spike values use the stored detector metrics. The parameter `include_incidents=true` adds incident details to each timeline bucket, for example for dashboard hints.
+
+`PUT /api/v1/incidents/{incident_id}/state` persists an incident status. Its JSON body is `{"state":"acknowledged"}`; allowed values are `open`, `acknowledged`, and `resolved`. The Incidents page exposes this action directly in each status field.
 
 ### Statistics
 
@@ -76,7 +84,7 @@ A healthy response includes `status: "ok"`, `database: "ok"`, `collector_status`
 
 ### Requests
 
-`GET /api/v1/requests` returns paginated requests for a required time range. Supported filters include:
+`GET /api/v1/requests` returns paginated requests for a required time range. `incident_id` restricts results to categorized requests belonging to the path-scan incident. Supported filters include:
 
 | Parameter | Meaning |
 | --- | --- |
@@ -84,6 +92,7 @@ A healthy response includes `status: "ok"`, `database: "ok"`, `collector_status`
 | `host` | Hostname substring |
 | `actor`, `ip` | Actor IP substring |
 | `actor_id` | Exact actor ID |
+| `incident_id` | Requests belonging to the given path-scan incident |
 | `country`, `city`, `provider`, `asn` | Actor metadata substring |
 | `country_exact`, `provider_exact` | When `true`, match the country or provider exactly |
 | `category` | Request category substring |
@@ -102,7 +111,7 @@ The `search` parameter can be limited to a field with `field:term`, for example 
 
 `sort_by` and `sort_order` control ordering. Supported columns are `start_utc`, `request_method`, `request_path`, `user_agent`, `downstream_status`, `actor_ip`, `host`, `duration`, and `downstream_content_size`; direction is `asc` or `desc`.
 
-The `actor` and `host` filters use substring matching by default. Set `actor_exact=true`, `host_exact=true`, `country_exact=true`, `provider_exact=true`, or `category_exact=true` to match the value exactly. When `burst_extreme` is supplied, the response also includes `burst_extreme_value` and `matching_burst_count`. Multiple bursts can tie for a minimum or maximum, in which case requests from all tied bursts are shown.
+The `actor` and `host` filters use substring matching by default. Exact matching is enabled by setting `actor_exact=true`, `host_exact=true`, `country_exact=true`, `provider_exact=true`, or `category_exact=true`. When `burst_extreme` is supplied, the response also includes `burst_extreme_value` and `matching_burst_count`. Multiple bursts can tie for a minimum or maximum, in which case requests from all tied bursts are shown.
 
 ```sh
 curl -G 'http://localhost:8000/api/v1/requests' \
@@ -147,7 +156,7 @@ curl -G 'http://localhost:8000/api/v1/bursts' \
 
 ### Request counts, hosts, and categories
 
-`GET /api/v1/request_counts` returns counts in equally sized time buckets. Required parameters: `from`, `to`, and `bars` (1–500). Optional filters: `host`, `actor_ip`, `actor_id`, `category`, `path`, `path_exact`, `burst_id`, `without_burst`, `search`, and `status_class`. The response includes `items` with `from`, `to`, `read_count`, `write_count`, `other_count`, and `total_count` for each bucket; empty buckets have zero counts.
+`GET /api/v1/request_counts` returns counts in equally sized time buckets. Required parameters: `from`, `to`, and `bars` (1–500). Optional filters: `host`, `actor_ip`, `actor_id`, `incident_id`, `category`, `path`, `path_exact`, `burst_id`, `without_burst`, `search`, and `status_class`. The response includes `items` with `from`, `to`, `read_count`, `write_count`, `other_count`, and `total_count` for each bucket; empty buckets have zero counts.
 
 `GET /api/v1/categories` requires `from` and `to`, with an optional `category` substring filter. Results are grouped by category and include read/write/other method counts and HTTP/HTTPS/other-scheme counts. `sort_by` supports `category_name`, `total_count`, `read_count`, `write_count`, `other_count`, `http_count`, `https_count`, `other_scheme_count`, `traffic_share`, and `https_share`; `sort_order` is `asc` or `desc`.
 
@@ -188,7 +197,7 @@ curl -X PUT http://localhost:8000/api/v1/import
 curl -X PUT http://localhost:8000/api/v1/maintenance
 ```
 
-Accepted requests return HTTP 202, for example `{"status":"accepted","activity":"Import"}`. The work runs in the background; use `/api/v1/status` to inspect progress.
+Accepted requests return HTTP 202, for example `{"status":"accepted","activity":"Import"}`. The work runs in the background; progress is available from `/api/v1/status`.
 
 ## Error responses
 
@@ -205,27 +214,31 @@ API infrastructure errors use `{"error":{"code":"…","message":"…"}}`. FastAP
 
 ## Collector behavior and configuration
 
-The collector reads files in `LOG_FILES`, parses Traefik access logs in JSON-lines format, and writes requests, actors, hosts, categories, and bursts to the shared database. Its control service listens on port `8001` inside the Compose network; that port is not published on the host. The API on port `8000` is the client-facing service.
+The collector reads files in `LOG_FILES`, parses Traefik access logs in JSON-lines format, and writes requests, actors, hosts, categories, and bursts to the shared database. Its control service listens on port `8001` inside the Compose network; that port is not published on the host. The API listens internally on port `8000`; Compose binds its host port to `127.0.0.1` only. Browser requests go through the UI's internal `/api` proxy.
 
 Scheduled and manual operations share a lock. If the collector is busy, a manual request is rejected with HTTP 409 rather than run concurrently. Accepted manual operations run in the background. The scheduler runs due jobs when the collector starts and schedules the next run after the current run completes.
 
 ### Input files and retention
 
-`LOG_FILES` contains one or more semicolon-separated `type:path` entries, for example:
+`LOG_FILES` contains one or more semicolon-separated filenames, for example:
 
 ```dotenv
-LOG_FILES=traefik:/logs/access.log
+LOG_FILES=access.log
 ```
+
+Compose mounts the host directory in `INPUT_LOG_DIR` read-only at `/input-logs`. `LOG_FILES` names files in that directory. The setup accepts the full host path to an input log file, saves its directory in `INPUT_LOG_DIR`, and stores only its filename in `LOG_FILES`. The default host directory is `./logs`.
 
 The Traefik reader processes complete JSON lines before the end-of-file buffer configured by `INPUT_SAVE_MARGIN_CHARACTERS` in the active file. The value must be greater than zero. Matching rotated segments (`access.log.*`, including `.gz`) are discovered automatically and read through EOF in time order. Positions are keyed by device/inode identity and follow renamed segments. A SHA-256 fingerprint of the first complete log line (up to 64 KiB) detects a new file if an inode is reused. The fingerprint, position, and request are committed together. The collector never changes or deletes log files; logrotate handles rotation and retention.
 
 ### Configuration reference
 
-The collector supports these variables. The values below are code defaults from `common/env.py`; `.env.example` may set different starting values.
+The collector variables appear with their effective values in status. `INPUT_LOG_DIR` and `GEOLITE_DB_DIR` are also read by Compose to mount host directories.
 
 | Variable | Code default | Purpose |
 | --- | --- | --- |
-| `LOG_FILES` | empty | Semicolon-separated input files in `type:path` format |
+| `LOG_FILES` | empty | Semicolon-separated filenames in `/input-logs`; legacy `type:path` entries remain supported |
+| `INPUT_LOG_DIR` | Compose default `./logs` | Compose: host access-log directory, mounted read-only at `/input-logs` |
+| `GEOLITE_DB_DIR` | Compose default `./databases/geoip` | Compose: host directory containing GeoLite2 files, mounted read-only at `/geoip` |
 | `INPUT_INTERVAL_SECONDS` | `3600` | Interval between imports, in seconds |
 | `INPUT_SAVE_MARGIN_CHARACTERS` | `4096` | Number of characters held back at the end of each file; must be positive |
 | `MAINTENANCE_INTERVAL_DAYS` | `1` | Interval between maintenance runs, in days |
@@ -233,6 +246,11 @@ The collector supports these variables. The values below are code defaults from 
 | `BURST_MAX_GAP_SECONDS` | `5` | Maximum gap between requests in one burst |
 | `BURST_MIN_REQUESTS` | `5` | Minimum requests in a burst |
 | `BURST_WINDOW_SECONDS` | `60` | Burst detection window |
+| `INCIDENT_MERGE_OVERLAP_PERCENT` | `80` | Minimum overlap, as a percentage of the shorter incident's time range, for merging incidents from the same actor; values 0–100 |
+| `LOW_SLOW_SCAN_WINDOW_SECONDS` | `10800` | Rolling time window for low-and-slow multi-host path scans |
+| `LOW_SLOW_SCAN_MIN_PATHS` | `12` | Minimum number of distinct sensitive or error paths |
+| `LOW_SLOW_SCAN_MIN_HOSTS` | `2` | Minimum number of distinct hosts |
+| `LOW_SLOW_SCAN_MIN_SPAN_SECONDS` | `300` | Minimum time between the first and last matching request |
 | `GEOLITE_CITY_DB` | `/geoip/GeoLite2-City.mmdb` | Container path to the optional GeoLite City database |
 | `GEOLITE_ASN_DB` | `/geoip/GeoLite2-ASN.mmdb` | Container path to the optional GeoLite ASN database |
 | `IGNORE_REQUEST_ROUTES` | empty | Semicolon-separated `host/path-prefix` routes to skip |
@@ -244,6 +262,6 @@ A host/path prefix is skipped only for the configured host. The path must match 
 IGNORE_REQUEST_ROUTES=inm2.example.de/api;inm2.example.de/assets
 ```
 
-In Compose, collector variables come from `.env`. `./logs` and `./databases` are mounted in the collector; `./databases/geoip` is mounted read-only. The API shares the database directory with the collector. If a GeoLite file is absent, importing continues and the corresponding fields remain empty.
+In Compose, collector variables come from `.env`. `./logs` and `./databases` are mounted for operational logs and database storage. The host directories from `INPUT_LOG_DIR` and `GEOLITE_DB_DIR` are mounted read-only at `/input-logs` and `/geoip`. The API shares the database directory with the collector. If a GeoLite file is absent, importing continues and the corresponding fields remain empty.
 
 Maintenance removes actors that have been inactive longer than `MAINTENANCE_INACTIVE_DAYS`, along with dependent records. Imported actor history is therefore not necessarily retained indefinitely.

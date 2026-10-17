@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import threading
 from collections.abc import Callable
@@ -19,6 +20,7 @@ from collector.maintenance import Maintenance
 from collector.scheduler import Scheduler
 
 logger = logging.getLogger(__name__)
+CONTROL_PORT = int(os.environ.get("INM2_COLLECTOR_PORT", "8001"))
 
 
 class CollectorApplication:
@@ -147,7 +149,7 @@ class CollectorApplication:
             uvicorn.Config(
                 create_control_app(self),
                 host="0.0.0.0",
-                port=8001,
+                port=CONTROL_PORT,
                 log_level="warning",
             )
         )

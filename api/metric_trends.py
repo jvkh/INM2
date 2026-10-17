@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from api.dependencies import get_database
 from common.known_hosts import known_host_match_sql
+from common.incidents import incident_request_condition, incident_request_parameters
 from common.search import parse_search
 
 router = APIRouter()
@@ -26,7 +27,7 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
                     actor_ip_exact: bool,
                     category: str | None, category_exact: bool, path: str | None,
                     path_exact: bool, known: str | None, without_burst: bool,
-                    burst_extreme: str | None) -> dict[str, float]:
+                    burst_extreme: str | None, incident_id: int | None) -> dict[str, float]:
     request_conditions = ["r.start_utc >= ?", "r.start_utc < ?"]
     request_params: list[Any] = [start, end]
     if page == "actors" and country:
@@ -68,6 +69,9 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
         request_conditions.append("EXISTS (SELECT 1 FROM request_category AS xrc JOIN category AS xc ON xc.category_id=xrc.category_id WHERE xrc.request_id=r.request_id AND xc.category_name LIKE ?)")
         request_params.append(f"%{search}%")
     if page == "requests":
+        if incident_id is not None:
+            request_conditions.append(incident_request_condition())
+            request_params.extend(incident_request_parameters(incident_id))
         if country:
             request_conditions.append("TRIM(a.country) = ?" if country_exact else "a.country LIKE ?")
             request_params.append(country if country_exact else f"%{country}%")
@@ -222,6 +226,7 @@ def get_metric_trends(
     known: Literal["own", "foreign"] | None = Query(default=None),
     without_burst: bool = Query(default=False),
     burst_extreme: Literal["min_requests", "max_requests", "min_duration", "max_duration"] | None = Query(default=None),
+    incident_id: int | None = Query(default=None, ge=1),
 ) -> dict[str, Any]:
     """Return values for the selected range and its immediately preceding equal-length range."""
     start_dt = from_ if from_.tzinfo else from_.replace(tzinfo=timezone.utc)
@@ -232,8 +237,8 @@ def get_metric_trends(
     current_start, current_end = _utc_text(start_dt), _utc_text(end_dt)
     previous_start_text, previous_end_text = _utc_text(previous_start), current_start
     database = get_database(request)
-    previous = _period_metrics(database, previous_start_text, previous_end_text, page, search, host, host_exact, country, country_exact, provider, provider_exact, status_class, burst_id, actor_ip, actor_ip_exact, category, category_exact, path, path_exact, known, without_burst, burst_extreme)
-    current = _period_metrics(database, current_start, current_end, page, search, host, host_exact, country, country_exact, provider, provider_exact, status_class, burst_id, actor_ip, actor_ip_exact, category, category_exact, path, path_exact, known, without_burst, burst_extreme)
+    previous = _period_metrics(database, previous_start_text, previous_end_text, page, search, host, host_exact, country, country_exact, provider, provider_exact, status_class, burst_id, actor_ip, actor_ip_exact, category, category_exact, path, path_exact, known, without_burst, burst_extreme, incident_id)
+    current = _period_metrics(database, current_start, current_end, page, search, host, host_exact, country, country_exact, provider, provider_exact, status_class, burst_id, actor_ip, actor_ip_exact, category, category_exact, path, path_exact, known, without_burst, burst_extreme, incident_id)
     keys = current.keys()
     result = {}
     for key in keys:

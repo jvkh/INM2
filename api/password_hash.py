@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import base64
 import getpass
 import hashlib
@@ -16,8 +17,22 @@ def _encode(value: bytes) -> str:
 
 
 def main() -> int:
-    password = getpass.getpass("Admin password (at least 12 characters): ")
-    confirmation = getpass.getpass("Repeat admin password: ")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--password-stdin",
+        action="store_true",
+        help="read the password and confirmation from two lines on standard input",
+    )
+    args = parser.parse_args()
+    if args.password_stdin:
+        password = sys.stdin.readline().removesuffix("\n").removesuffix("\r")
+        confirmation = sys.stdin.readline().removesuffix("\n").removesuffix("\r")
+        if not password or not confirmation:
+            print("Password and confirmation are required on standard input.", file=sys.stderr)
+            return 1
+    else:
+        password = getpass.getpass("Admin password (at least 12 characters): ")
+        confirmation = getpass.getpass("Repeat admin password: ")
     if password != confirmation:
         print("Passwords do not match.", file=sys.stderr)
         return 1

@@ -79,6 +79,36 @@ CREATE TABLE IF NOT EXISTS burst_request (
     burst_id   INTEGER NOT NULL REFERENCES burst(burst_id) ON DELETE CASCADE
 );
 
+-- Durable findings from all incident detectors, grouped by type, source, and host.
+CREATE TABLE IF NOT EXISTS incident (
+    incident_id          INTEGER PRIMARY KEY,
+    incident_type        TEXT NOT NULL DEFAULT 'path_scan',
+    actor_id             INTEGER NOT NULL REFERENCES actor(actor_id) ON DELETE CASCADE,
+    host_id              INTEGER REFERENCES host(host_id) ON DELETE SET NULL,
+    first_seen           TEXT NOT NULL,
+    last_seen            TEXT NOT NULL,
+    request_count        INTEGER NOT NULL,
+    indicator_count      INTEGER NOT NULL DEFAULT 0,
+    indicators           TEXT NOT NULL DEFAULT '[]',
+    summary              TEXT NOT NULL DEFAULT '{}',
+    state                TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'acknowledged', 'resolved'))
+);
+
+CREATE TABLE IF NOT EXISTS incident_request (
+    incident_id INTEGER NOT NULL REFERENCES incident(incident_id) ON DELETE CASCADE,
+    request_id  INTEGER NOT NULL REFERENCES request(request_id) ON DELETE CASCADE,
+    PRIMARY KEY (incident_id, request_id)
+);
+
+-- One incident may satisfy more than one detector criterion.
+CREATE TABLE IF NOT EXISTS incident_criterion (
+    incident_id   INTEGER NOT NULL REFERENCES incident(incident_id) ON DELETE CASCADE,
+    incident_type TEXT NOT NULL,
+    PRIMARY KEY (incident_id, incident_type)
+);
+INSERT OR IGNORE INTO incident_criterion (incident_id, incident_type)
+SELECT incident_id, incident_type FROM incident;
+
 CREATE TABLE IF NOT EXISTS settings (
     group_name TEXT NOT NULL,
     name       TEXT NOT NULL,
@@ -100,3 +130,11 @@ CREATE INDEX IF NOT EXISTS idx_burst_start_end ON burst(start_time, end_time);
 CREATE INDEX IF NOT EXISTS idx_request_category_category ON request_category(category_id, request_id);
 CREATE INDEX IF NOT EXISTS idx_burst_category_category ON burst_category(category_id, burst_id);
 CREATE INDEX IF NOT EXISTS idx_burst_request_burst ON burst_request(burst_id, request_id);
+CREATE INDEX IF NOT EXISTS idx_incident_actor_host_type_last ON incident(actor_id, host_id, incident_type, last_seen);
+CREATE INDEX IF NOT EXISTS idx_incident_actor_time ON incident(actor_id, first_seen, last_seen);
+CREATE INDEX IF NOT EXISTS idx_incident_criterion_type ON incident_criterion(incident_type, incident_id);
+CREATE INDEX IF NOT EXISTS idx_incident_state_last ON incident(state, last_seen);
+CREATE INDEX IF NOT EXISTS idx_incident_last_seen ON incident(last_seen DESC, incident_id DESC);
+CREATE INDEX IF NOT EXISTS idx_incident_first_seen ON incident(first_seen, incident_id);
+CREATE INDEX IF NOT EXISTS idx_incident_type_last ON incident(incident_type, last_seen DESC, incident_id DESC);
+CREATE INDEX IF NOT EXISTS idx_incident_request_request ON incident_request(request_id, incident_id);

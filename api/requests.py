@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Path, Query, Request
 
 from api.dependencies import get_database
 from common.known_hosts import known_host_match_sql
+from common.incidents import incident_request_condition, incident_request_parameters
 from common.search import parse_search
 
 router = APIRouter()
@@ -64,6 +65,7 @@ def get_requests(
     actor_exact: bool = Query(default=False, description="Match the actor IP exactly"),
     ip: str | None = Query(default=None, min_length=1, description="Actor IP address"),
     actor_id: int | None = Query(default=None, ge=1),
+    incident_id: int | None = Query(default=None, ge=1, description="Requests belonging to an incident"),
     country: str | None = Query(default=None, min_length=1),
     country_exact: bool = Query(default=False, description="Match the country name exactly"),
     city: str | None = Query(default=None, min_length=1),
@@ -92,6 +94,9 @@ def get_requests(
 
     conditions = ["r.start_utc >= ?", "r.start_utc < ?"]
     parameters: list[Any] = [start, end]
+    if incident_id is not None:
+        conditions.append(incident_request_condition())
+        parameters.extend(incident_request_parameters(incident_id))
     if burst_id is not None:
         conditions.append(
             "EXISTS (SELECT 1 FROM burst_request AS br WHERE br.burst_id = ? AND br.request_id = r.request_id)"
