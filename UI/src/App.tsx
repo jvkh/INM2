@@ -2391,7 +2391,7 @@ function AdminLogin({ onLogin, sessionCheckFailed = false, totpRequired = false 
         const finalPath = new URL(response.url).pathname
         const responseDescription = response.redirected ? (german ? 'umgeleitet' : 'redirected') : (german ? 'ohne JSON-Antwort' : 'without a JSON response')
         setError(german
-          ? `Die API-Anfrage wurde ${responseDescription} (HTTP ${response.status}, Ziel ${finalPath}). Prüfe, ob /api/v1/auth/login direkt die API erreicht.`
+          ? `Die API-Anfrage wurde ${responseDescription} (HTTP ${response.status}, Ziel ${finalPath}). Zu prüfen ist, ob /api/v1/auth/login direkt die API erreicht.`
           : `The API request was ${responseDescription} (HTTP ${response.status}, destination ${finalPath}). Check that /api/v1/auth/login reaches the API directly.`)
         return
       }
@@ -2417,8 +2417,8 @@ function AdminLogin({ onLogin, sessionCheckFailed = false, totpRequired = false 
       <form className="auth-card" onSubmit={submit}>
         <div className="auth-brand"><span><Activity size={20} /></span><strong>INM<span>2</span></strong></div>
         <h1>{german ? 'Anmelden' : 'Sign in'}</h1>
-        <p>{german ? 'Gib dein Admin-Passwort ein, um fortzufahren.' : 'Enter your admin password to continue.'}</p>
-        {sessionCheckFailed && <div className="auth-error" role="status">{german ? 'Der Sitzungsstatus konnte nicht geprüft werden. Du kannst die Anmeldung trotzdem versuchen.' : 'The session could not be checked. You can still try to sign in.'}</div>}
+        <p>{german ? 'Admin-Passwort eingeben, um fortzufahren.' : 'Enter the admin password to continue.'}</p>
+        {sessionCheckFailed && <div className="auth-error" role="status">{german ? 'Der Sitzungsstatus konnte nicht geprüft werden. Eine Anmeldung ist trotzdem möglich.' : 'The session could not be checked. Sign-in is still available.'}</div>}
         <label htmlFor="admin-password">{german ? 'Passwort' : 'Password'}</label>
         <input id="admin-password" type="password" autoComplete="current-password" required minLength={1} maxLength={1024} value={password} onChange={(event) => setPassword(event.target.value)} autoFocus />
         {totpRequired && <><label htmlFor="admin-totp" className="auth-totp-label">{german ? 'Authenticator-Code' : 'Authenticator code'}</label><input id="admin-totp" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required value={totpCode} onChange={(event) => setTotpCode(event.target.value.replace(/\D/g, '').slice(0, 6))} /></>}
