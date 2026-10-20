@@ -2,13 +2,13 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState, useSyncExternal
 import {
   Activity, ArrowDown, ArrowDownRight, ArrowRight, ArrowUp, ArrowUpRight, BarChart3, Bell, Blocks, BookOpenText, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CircleHelp,
   Clock3, Command, Database, FileText, Filter, Globe2, LayoutDashboard, List, LockKeyhole, LockOpen, Menu,
-  Network, Search, Settings, Settings2, ShieldAlert, SkipBack, SkipForward, Sun, Trash2, Users, X, LogOut,
+  Network, Search, Settings, Settings2, ShieldAlert, SkipBack, SkipForward, Sun, Trash2, Users, X, LogOut, Bug,
 } from 'lucide-react'
 import { messages, type Language, type MessageKey } from './i18n'
 
 type Theme = 'auto' | 'cloud' | 'midnight' | 'moss'
-type PageKey = 'dashboard' | 'bursts' | 'incidents' | 'actors' | 'hosts' | 'categories' | 'requests' | 'statistics' | 'administration' | 'categoryGuide' | 'burstGuide' | 'countGuide' | 'hostGuide' | 'pathsGuide' | 'incidentGuide' | 'logging'
-const pageKeys: PageKey[] = ['dashboard', 'bursts', 'incidents', 'actors', 'hosts', 'categories', 'requests', 'statistics', 'administration', 'categoryGuide', 'burstGuide', 'countGuide', 'hostGuide', 'pathsGuide', 'incidentGuide', 'logging']
+type PageKey = 'dashboard' | 'bursts' | 'incidents' | 'actors' | 'hosts' | 'categories' | 'requests' | 'statistics' | 'administration' | 'categoryGuide' | 'burstGuide' | 'countGuide' | 'hostGuide' | 'pathsGuide' | 'incidentGuide' | 'logging' | 'honeypot' | 'honeypotGuide'
+const pageKeys: PageKey[] = ['dashboard', 'bursts', 'incidents', 'actors', 'hosts', 'categories', 'requests', 'statistics', 'administration', 'categoryGuide', 'burstGuide', 'countGuide', 'hostGuide', 'pathsGuide', 'incidentGuide', 'logging', 'honeypot', 'honeypotGuide']
 function pageFromUrl(): PageKey | null {
   const value = new URLSearchParams(window.location.search).get('page')
   return value && pageKeys.includes(value as PageKey) ? value as PageKey : null
@@ -19,7 +19,7 @@ function writePageToUrl(page: PageKey, replace = false) {
   if (replace) window.history.replaceState({ page }, '', url)
   else window.history.pushState({ page }, '', url)
 }
-type TableKey = 'bursts' | 'actors' | 'hosts' | 'categories' | 'requests'
+type TableKey = 'bursts' | 'actors' | 'hosts' | 'categories' | 'requests' | 'honeypot'
 type PageSize = 10 | 25 | 50 | 100 | 200 | 500
 const allowedPageSizes: PageSize[] = [10, 25, 50, 100, 200, 500]
 const defaultTablePageSize: PageSize = 25
@@ -38,6 +38,9 @@ type CategoryFilters = { search: string }
 type RequestSortColumn = 'start_utc' | 'request_method' | 'request_path' | 'user_agent' | 'downstream_status' | 'actor_ip' | 'host' | 'duration' | 'downstream_content_size' | 'burst_id'
 type RequestSort = { column: RequestSortColumn; direction: 'asc' | 'desc' }
 type RequestFilters = { search: string; status: '' | '2xx' | '3xx' | '4xx' | '5xx'; withoutBurst: boolean }
+type HoneypotSortColumn = 'time' | 'client_ip' | 'request_count' | 'post_count' | 'path_count' | 'body_bytes'
+type HoneypotSort = { column: HoneypotSortColumn; direction: 'asc' | 'desc' }
+type HoneypotFilters = { search: string; postsOnly: boolean }
 const defaultBurstSort: BurstSort = { column: 'start_time', direction: 'asc' }
 const defaultBurstFilters: BurstFilters = { search: '', host: '', known: '', country: '' }
 const defaultActorSort: ActorSort = { column: 'first_time', direction: 'asc' }
@@ -48,6 +51,8 @@ const defaultCategorySort: CategorySort = { column: 'category_name', direction: 
 const defaultCategoryFilters: CategoryFilters = { search: '' }
 const defaultRequestSort: RequestSort = { column: 'start_utc', direction: 'desc' }
 const defaultRequestFilters: RequestFilters = { search: '', status: '', withoutBurst: false }
+const defaultHoneypotSort: HoneypotSort = { column: 'time', direction: 'desc' }
+const defaultHoneypotFilters: HoneypotFilters = { search: '', postsOnly: false }
 
 type SearchField = 'ip' | 'host' | 'country' | 'city' | 'provider' | 'asn' | 'path' | 'category' | 'method' | 'status' | 'scheme' | 'user_agent'
 // Keep localized aliases in sync with common/search.py. English canonical names
@@ -72,16 +77,18 @@ const navigation: { key: PageKey; icon: typeof LayoutDashboard }[] = [
   { key: 'incidents', icon: ShieldAlert },
   { key: 'actors', icon: Users }, { key: 'hosts', icon: Globe2 },
   { key: 'categories', icon: Blocks }, { key: 'requests', icon: List },
-  { key: 'statistics', icon: BarChart3 },
+  { key: 'honeypot', icon: Bug }, { key: 'statistics', icon: BarChart3 },
 ]
 
 type RangePreset = 'last24h' | 'today' | 'yesterday' | 'last6h' | 'last7d' | 'last30d' | 'last90d' | 'custom'
 type DashboardChartMode = 'requests' | 'bursts' | 'incidents'
 type TimeRange = { from: Date; to: Date; preset: RangePreset; query: string }
-type TrafficBucket = { from: string; to: string }
-type StatisticsSection = 'overview' | 'traffic' | 'patterns' | 'hostsActors' | 'insights' | 'incidents'
+type TrafficBucket = { from: string; to: string; source?: 'honeypot-group' }
+type StatisticsSection = 'overview' | 'traffic' | 'patterns' | 'hostsActors' | 'insights' | 'incidents' | 'honeypot'
+type HoneypotStatistics = { access_count: number; matched_access_count: number; unmatched_access_count: number; matched_incident_count: number; by_method: StatisticsItem[]; by_rule: StatisticsItem[]; timeline: { from: string; to: string; request_count: number }[] }
+type HoneypotSummary = { request_count: number; actor_count: number; post_with_data_count: number; uploaded_execution_attempt_count: number }
 type IncidentStatistics = { incident_count: number; actor_count: number; host_count: number; linked_request_count: number; by_type: StatisticsItem[]; timeline: { from: string; to: string; incident_count: number; incidents?: NotificationIncident[] }[]; top_actors: StatisticsItem[]; top_hosts: StatisticsItem[]; error_metrics: { incident_count: number; error_count: number; non_error_count: number; non_error_share_percent: number }; request_spike_metrics: { incident_count: number; average_rps: number | null; min_rps: number | null; max_rps: number | null } }
-type UiPreferences = { language?: Language; theme?: Theme; lastPage?: PageKey; sidebarCollapsed?: boolean; systemNavOpen?: boolean; helpNavOpen?: boolean; dashboardChartMode?: DashboardChartMode; dashboardOverviewMode?: 'bursts' | 'incidents'; dashboardTableMode?: 'bursts' | 'incidents'; statisticsSection?: StatisticsSection; timeRange?: { preset: RangePreset; from?: string; to?: string }; tablePageSizes?: Partial<Record<TableKey, PageSize>>; burstSort?: BurstSort; burstFilters?: BurstFilters; actorSort?: ActorSort; actorFilters?: ActorFilters; hostSort?: HostSort; hostFilters?: HostFilters; categorySort?: CategorySort; categoryFilters?: CategoryFilters; requestSort?: RequestSort; requestFilters?: RequestFilters }
+type UiPreferences = { language?: Language; theme?: Theme; lastPage?: PageKey; sidebarCollapsed?: boolean; systemNavOpen?: boolean; helpNavOpen?: boolean; dashboardChartMode?: DashboardChartMode; dashboardOverviewMode?: 'bursts' | 'incidents'; dashboardTableMode?: 'bursts' | 'incidents'; statisticsSection?: StatisticsSection; timeRange?: { preset: RangePreset; from?: string; to?: string }; tablePageSizes?: Partial<Record<TableKey, PageSize>>; burstSort?: BurstSort; burstFilters?: BurstFilters; actorSort?: ActorSort; actorFilters?: ActorFilters; hostSort?: HostSort; hostFilters?: HostFilters; categorySort?: CategorySort; categoryFilters?: CategoryFilters; requestSort?: RequestSort; requestFilters?: RequestFilters; honeypotSort?: HoneypotSort; honeypotFilters?: HoneypotFilters }
 type ApiResult<T> = { items: T[]; total?: number; total_count?: number; known_count?: number; summary?: Record<string, number | null> }
 type ActorItem = { actor_id: number; ip: string; first_time: string; last_time: string; provider: string | null; asn: string | null; city: string | null; country: string | null; request_count: number; total_request_count: number; burst_count: number }
 type BurstItem = { burst_id: number; actor_ip: string; country: string | null; provider: string | null; asn: string | null; city: string | null; host: string | null; known: number; start_time: string; end_time: string; avg_count: number; read_count: number; write_count: number; other_count: number }
@@ -99,9 +106,14 @@ type IncidentType = 'path_scan' | 'failed_login' | 'sensitive_file_access' | 'ex
 type NotificationIncident = { incident_id: number; incident_type: IncidentType; incident_types?: IncidentType[]; first_seen: string; last_seen: string; request_count: number; indicator_count: number; indicators: string[]; summary: Record<string, number>; actor_ip: string; country: string | null; city: string | null; provider: string | null; asn: string | null; host: string | null }
 type Incident = NotificationIncident & { actor_id: number; state: 'open' | 'acknowledged' | 'resolved' }
 type NotificationData = { request_count: number; request_since_utc: string | null; burst_count: number; incident_count: number; requests: NotificationRequest[]; bursts: NotificationBurst[]; incidents: NotificationIncident[]; request_cursor: number; burst_cursor: number; incident_cursor: number }
-type StatusData = { status: string; database: string; collector_status: { available: boolean; last_import: string | null; activity: string; import_file: string; last_import_file: string; import_count: number }; environment: Record<string, string> }
+type StatusData = { status: string; database: string; honeypot_available: boolean; honeypot_configured: boolean; collector_status: { available: boolean; last_import: string | null; activity: string; import_file: string; last_import_file: string; import_count: number }; environment: Record<string, string> }
 type LogService = 'collector' | 'api' | 'ui_access' | 'ui_error'
 type LogResponse = { service: LogService; content: string; truncated: boolean }
+type HoneypotEvent = { event_id: string; time: string; client_ip: string | null; provider: string | null; asn: string | null; country: string | null; city: string | null; host: string | null; scheme: string | null; session_id: string | null; session_phase: string | null; method: string; path: string; user_agent: string | null; content_type: string | null; body_bytes: number; body_clipped: number; body_sha256: string | null; rule: string | null; status: number | null; duration: number; has_body: number }
+type HoneypotGroup = { first_time: string; last_time: string; client_ip: string | null; provider: string | null; asn: string | null; country: string | null; city: string | null; request_count: number; post_count: number; body_count: number; body_bytes: number; path_count: number }
+type HoneypotGroupsResponse = { items: HoneypotGroup[]; total: number; total_events: number; limit: number; offset: number; session_gap_seconds: number }
+type HoneypotEventsResponse = { items: HoneypotEvent[]; total: number }
+type HoneypotEventDetail = Omit<HoneypotEvent, 'has_body'> & { body_text: string | null; body_base64: string | null; body_file: string | null }
 type BurstResponse = { summary: Record<string, number | null>; items: BurstItem[]; total?: number; limit: number; offset: number }
 type CountItem = { read_count: number; write_count: number; other_count: number; total_count?: number; from?: string; to?: string }
 type StatisticsItem = { name: string | null; request_count: number; share_percent: number; known?: number; status_class?: string; total_count?: number; provider?: string | null; asn?: string | null; country?: string | null; city?: string | null }
@@ -407,11 +419,11 @@ function parsePreferences(items: { name: string; value: string | null }[]): UiPr
   if (values.dashboard_chart_mode === 'requests' || values.dashboard_chart_mode === 'bursts' || values.dashboard_chart_mode === 'incidents') preferences.dashboardChartMode = values.dashboard_chart_mode
   if (values.dashboard_overview_mode === 'bursts' || values.dashboard_overview_mode === 'incidents') preferences.dashboardOverviewMode = values.dashboard_overview_mode
   if (values.dashboard_table_mode === 'bursts' || values.dashboard_table_mode === 'incidents') preferences.dashboardTableMode = values.dashboard_table_mode
-  if (values.statistics_section === 'overview' || values.statistics_section === 'traffic' || values.statistics_section === 'patterns' || values.statistics_section === 'hostsActors' || values.statistics_section === 'insights' || values.statistics_section === 'incidents') preferences.statisticsSection = values.statistics_section
+  if (values.statistics_section === 'overview' || values.statistics_section === 'traffic' || values.statistics_section === 'patterns' || values.statistics_section === 'hostsActors' || values.statistics_section === 'insights' || values.statistics_section === 'incidents' || values.statistics_section === 'honeypot') preferences.statisticsSection = values.statistics_section
   if (values.table_page_sizes) {
     try {
       const parsed = JSON.parse(values.table_page_sizes) as Partial<Record<TableKey, number>>
-      const validTables: TableKey[] = ['bursts', 'actors', 'hosts', 'categories', 'requests']
+      const validTables: TableKey[] = ['bursts', 'actors', 'hosts', 'categories', 'requests', 'honeypot']
       const parsedSizes: Partial<Record<TableKey, PageSize>> = {}
       for (const table of validTables) {
         if (allowedPageSizes.includes(parsed?.[table] as PageSize)) parsedSizes[table] = parsed[table] as PageSize
@@ -491,6 +503,19 @@ function parsePreferences(items: { name: string; value: string | null }[]): UiPr
       if (parsed && typeof parsed.search === 'string' && ['', '2xx', '3xx', '4xx', '5xx'].includes(parsed.status)) preferences.requestFilters = { ...defaultRequestFilters, ...parsed, withoutBurst: parsed.withoutBurst === true }
     } catch { /* Ignore malformed request filter preferences. */ }
   }
+  if (values.honeypot_sort) {
+    try {
+      const parsed = JSON.parse(values.honeypot_sort) as HoneypotSort
+      const columns: HoneypotSortColumn[] = ['time', 'client_ip', 'request_count', 'post_count', 'path_count', 'body_bytes']
+      if (parsed && columns.includes(parsed.column) && (parsed.direction === 'asc' || parsed.direction === 'desc')) preferences.honeypotSort = parsed
+    } catch { /* Ignore malformed honeypot sorting preferences. */ }
+  }
+  if (values.honeypot_filters) {
+    try {
+      const parsed = JSON.parse(values.honeypot_filters) as HoneypotFilters
+      if (parsed && typeof parsed.search === 'string' && typeof parsed.postsOnly === 'boolean') preferences.honeypotFilters = parsed
+    } catch { /* Ignore malformed honeypot filter preferences. */ }
+  }
   return preferences
 }
 
@@ -554,6 +579,30 @@ function incidentDurationText(start: string | null | undefined, end: string | nu
   const endMs = new Date(end).getTime()
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return '—'
   return elapsedDurationText(endMs - startMs, language)
+}
+
+function honeypotPhaseText(phase: string | null | undefined, t: (key: MessageKey) => string) {
+  if (!phase) return '—'
+  if (phase === 'anonymous') return t('honeypotPhaseAnonymous')
+  if (phase === 'authenticated') return t('honeypotPhaseAuthenticated')
+  if (phase === 'useradmin-viewed') return t('honeypotPhaseUseradminViewed')
+  if (phase === 'useradmin-access-denied') return t('honeypotPhaseUseradminAccessDenied')
+  if (phase === 'file-manager-viewed') return t('honeypotPhaseFileManagerViewed')
+  if (phase === 'public-upload-form-viewed') return t('honeypotPhasePublicUploadFormViewed')
+  if (phase === 'file-upload-received') return t('honeypotPhaseUploadReceived')
+  if (phase === 'uploaded-script-requested') return t('honeypotPhaseUploadedScriptRequested')
+  if (phase === 'uploaded-file-opened') return t('honeypotPhaseUploadedFileOpened')
+  if (phase === 'terminal-opened') return t('honeypotPhaseTerminalOpened')
+  if (phase === 'terminal-command') return t('honeypotPhaseTerminalCommand')
+  if (phase === 'uploaded-execution-attempt') return t('honeypotPhaseUploadedExecutionAttempt')
+  if (phase === 'contact-form-viewed') return t('honeypotPhaseContactFormViewed')
+  if (phase === 'contact-message-submitted') return t('honeypotPhaseContactMessageSubmitted')
+  if (phase === 'club-members-viewed') return t('honeypotPhaseClubMembers')
+  if (phase === 'login-required') return t('honeypotPhaseLoginRequired')
+  if (phase === 'signed-out') return t('honeypotPhaseSignedOut')
+  if (phase === 'password-reset-requested') return t('honeypotPhasePasswordReset')
+  const attempt = phase.match(/^login-attempt-(\d+)$/)
+  return attempt ? `${t('honeypotPhaseLoginAttempt')} ${attempt[1]}` : phase
 }
 
 function requestDateTimeText(value: string | null | undefined, language: Language) {
@@ -729,6 +778,8 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
   const [categoryFilters, setCategoryFilters] = useState<CategoryFilters>(defaultCategoryFilters)
   const [requestSort, setRequestSort] = useState<RequestSort>(defaultRequestSort)
   const [requestFilters, setRequestFilters] = useState<RequestFilters>(defaultRequestFilters)
+  const [honeypotSort, setHoneypotSort] = useState<HoneypotSort>(defaultHoneypotSort)
+  const [honeypotFilters, setHoneypotFilters] = useState<HoneypotFilters>(defaultHoneypotFilters)
   const [tablePageSizes, setTablePageSizes] = useState<Partial<Record<TableKey, PageSize>>>({})
   const [selectedBurstId, setSelectedBurstId] = useState<number | null>(null)
   const [selectedBurstExtreme, setSelectedBurstExtreme] = useState<BurstExtreme | null>(null)
@@ -850,6 +901,8 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
         if (saved.categoryFilters) setCategoryFilters(saved.categoryFilters)
         if (saved.requestSort) setRequestSort(saved.requestSort)
         if (saved.requestFilters) setRequestFilters(saved.requestFilters)
+        if (saved.honeypotSort) setHoneypotSort(saved.honeypotSort)
+        if (saved.honeypotFilters) setHoneypotFilters(saved.honeypotFilters)
         if (saved.timeRange) {
           const stored = saved.timeRange
           if (stored.preset === 'custom' && stored.from && stored.to && new Date(stored.from) < new Date(stored.to)) {
@@ -915,6 +968,11 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
     setActivePage(page)
     savePreference('last_page', page)
   }
+  useEffect(() => {
+    if (liveStatus.data && !liveStatus.data.honeypot_configured && (activePage === 'honeypot' || activePage === 'honeypotGuide')) {
+      navigateToPage('dashboard')
+    }
+  }, [liveStatus.data?.honeypot_configured, activePage])
   const toggleSidebar = () => {
     const next = !sidebarCollapsed
     setSidebarCollapsed(next)
@@ -968,6 +1026,8 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
   const updateCategoryFilters = (value: CategoryFilters) => { setCategoryFilters(value); savePreference('category_filters', JSON.stringify(value)) }
   const updateRequestSort = (value: RequestSort) => { setRequestSort(value); savePreference('request_sort', JSON.stringify(value)) }
   const updateRequestFilters = (value: RequestFilters) => { setRequestFilters(value); savePreference('request_filters', JSON.stringify(value)) }
+  const updateHoneypotSort = (value: HoneypotSort) => { setHoneypotSort(value); savePreference('honeypot_sort', JSON.stringify(value)) }
+  const updateHoneypotFilters = (value: HoneypotFilters) => { setHoneypotFilters(value); savePreference('honeypot_filters', JSON.stringify(value)) }
   const selectIncidentRequests = (incident: NotificationIncident) => {
     setSelectedTrafficBucket({ from: incident.first_seen, to: new Date(new Date(incident.last_seen).getTime() + 1000).toISOString() })
     setSelectedIncidentId(incident.incident_id)
@@ -990,6 +1050,27 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
     setSelectedBurstExtreme(null)
     setSelectedStatisticFilter(null)
     setSelectedActorIp(null)
+    setSelectedHost(null)
+    setSelectedCategory(null)
+    setSelectedPath(null)
+    updateRequestFilters({ ...defaultRequestFilters })
+    navigateToPage('requests')
+  }
+  const selectHoneypotGroupRequests = (group: HoneypotGroup) => {
+    // The honeypot timestamps its event after sending the response, while
+    // Traefik records the request start. Include a small lead-in so the first
+    // matching proxy request is not excluded by the inclusive lower bound.
+    setSelectedTrafficBucket({
+      from: new Date(new Date(group.first_time).getTime() - 1000).toISOString(),
+      to: new Date(new Date(group.last_time).getTime() + 1000).toISOString(),
+      source: 'honeypot-group',
+    })
+    setSelectedIncidentId(null)
+    setSelectedIncident(null)
+    setSelectedBurstId(null)
+    setSelectedBurstExtreme(null)
+    setSelectedStatisticFilter(null)
+    setSelectedActorIp(group.client_ip)
     setSelectedHost(null)
     setSelectedCategory(null)
     setSelectedPath(null)
@@ -1102,7 +1183,7 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
         </div>
         <div className="nav-caption">{t('navigation')}</div>
         <nav className="main-nav" aria-label={t('navigation')}>
-          {navigation.map(({ key, icon: Icon }) => (
+          {navigation.map(({ key, icon: Icon }) => key === 'honeypot' && !liveStatus.data?.honeypot_configured ? null : (
             <a key={key} href="#" title={sidebarCollapsed ? t(key) : undefined} className={`nav-link ${activePage === key ? 'active' : ''}`} aria-current={activePage === key ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage(key); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedPath(null); setMenuOpen(false) }}>
               <Icon size={18} strokeWidth={1.9} /><span>{t(key)}</span>
             </a>
@@ -1125,6 +1206,7 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
             <a href="#" title={sidebarCollapsed ? t('hostGuide') : undefined} className={`nav-link ${activePage === 'hostGuide' ? 'active' : ''}`} aria-current={activePage === 'hostGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('hostGuide'); setMenuOpen(false) }}><Globe2 size={18} /><span>{t('hostGuide')}</span></a>
             <a href="#" title={sidebarCollapsed ? t('incidentGuide') : undefined} className={`nav-link ${activePage === 'incidentGuide' ? 'active' : ''}`} aria-current={activePage === 'incidentGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('incidentGuide'); setMenuOpen(false) }}><ShieldAlert size={18} /><span>{t('incidentGuide')}</span></a>
             <a href="#" title={sidebarCollapsed ? t('pathsGuide') : undefined} className={`nav-link ${activePage === 'pathsGuide' ? 'active' : ''}`} aria-current={activePage === 'pathsGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('pathsGuide'); setMenuOpen(false) }}><List size={18} /><span>{t('pathsGuide')}</span></a>
+            {liveStatus.data?.honeypot_configured && <a href="#" title={sidebarCollapsed ? t('honeypotGuide') : undefined} className={`nav-link ${activePage === 'honeypotGuide' ? 'active' : ''}`} aria-current={activePage === 'honeypotGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('honeypotGuide'); setMenuOpen(false) }}><Bug size={18} /><span>{t('honeypotGuide')}</span></a>}
           </div>}
         </div>
         <div className="sidebar-spacer" />
@@ -1148,7 +1230,7 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
         </header>
 
         <div className="content-wrap">
-          {activePage === 'bursts' ? <BurstsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.bursts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('bursts', size)} sort={burstSort} onSortChange={updateBurstSort} filters={burstFilters} onFiltersChange={updateBurstFilters} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'actors' ? <ActorsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.actors ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('actors', size)} sort={actorSort} onSortChange={updateActorSort} filters={actorFilters} onFiltersChange={updateActorFilters} onActorSelect={(ip) => { setSelectedTrafficBucket(null); setSelectedActorIp(ip); setSelectedBurstId(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'hosts' ? <HostsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.hosts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('hosts', size)} sort={hostSort} onSortChange={updateHostSort} filters={hostFilters} onFiltersChange={updateHostFilters} onHostSelect={(host) => { setSelectedTrafficBucket(null); setSelectedHost(host); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'categories' ? <CategoriesPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.categories ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('categories', size)} sort={categorySort} onSortChange={updateCategorySort} filters={categoryFilters} onFiltersChange={updateCategoryFilters} onCategorySelect={(category) => { setSelectedTrafficBucket(null); setSelectedCategory(category); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'requests' ? <RequestsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.requests ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('requests', size)} burstId={selectedBurstId} incidentId={selectedIncidentId} incidentContext={selectedIncidentId === selectedIncident?.incident_id ? selectedIncident : null} burstExtreme={selectedBurstExtreme} statisticFilter={selectedStatisticFilter} actorIp={selectedActorIp} host={selectedHost} category={selectedCategory} path={selectedPath} trafficBucket={selectedTrafficBucket} onTrafficBucketClear={() => setSelectedTrafficBucket(null)} onIncidentClear={() => { setSelectedIncidentId(null); setSelectedTrafficBucket(null) }} filters={requestFilters} onFiltersChange={updateRequestFilters} sort={requestSort} onSortChange={updateRequestSort} onBurstClear={() => setSelectedBurstId(null)} onBurstExtremeClear={() => setSelectedBurstExtreme(null)} onStatisticFilterClear={() => setSelectedStatisticFilter(null)} onActorClear={() => setSelectedActorIp(null)} onHostClear={() => setSelectedHost(null)} onCategoryClear={() => setSelectedCategory(null)} onPathClear={() => setSelectedPath(null)} /> : activePage === 'statistics' ? <StatisticsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} section={statisticsSection} onSectionChange={updateStatisticsSection} onBucketSelect={selectTrafficBucketRequests} onBurstSelect={selectBurstRequests} onIncidentSelect={selectIncidentRequests} onBurstExtremeSelect={(extreme) => { setSelectedStatisticFilter(null); setSelectedTrafficBucket(null); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); setSelectedBurstExtreme(extreme); updateRequestFilters({ ...defaultRequestFilters }); navigateToPage('requests') }} onDistributionSelect={(kind, value) => { setSelectedTrafficBucket(null); setSelectedBurstExtreme(null); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedPath(null); updateRequestFilters({ ...defaultRequestFilters }); if (kind === 'actor') { setSelectedStatisticFilter(null); setSelectedActorIp(value); setSelectedHost(null); setSelectedCategory(null) } else if (kind === 'path') { setSelectedStatisticFilter(null); setSelectedPath(value); setSelectedHost(null); setSelectedCategory(null) } else if (kind === 'host') { setSelectedStatisticFilter(null); setSelectedHost(value); setSelectedCategory(null) } else if (kind === 'category') { setSelectedStatisticFilter(null); setSelectedCategory(value); setSelectedHost(null) } else { setSelectedStatisticFilter({ field: kind, value }); setSelectedHost(null); setSelectedCategory(null) } navigateToPage('requests') }} /> : activePage === 'administration' ? <AdministrationPage t={t} language={language} /> : activePage === 'categoryGuide' ? <CategoryGuidePage t={t} /> : activePage === 'burstGuide' ? <BurstGuidePage t={t} /> : activePage === 'countGuide' ? <CountGuidePage t={t} /> : activePage === 'hostGuide' ? <HostGuidePage t={t} /> : activePage === 'pathsGuide' ? <PathsGuidePage t={t} /> : activePage === 'incidentGuide' ? <IncidentGuidePage t={t} /> : activePage === 'logging' ? <LoggingPage t={t} /> : activePage === 'incidents' ? <IncidentsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} onIncidentSelect={selectIncidentRequests} /> : <DashboardPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} chartMode={dashboardChartMode} onChartModeChange={updateDashboardChartMode} overviewMode={dashboardOverviewMode} onOverviewModeChange={updateDashboardOverviewMode} tableMode={dashboardTableMode} onTableModeChange={updateDashboardTableMode} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} onBucketSelect={(bucket) => { setSelectedTrafficBucket(bucket); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} onIncidentSelect={selectIncidentRequests} />}
+          {activePage === 'bursts' ? <BurstsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.bursts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('bursts', size)} sort={burstSort} onSortChange={updateBurstSort} filters={burstFilters} onFiltersChange={updateBurstFilters} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'actors' ? <ActorsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.actors ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('actors', size)} sort={actorSort} onSortChange={updateActorSort} filters={actorFilters} onFiltersChange={updateActorFilters} onActorSelect={(ip) => { setSelectedTrafficBucket(null); setSelectedActorIp(ip); setSelectedBurstId(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'hosts' ? <HostsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.hosts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('hosts', size)} sort={hostSort} onSortChange={updateHostSort} filters={hostFilters} onFiltersChange={updateHostFilters} onHostSelect={(host) => { setSelectedTrafficBucket(null); setSelectedHost(host); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'categories' ? <CategoriesPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.categories ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('categories', size)} sort={categorySort} onSortChange={updateCategorySort} filters={categoryFilters} onFiltersChange={updateCategoryFilters} onCategorySelect={(category) => { setSelectedTrafficBucket(null); setSelectedCategory(category); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'requests' ? <RequestsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.requests ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('requests', size)} burstId={selectedBurstId} incidentId={selectedIncidentId} incidentContext={selectedIncidentId === selectedIncident?.incident_id ? selectedIncident : null} burstExtreme={selectedBurstExtreme} statisticFilter={selectedStatisticFilter} actorIp={selectedActorIp} host={selectedHost} category={selectedCategory} path={selectedPath} trafficBucket={selectedTrafficBucket} onTrafficBucketClear={() => setSelectedTrafficBucket(null)} onIncidentClear={() => { setSelectedIncidentId(null); setSelectedTrafficBucket(null) }} filters={requestFilters} onFiltersChange={updateRequestFilters} sort={requestSort} onSortChange={updateRequestSort} onBurstClear={() => setSelectedBurstId(null)} onBurstExtremeClear={() => setSelectedBurstExtreme(null)} onStatisticFilterClear={() => setSelectedStatisticFilter(null)} onActorClear={() => setSelectedActorIp(null)} onHostClear={() => setSelectedHost(null)} onCategoryClear={() => setSelectedCategory(null)} onPathClear={() => setSelectedPath(null)} /> : activePage === 'statistics' ? <StatisticsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} section={statisticsSection} onSectionChange={updateStatisticsSection} honeypotConfigured={liveStatus.data?.honeypot_configured === true} onBucketSelect={selectTrafficBucketRequests} onBurstSelect={selectBurstRequests} onIncidentSelect={selectIncidentRequests} onBurstExtremeSelect={(extreme) => { setSelectedStatisticFilter(null); setSelectedTrafficBucket(null); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); setSelectedBurstExtreme(extreme); updateRequestFilters({ ...defaultRequestFilters }); navigateToPage('requests') }} onDistributionSelect={(kind, value) => { setSelectedTrafficBucket(null); setSelectedBurstExtreme(null); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedPath(null); updateRequestFilters({ ...defaultRequestFilters }); if (kind === 'actor') { setSelectedStatisticFilter(null); setSelectedActorIp(value); setSelectedHost(null); setSelectedCategory(null) } else if (kind === 'path') { setSelectedStatisticFilter(null); setSelectedPath(value); setSelectedHost(null); setSelectedCategory(null) } else if (kind === 'host') { setSelectedStatisticFilter(null); setSelectedHost(value); setSelectedCategory(null) } else if (kind === 'category') { setSelectedStatisticFilter(null); setSelectedCategory(value); setSelectedHost(null) } else { setSelectedStatisticFilter({ field: kind, value }); setSelectedHost(null); setSelectedCategory(null) } navigateToPage('requests') }} /> : activePage === 'administration' ? <AdministrationPage t={t} language={language} /> : activePage === 'categoryGuide' ? <CategoryGuidePage t={t} /> : activePage === 'burstGuide' ? <BurstGuidePage t={t} /> : activePage === 'countGuide' ? <CountGuidePage t={t} /> : activePage === 'hostGuide' ? <HostGuidePage t={t} /> : activePage === 'pathsGuide' ? <PathsGuidePage t={t} /> : activePage === 'incidentGuide' ? <IncidentGuidePage t={t} /> : activePage === 'honeypotGuide' && liveStatus.data?.honeypot_configured ? <HoneypotGuidePage t={t} /> : activePage === 'honeypot' ? <HoneypotPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.honeypot ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('honeypot', size)} sort={honeypotSort} onSortChange={updateHoneypotSort} filters={honeypotFilters} onFiltersChange={updateHoneypotFilters} onGroupRequestsSelect={selectHoneypotGroupRequests} /> : activePage === 'logging' ? <LoggingPage t={t} /> : activePage === 'incidents' ? <IncidentsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} onIncidentSelect={selectIncidentRequests} /> : <DashboardPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} chartMode={dashboardChartMode} onChartModeChange={updateDashboardChartMode} overviewMode={dashboardOverviewMode} onOverviewModeChange={updateDashboardOverviewMode} tableMode={dashboardTableMode} onTableModeChange={updateDashboardTableMode} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} onBucketSelect={(bucket) => { setSelectedTrafficBucket(bucket); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} onIncidentSelect={selectIncidentRequests} />}
 
           <footer className="page-footer"><span>INM2 <b>·</b> Internet Noise Monitor</span><div className="footer-controls">{preferencesError && <span className="preferences-error">{t('preferencesError')}</span>}<label><span>{t('theme')}</span><select value={theme} onChange={(event) => updateTheme(event.target.value as Theme)} aria-label={t('theme')}><option value="auto">{t('themeAuto')}</option><option value="cloud">{t('themeCloud')}</option><option value="midnight">{t('themeMidnight')}</option><option value="moss">{t('themeMoss')}</option></select><Sun size={14} /></label><label><span>{t('language')}</span><select value={language} onChange={(event) => updateLanguage(event.target.value as Language)} aria-label={t('language')}><option value="de">DE</option><option value="en">EN</option></select></label><span className="version-label">v{__APP_VERSION__}</span></div></footer>
         </div>
@@ -1556,7 +1638,7 @@ function DashboardPage({ t, language, range, onRangeChange, lastImport, onBurstS
           {tableMode === 'bursts' ? <TableScroller t={t} className="dashboard-burst-scroll"><table><thead><tr><SortableHeader column="start_time" label={t('startTime')} sort={burstSort} onSort={changeBurstSort} filtered={true} filterLabel={t('filteredColumn')} /><SortableHeader column="actor_ip" label={t('actor')} sort={burstSort} onSort={changeBurstSort} /><SortableHeader column="host" label={t('host')} sort={burstSort} onSort={changeBurstSort} /><SortableHeader column="country" label={t('country')} sort={burstSort} onSort={changeBurstSort} /><SortableHeader column="duration" label={t('duration')} sort={burstSort} onSort={changeBurstSort} /><SortableHeader column="requests" label={t('requestsLabel')} sort={burstSort} onSort={changeBurstSort} /><th /></tr></thead><tbody>{bursts.data?.items.length ? bursts.data.items.map((burst) => <tr key={burst.burst_id}><td>{dateText(burst.start_time, language)}</td><td><span className="actor-detail"><button type="button" className="table-link primary-cell" onClick={() => onBurstSelect(burst.burst_id)}>{burst.actor_ip}</button><small>{burst.provider || '—'} · {burst.asn || '—'}</small></span></td><td className={`host-cell${burst.known ? ' known-host-name' : ''}`}>{burst.host || '—'}</td><td><span className="country-cell"><span className="country-flag" title={burst.country || ''}>{countryFlag(burst.country)}</span>{burst.country || '—'} · {burst.city || '—'}</span></td><td>{secondsText((new Date(burst.end_time).getTime() - new Date(burst.start_time).getTime()) / 1000, language)}</td><td><span className="request-count">{numberText(burst.read_count + burst.write_count + burst.other_count, language)}</span></td><td><button className="icon-button row-more" aria-label={t('viewBurstRequests')} title={t('viewBurstRequests')} onClick={() => onBurstSelect(burst.burst_id)}><ArrowUpRight size={15} /></button></td></tr>) : <EmptyRows t={t} columns={8} />}</tbody></table></TableScroller> : <TableScroller t={t} className="dashboard-incident-scroll"><table className="incident-dashboard-table"><thead><tr><th>{t('id')}</th><th>{t('incidentType')}</th><th>{t('incidentStart')}</th><th>{t('actor')}</th><th /></tr></thead><tbody>{dashboardIncidents.data?.items.length ? dashboardIncidents.data.items.map((incident) => <tr key={incident.incident_id} data-hint={`${t('host')}: ${incident.summary?.host_count > 1 ? t('multipleHosts') : incident.host || '—'}\n${t('requestsLabel')}: ${numberText(incident.request_count, language)}`}><td><button type="button" className="table-link" onClick={() => onIncidentSelect(incident)}>#{incident.incident_id}</button></td><td className="incident-type-cell">{incidentTypeText(incident, t)}</td><td><span className="incident-time-cell"><strong>{requestDateTimeText(incident.first_seen, language)}</strong><small>{incidentDurationText(incident.first_seen, incident.last_seen, language)}</small></span></td><td><span className="actor-detail"><strong>{incident.actor_ip}</strong><ActorMetadata {...incident} /></span></td><td><button className="icon-button row-more" aria-label={t('viewIncidentRequests')} title={t('viewIncidentRequests')} onClick={() => onIncidentSelect(incident)}><ArrowUpRight size={15} /></button></td></tr>) : <EmptyRows t={t} columns={5} />}</tbody></table></TableScroller>}
         </div>
         <div className="panel system-panel"><div className="panel-header"><div><h2>{t('status')}</h2><p>{t('infrastructure')}</p></div><span className={`health-pill ${status.data?.status === 'ok' ? '' : 'health-degraded'}`}><i />{status.data?.status === 'ok' ? t('allSystems') : t('degraded')}</span></div>
-          <div className="system-list"><SystemRow icon={Activity} label={t('collector')} detail={activityText(status.data?.collector_status.activity, t)} healthy={status.data?.collector_status.available === true} /><SystemRow icon={Globe2} label={t('api')} detail={status.data?.status === 'ok' ? t('connected') : t('degraded')} healthy={status.data?.status === 'ok'} /><SystemRow icon={Database} label={t('database')} detail={status.data?.database === 'ok' ? t('operational') : t('degraded')} healthy={status.data?.database === 'ok'} /></div>
+          <div className="system-list"><SystemRow icon={Activity} label={t('collector')} detail={activityText(status.data?.collector_status.activity, t)} healthy={status.data?.collector_status.available === true} /><SystemRow icon={Globe2} label={t('api')} detail={status.data?.status === 'ok' ? t('connected') : t('degraded')} healthy={status.data?.status === 'ok'} /><SystemRow icon={Database} label={t('database')} detail={status.data?.database === 'ok' ? t('operational') : t('degraded')} healthy={status.data?.database === 'ok'} />{status.data?.honeypot_configured && <SystemRow icon={Bug} label={t('honeypot')} detail={status.data.honeypot_available ? t('connected') : t('honeypotNotRunning')} healthy={status.data.honeypot_available === true} />}</div>
           <div className="system-updated"><span className="status-pulse" />{t('lastImport')}: {dateText(status.data?.collector_status.last_import, language)}</div>
         </div>
       </section>
@@ -1564,14 +1646,16 @@ function DashboardPage({ t, language, range, onRangeChange, lastImport, onBurstS
   </>
 }
 
-function StatisticsPage({ t, language, range, onRangeChange, lastImport, section, onSectionChange, onBurstExtremeSelect, onBucketSelect, onBurstSelect, onIncidentSelect, onDistributionSelect }: RangePageProps & { section: StatisticsSection; onSectionChange: (section: StatisticsSection) => void; onBurstExtremeSelect: (extreme: BurstExtreme) => void; onBucketSelect: (bucket: TrafficBucket) => void; onBurstSelect: (id: number) => void; onIncidentSelect: (incident: NotificationIncident) => void; onDistributionSelect: (kind: 'provider' | 'country' | 'host' | 'category' | 'actor' | 'path', value: string) => void }) {
+function StatisticsPage({ t, language, range, onRangeChange, lastImport, section, onSectionChange, honeypotConfigured, onBurstExtremeSelect, onBucketSelect, onBurstSelect, onIncidentSelect, onDistributionSelect }: RangePageProps & { section: StatisticsSection; onSectionChange: (section: StatisticsSection) => void; honeypotConfigured: boolean; onBurstExtremeSelect: (extreme: BurstExtreme) => void; onBucketSelect: (bucket: TrafficBucket) => void; onBurstSelect: (id: number) => void; onIncidentSelect: (incident: NotificationIncident) => void; onDistributionSelect: (kind: 'provider' | 'country' | 'host' | 'category' | 'actor' | 'path', value: string) => void }) {
+  useEffect(() => { if (!honeypotConfigured && section === 'honeypot') onSectionChange('overview') }, [honeypotConfigured, section, onSectionChange])
   const result = useApiData<StatisticsResponse>(apiUrl('statistics', range.query))
   const traffic = useApiData<ApiResult<CountItem>>(apiUrl('request_counts', range.query, trafficBucketOptions(range)))
   const burstTraffic = useApiData<BurstChartResponse>(section === 'traffic' ? apiUrl('burst_counts', range.query, trafficBucketOptions(range)) : null)
   const insightQuery = section === 'insights' || section === 'hostsActors' ? apiUrl('statistics/insights', range.query, { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' }) : null
   const insights = useApiData<StatisticsInsights>(insightQuery)
   const incidentStats = useApiData<IncidentStatistics>(section === 'incidents' || section === 'traffic' ? apiUrl('incident_statistics', range.query, { include_incidents: 'true' }) : null)
-  const retry = () => { result.reload(); if (section === 'traffic') { traffic.reload(); burstTraffic.reload(); incidentStats.reload() } if (insightQuery) insights.reload(); if (section === 'incidents') incidentStats.reload() }
+  const honeypotStats = useApiData<HoneypotStatistics>(honeypotConfigured && (section === 'traffic' || section === 'honeypot') ? apiUrl('honeypot/statistics', range.query) : null)
+  const retry = () => { result.reload(); if (section === 'traffic') { traffic.reload(); burstTraffic.reload(); incidentStats.reload(); if (honeypotConfigured) honeypotStats.reload() } if (insightQuery) insights.reload(); if (section === 'incidents') incidentStats.reload(); if (section === 'honeypot') honeypotStats.reload() }
   const requestsText = (count: number | null) => `${numberText(count, language)} ${count === 1 ? t('requestSingular') : t('requestsLabel')}`
   const optionalRequestsText = (count: number | null) => count == null ? '—' : requestsText(count)
   const optionalSecondsText = (seconds: number | null) => seconds == null ? '—' : preciseSecondsText(seconds, language)
@@ -1579,14 +1663,28 @@ function StatisticsPage({ t, language, range, onRangeChange, lastImport, section
     <PageHeading title={t('statistics')} subtitle={t('statisticsSubtitle')} t={t} language={language} range={range} onRangeChange={onRangeChange} lastImport={lastImport} />
     <PageDataState loading={result.loading} error={result.error} retry={retry} t={t} />
     <nav className="statistics-tabs" aria-label={t('statisticsSections')}>
-      {(['overview', 'traffic', 'patterns', 'incidents', 'hostsActors', 'insights'] as const).map((key) => <button type="button" key={key} className={section === key ? 'active' : ''} aria-current={section === key ? 'page' : undefined} onClick={() => onSectionChange(key)}>{t(key === 'overview' ? 'statisticsOverview' : key === 'traffic' ? 'statisticsTimeSeries' : key === 'patterns' ? 'statisticsPatterns' : key === 'hostsActors' ? 'statisticsActorsHosts' : key === 'insights' ? 'statisticsInsights' : 'incidentStatistics')}</button>)}
+      {(['overview', 'traffic', 'patterns', 'incidents', 'hostsActors', 'insights', ...(honeypotConfigured ? ['honeypot' as const] : [])] as const).map((key) => <button type="button" key={key} className={section === key ? 'active' : ''} aria-current={section === key ? 'page' : undefined} onClick={() => onSectionChange(key)}>{t(key === 'overview' ? 'statisticsOverview' : key === 'traffic' ? 'statisticsTimeSeries' : key === 'patterns' ? 'statisticsPatterns' : key === 'hostsActors' ? 'statisticsActorsHosts' : key === 'insights' ? 'statisticsInsights' : key === 'honeypot' ? 'honeypotStatistics' : 'incidentStatistics')}</button>)}
     </nav>
     {section === 'incidents' && <IncidentStatisticsView data={incidentStats.data} loading={incidentStats.loading} error={Boolean(incidentStats.error)} language={language} range={range} t={t} onIncidentSelect={onIncidentSelect} />}
     {section === 'traffic' && <section className="statistics-grid statistics-time-series-grid">
       <TrafficTimeline items={traffic.data?.items ?? []} loading={traffic.loading} language={language} range={range} t={t} onBucketSelect={onBucketSelect} />
       <BurstTimeline items={burstTraffic.data?.items ?? []} loading={burstTraffic.loading} language={language} range={range} t={t} onBurstSelect={onBurstSelect} />
       <IncidentTimeline items={incidentStats.data?.timeline ?? []} loading={incidentStats.loading} error={Boolean(incidentStats.error)} language={language} range={range} t={t} onIncidentSelect={onIncidentSelect} />
+      {honeypotConfigured && <HoneypotTimeline items={honeypotStats.data?.timeline ?? []} loading={honeypotStats.loading} language={language} range={range} t={t} />}
     </section>}
+    {section === 'honeypot' && honeypotConfigured && <>
+      <p className="incident-statistics-subtitle">{honeypotStats.error ? t('apiUnavailable') : honeypotStats.loading && !honeypotStats.data ? t('statisticsLoading') : t('honeypotIncidentMatchNote')}</p>
+      <section className="statistics-burst-metrics">
+        <MetricCard t={t} language={language} label={t('honeypotAccesses')} value={numberText(honeypotStats.data?.access_count ?? 0, language)} icon={Bug} iconClass="violet" caption={t('honeypotAccessesNote')} />
+        <MetricCard t={t} language={language} label={t('honeypotIncidentMatches')} value={numberText(honeypotStats.data?.matched_access_count ?? 0, language)} icon={ShieldAlert} iconClass="blue" caption={`${numberText(honeypotStats.data?.matched_incident_count ?? 0, language)} ${t('incidentStatistics')}`} />
+        <MetricCard t={t} language={language} label={t('honeypotUnmatchedAccesses')} value={numberText(honeypotStats.data?.unmatched_access_count ?? 0, language)} icon={Activity} iconClass="green" caption={t('honeypotUnmatchedNote')} />
+      </section>
+      <section className="statistics-grid">
+        <HoneypotTimeline items={honeypotStats.data?.timeline ?? []} loading={honeypotStats.loading} language={language} range={range} t={t} />
+        <StatisticsBarsPanel title={t('honeypotAccessTypes')} description={t('honeypotAccessTypesNote')} items={honeypotStats.data?.by_method ?? null} loading={honeypotStats.loading && !honeypotStats.data} error={Boolean(honeypotStats.error)} t={t} language={language} />
+        <StatisticsBarsPanel title={t('honeypotAccessRules')} description={t('honeypotAccessRulesNote')} items={honeypotStats.data?.by_rule ?? null} loading={honeypotStats.loading && !honeypotStats.data} error={Boolean(honeypotStats.error)} t={t} language={language} />
+      </section>
+    </>}
     {section === 'patterns' && <section className="statistics-grid statistics-patterns-grid">
       <StatisticsBarsPanel title={t('statisticsStatusCodes')} description={t('statisticsStatusCodesNote')} items={result.data?.status_codes ?? null} loading={result.loading && !result.data} error={Boolean(result.error)} t={t} language={language} />
       <StatisticsBarsPanel title={t('statisticsTopPaths')} description={t('statisticsTopPathsNote')} items={result.data?.paths ?? null} loading={result.loading && !result.data} error={Boolean(result.error)} t={t} language={language} />
@@ -1706,6 +1804,29 @@ function TrafficTimeline({ items, loading, language, range, t, onBucketSelect }:
         })}
       </div>
       <TimelineAxis labels={axisLabels} /></TimelineChartFrame>
+    </> : <p className="statistics-empty">{loading ? t('statisticsLoading') : t('statisticsNoData')}</p>}
+  </section>
+}
+
+function HoneypotTimeline({ items, loading, language, range, t }: { items: HoneypotStatistics['timeline']; loading: boolean; language: Language; range: TimeRange; t: (key: MessageKey) => string }) {
+  const max = Math.max(1, ...items.map((item) => item.request_count))
+  const total = items.reduce((sum, item) => sum + item.request_count, 0)
+  const formatter = new Intl.DateTimeFormat(language === 'de' ? 'de-DE' : 'en-US', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })
+  const axisLabels = timelineAxisLabels(range, items[0]?.from, items[items.length - 1]?.to, language)
+  return <section className="panel statistics-timeline-panel">
+    <div className="panel-header"><div><h2>{t('honeypotAccessFrequency')}</h2><p>{t('honeypotAccessFrequencyNote')}</p></div>{loading && <span className="statistics-loading-inline"><span className="loading-spinner" />{t('statisticsLoading')}</span>}</div>
+    {items.length ? <>
+      <div className="statistics-chart-total"><span>{t('statisticsGroupTotal')}</span><strong>{numberText(total, language)}</strong></div>
+      <div className="statistics-legend statistics-request-legend"><span><i className="honeypot" />{t('honeypotAccesses')}</span></div>
+      <TimelineChartFrame max={max} language={language}><div className="statistics-timeline statistics-request-timeline" aria-label={t('honeypotAccessFrequency')}>
+        {items.map((item) => {
+          const label = formatter.format(new Date(item.from))
+          const height = item.request_count ? Math.max(2, item.request_count / max * 100) : 1
+          return <div className="statistics-time-slot" key={item.from} role="img" aria-label={`${label}–${formatter.format(new Date(item.to))} · ${numberText(item.request_count, language)} ${t('honeypotAccesses')}`} title={`${label} – ${formatter.format(new Date(item.to))}: ${numberText(item.request_count, language)} ${t('honeypotAccesses')}`}>
+            <div className="statistics-time-bar"><i className={item.request_count ? 'honeypot' : 'request-zero'} style={{ height: `${height}%` }} /></div>
+          </div>
+        })}
+      </div><TimelineAxis labels={axisLabels} /></TimelineChartFrame>
     </> : <p className="statistics-empty">{loading ? t('statisticsLoading') : t('statisticsNoData')}</p>}
   </section>
 }
@@ -1909,8 +2030,8 @@ function PairedMetricCard({ label, icon: Icon, iconClass, firstLabel, firstValue
   </div>
 }
 
-function SystemRow({ icon: Icon, label, detail, healthy }: { icon: typeof Activity; label: string; detail: string; healthy: boolean }) {
-  return <div className="system-row"><div className="system-icon"><Icon size={16} /></div><div className="system-copy"><strong>{label}</strong><span>{detail}</span></div><span className={`system-check ${healthy ? '' : 'system-check-error'}`}>{healthy ? '✓' : '!'}</span></div>
+function SystemRow({ icon: Icon, label, detail, healthy, neutral = false }: { icon: typeof Activity; label: string; detail: string; healthy: boolean; neutral?: boolean }) {
+  return <div className="system-row"><div className="system-icon"><Icon size={16} /></div><div className="system-copy"><strong>{label}</strong><span>{detail}</span></div><span className={`system-check ${neutral ? 'system-check-neutral' : healthy ? '' : 'system-check-error'}`}>{neutral ? '–' : healthy ? '✓' : '!'}</span></div>
 }
 
 function BurstsPage({ t, language, range, onRangeChange, lastImport, sort, onSortChange, filters, onFiltersChange, onBurstSelect, pageSize, onPageSizeChange }: PaginatedPageProps & { sort: BurstSort; onSortChange: (sort: BurstSort) => void; filters: BurstFilters; onFiltersChange: (filters: BurstFilters) => void; onBurstSelect: (id: number) => void }) {
@@ -1953,7 +2074,7 @@ function BurstsPage({ t, language, range, onRangeChange, lastImport, sort, onSor
         
         <Paginator total={summary?.burst_count ?? 0} pageIndex={pageIndex} pageSize={pageSize} onPageChange={setPageIndex} onPageSizeChange={onPageSizeChange} t={t} language={language} />
         <TableScroller className="burst-table-scroll" t={t}><table className="burst-table"><thead><tr><SortableHeader column="burst_id" label={t('id')} sort={sort} onSort={changeSort} filtered={Boolean(/^\d+$/.test(filters.search.trim()))} filterLabel={t('filteredColumn')} /><SortableHeader column="start_time" label={t('startTime')} sort={sort} onSort={changeSort} filtered={true} filterLabel={t('filteredColumn')} /><SortableHeader column="actor_ip" label={t('actor')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim())} filterLabel={t('filteredColumn')} /><SortableHeader column="host" label={t('host')} sort={sort} onSort={changeSort} filtered={Boolean(filters.host || filters.known)} filterLabel={t('filteredColumn')} /><SortableHeader column="country" label={t('country')} sort={sort} onSort={changeSort} filtered={Boolean(filters.country)} filterLabel={t('filteredColumn')} /><SortableHeader column="duration" label={t('duration')} sort={sort} onSort={changeSort} /><SortableHeader column="requests" label={t('requestsLabel')} sort={sort} onSort={changeSort} /><SortableHeader column="avg_count" label={t('avgPerSecond')} sort={sort} onSort={changeSort} /><th /></tr></thead><tbody>
-          {items.length ? items.map((burst) => <tr key={burst.burst_id}><td><button type="button" className="table-link primary-cell" onClick={() => onBurstSelect(burst.burst_id)} aria-label={`${t('viewBurstRequests')} #${burst.burst_id}`}>#{burst.burst_id}</button></td><td><span className="burst-time"><strong>{dateText(burst.start_time, language)}</strong><span>{dateText(burst.end_time, language)}</span></span></td><td><span className="actor-detail"><strong className="primary-cell">{burst.actor_ip}</strong><small>{burst.provider || '—'} · {burst.asn || '—'}</small></span></td><td className={`host-cell${burst.known ? ' known-host-name' : ''}`}>{burst.host || '—'}</td><td><span className="actor-detail"><span className="country-cell"><span className="country-flag" title={burst.country || ''}>{countryFlag(burst.country)}</span>{burst.country || '—'}</span><small>{burst.city || '—'}</small></span></td><td>{secondsText((new Date(burst.end_time).getTime() - new Date(burst.start_time).getTime()) / 1000, language)}</td><td><span className="request-count">{numberText(burst.read_count + burst.write_count + burst.other_count, language)}</span></td><td><span className="rate-value">{numberText(burst.avg_count, language)}<small> {t('requestsPerSecond')}</small></span></td><td><button type="button" className="icon-button row-more" aria-label={t('viewBurstRequests')} title={t('viewBurstRequests')} onClick={() => onBurstSelect(burst.burst_id)}><ArrowUpRight size={15} /></button></td></tr>) : <EmptyRows t={t} columns={9} />}
+          {items.length ? items.map((burst) => <tr key={burst.burst_id}><td><button type="button" className="table-link primary-cell" onClick={() => onBurstSelect(burst.burst_id)} aria-label={`${t('viewBurstRequests')} #${burst.burst_id}`}>#{burst.burst_id}</button></td><td><span className="incident-time-cell"><strong>{requestDateTimeText(burst.start_time, language)}</strong><small>{incidentDurationText(burst.start_time, burst.end_time, language)}</small></span></td><td><span className="actor-detail"><strong className="primary-cell">{burst.actor_ip}</strong><small>{burst.provider || '—'} · {burst.asn || '—'}</small></span></td><td className={`host-cell${burst.known ? ' known-host-name' : ''}`}>{burst.host || '—'}</td><td><span className="actor-detail"><span className="country-cell"><span className="country-flag" title={burst.country || ''}>{countryFlag(burst.country)}</span>{burst.country || '—'}</span><small>{burst.city || '—'}</small></span></td><td>{secondsText((new Date(burst.end_time).getTime() - new Date(burst.start_time).getTime()) / 1000, language)}</td><td><span className="request-count">{numberText(burst.read_count + burst.write_count + burst.other_count, language)}</span></td><td><span className="rate-value">{numberText(burst.avg_count, language)}<small> {t('requestsPerSecond')}</small></span></td><td><button type="button" className="icon-button row-more" aria-label={t('viewBurstRequests')} title={t('viewBurstRequests')} onClick={() => onBurstSelect(burst.burst_id)}><ArrowUpRight size={15} /></button></td></tr>) : <EmptyRows t={t} columns={9} />}
         </tbody></table></TableScroller>
         <Paginator total={summary?.burst_count ?? 0} pageIndex={pageIndex} pageSize={pageSize} onPageChange={setPageIndex} onPageSizeChange={onPageSizeChange} t={t} language={language} />
       </section>
@@ -2111,12 +2232,12 @@ function RequestsPage({ t, language, range, onRangeChange, lastImport, burstId, 
   return <>
     <PageHeading title={t('requests')} subtitle={t('requestPageSubtitle')} t={t} language={language} range={requestRange} onRangeChange={(nextRange) => { if (incidentId != null) onIncidentClear(); onRangeChange(nextRange) }} lastImport={lastImport} />
     <PageDataState loading={result.loading || counts.loading || (burstId != null && burstDetails.loading) || (actorIp != null && actorDetails.loading)} error={result.error ?? counts.error ?? burstDetails.error ?? actorDetails.error} retry={retry} t={t} />
-    <div className="filter-toolbar burst-filters burst-filter-controls request-filter-controls"><div className="request-filter-notices">{incidentId != null && <div className="burst-filter-notice request-burst-notice"><div className="request-burst-info"><strong className="request-burst-title">{t('filteredByIncident')} #{incidentId}</strong>{incidentContext && <div className="request-burst-details"><span>{t('incidentType')}: <strong>{incidentTypeText(incidentContext, t)}</strong></span><span>{t('incidentStart')}: <strong>{requestDateTimeText(incidentContext.first_seen, language)}</strong></span><span>{t('duration')}: <strong>{incidentDurationText(incidentContext.first_seen, incidentContext.last_seen, language)}</strong></span><span>{t('ipAddress')}: <strong>{incidentContext.actor_ip}</strong></span><ActorMetadata {...incidentContext} /><span>{t('host')}: <strong>{incidentContext.summary?.host_count > 1 ? t('multipleHosts') : incidentContext.host || '—'}</strong></span></div>}</div><button type="button" onClick={onIncidentClear}>{t('clearFilter')}</button></div>}{trafficBucket != null && incidentId == null && <div className="burst-filter-notice"><span>{t('filteredByTrafficBucket')} <strong>{dateText(trafficBucket.from, language)} – {dateText(trafficBucket.to, language)}</strong></span><button type="button" onClick={onTrafficBucketClear}>{t('clearFilter')}</button></div>}{burstId != null && <div className="burst-filter-notice request-burst-notice"><div className="request-burst-info"><strong className="request-burst-title">{t('filteredByBurst')} #{burstId}</strong>{activeBurst && <div className="request-burst-details"><span>{t('ipAddress')}: <strong>{activeBurst.actor_ip}</strong></span><ActorMetadata {...activeBurst} /><span>{t('host')}: <strong>{activeBurst.host || '—'}</strong></span></div>}</div><button type="button" onClick={onBurstClear}>{t('clearFilter')}</button></div>}{burstExtreme != null && <div className="burst-filter-notice"><span>{t('filteredByBurstExtreme')} <strong>{t(burstExtreme === 'min_requests' ? 'minimumRequestsPerBurst' : burstExtreme === 'max_requests' ? 'maximumRequestsPerBurst' : burstExtreme === 'min_duration' ? 'minimumBurstDuration' : 'maximumBurstDuration')}</strong>{result.data?.burst_extreme_value != null && <small> · {burstExtreme.endsWith('requests') ? `${numberText(result.data.burst_extreme_value, language)} ${t('requestsPerBurstUnit')}` : preciseSecondsText(result.data.burst_extreme_value, language)}</small>}{result.data?.matching_burst_count != null && <small> · {numberText(result.data.matching_burst_count, language)} {t('matchingBursts')}</small>}</span><button type="button" onClick={onBurstExtremeClear}>{t('clearFilter')}</button></div>}{statisticFilter != null && <div className="burst-filter-notice"><span>{t('filteredByStatistic')} <strong>{t(statisticFilter.field)}: </strong>{statisticFilter.field === 'country' && <span className="country-flag" title={statisticFilter.value}>{countryFlag(statisticFilter.value)}</span>}<strong>{statisticFilter.value}</strong></span><button type="button" onClick={onStatisticFilterClear}>{t('clearFilter')}</button></div>}{actorIp != null && incidentId == null && <div className="burst-filter-notice request-burst-notice"><div className="request-burst-info"><strong className="request-burst-title">{t('filteredByActor')}</strong><div className="request-burst-details"><span>{t('ipAddress')}: <strong>{activeActor?.ip ?? actorIp}</strong></span><ActorMetadata provider={activeActor?.provider} asn={activeActor?.asn} country={activeActor?.country} city={activeActor?.city} /></div></div><button type="button" onClick={onActorClear}>{t('clearFilter')}</button></div>}{host != null && <div className="burst-filter-notice"><span>{t('filteredByHost')} <strong>{host}</strong></span><button type="button" onClick={onHostClear}>{t('clearFilter')}</button></div>}{category != null && <div className="burst-filter-notice"><span>{t('filteredByCategory')} <strong>{category}</strong></span><button type="button" onClick={onCategoryClear}>{t('clearFilter')}</button></div>}{path != null && <div className="burst-filter-notice"><span>{t('filteredByPath')} <strong>{path}</strong></span><button type="button" onClick={onPathClear}>{t('clearFilter')}</button></div>}</div><label className="filter-search request-search"><Search size={15} /><input type="search" name="request-filter-query" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={draftFilters.search} placeholder={t('searchRequests')} aria-label={t('searchRequests')} onChange={(event) => setDraftFilters((value) => ({ ...value, search: event.target.value }))} onKeyDown={(event) => { if (event.key === 'Enter') applyFilters() }} /></label><label className="filter-select"><select aria-label={t('responseStatus')} value={draftFilters.status} onChange={(event) => setDraftFilters((value) => ({ ...value, status: event.target.value as RequestFilters['status'] }))}><option value="">{t('allStatuses')}</option><option value="2xx">2xx · {t('statusSuccess')}</option><option value="3xx">3xx · {t('statusRedirect')}</option><option value="4xx">4xx · {t('statusClientError')}</option><option value="5xx">5xx · {t('statusServerError')}</option></select><span className="filter-select-value">{draftFilters.status ? `${draftFilters.status} · ${draftFilters.status === '2xx' ? t('statusSuccess') : draftFilters.status === '3xx' ? t('statusRedirect') : draftFilters.status === '4xx' ? t('statusClientError') : t('statusServerError')}` : t('allStatuses')}</span><ChevronDown size={13} /></label><label className="request-without-burst-filter"><input type="checkbox" checked={draftFilters.withoutBurst} onChange={(event) => setDraftFilters((value) => ({ ...value, withoutBurst: event.target.checked }))} /><span>{t('onlyRequestsWithoutBurst')}</span></label><button type="button" className="filter-button" onClick={resetFilters}>{t('resetFilters')}</button><button type="button" className="primary-button filter-submit" onClick={applyFilters}>{t('applyFilters')}</button></div>
+    <div className="filter-toolbar burst-filters burst-filter-controls request-filter-controls"><div className="request-filter-notices">{incidentId != null && <div className="burst-filter-notice request-burst-notice"><div className="request-burst-info"><strong className="request-burst-title">{t('filteredByIncident')} #{incidentId}</strong>{incidentContext && <div className="request-burst-details"><span>{t('incidentType')}: <strong>{incidentTypeText(incidentContext, t)}</strong></span><span>{t('incidentStart')}: <strong>{requestDateTimeText(incidentContext.first_seen, language)}</strong></span><span>{t('duration')}: <strong>{incidentDurationText(incidentContext.first_seen, incidentContext.last_seen, language)}</strong></span><span>{t('ipAddress')}: <strong>{incidentContext.actor_ip}</strong></span><ActorMetadata {...incidentContext} /><span>{t('host')}: <strong>{incidentContext.summary?.host_count > 1 ? t('multipleHosts') : incidentContext.host || '—'}</strong></span></div>}</div><button type="button" onClick={onIncidentClear}>{t('clearFilter')}</button></div>}{trafficBucket != null && incidentId == null && <div className="burst-filter-notice"><span>{t('filteredByTrafficBucket')} <strong>{dateText(trafficBucket.from, language)} – {dateText(trafficBucket.to, language)}</strong></span><button type="button" onClick={onTrafficBucketClear}>{t('clearFilter')}</button></div>}{trafficBucket?.source === 'honeypot-group' && <div className="burst-filter-notice honeypot-request-filter-note">{t('honeypotRequestFilterNote')}</div>}{burstId != null && <div className="burst-filter-notice request-burst-notice"><div className="request-burst-info"><strong className="request-burst-title">{t('filteredByBurst')} #{burstId}</strong>{activeBurst && <div className="request-burst-details"><span>{t('ipAddress')}: <strong>{activeBurst.actor_ip}</strong></span><ActorMetadata {...activeBurst} /><span>{t('host')}: <strong>{activeBurst.host || '—'}</strong></span></div>}</div><button type="button" onClick={onBurstClear}>{t('clearFilter')}</button></div>}{burstExtreme != null && <div className="burst-filter-notice"><span>{t('filteredByBurstExtreme')} <strong>{t(burstExtreme === 'min_requests' ? 'minimumRequestsPerBurst' : burstExtreme === 'max_requests' ? 'maximumRequestsPerBurst' : burstExtreme === 'min_duration' ? 'minimumBurstDuration' : 'maximumBurstDuration')}</strong>{result.data?.burst_extreme_value != null && <small> · {burstExtreme.endsWith('requests') ? `${numberText(result.data.burst_extreme_value, language)} ${t('requestsPerBurstUnit')}` : preciseSecondsText(result.data.burst_extreme_value, language)}</small>}{result.data?.matching_burst_count != null && <small> · {numberText(result.data.matching_burst_count, language)} {t('matchingBursts')}</small>}</span><button type="button" onClick={onBurstExtremeClear}>{t('clearFilter')}</button></div>}{statisticFilter != null && <div className="burst-filter-notice"><span>{t('filteredByStatistic')} <strong>{t(statisticFilter.field)}: </strong>{statisticFilter.field === 'country' && <span className="country-flag" title={statisticFilter.value}>{countryFlag(statisticFilter.value)}</span>}<strong>{statisticFilter.value}</strong></span><button type="button" onClick={onStatisticFilterClear}>{t('clearFilter')}</button></div>}{actorIp != null && incidentId == null && <div className="burst-filter-notice request-burst-notice"><div className="request-burst-info"><strong className="request-burst-title">{t('filteredByActor')}</strong><div className="request-burst-details"><span>{t('ipAddress')}: <strong>{activeActor?.ip ?? actorIp}</strong></span><ActorMetadata provider={activeActor?.provider} asn={activeActor?.asn} country={activeActor?.country} city={activeActor?.city} /></div></div><button type="button" onClick={onActorClear}>{t('clearFilter')}</button></div>}{host != null && <div className="burst-filter-notice"><span>{t('filteredByHost')} <strong>{host}</strong></span><button type="button" onClick={onHostClear}>{t('clearFilter')}</button></div>}{category != null && <div className="burst-filter-notice"><span>{t('filteredByCategory')} <strong>{category}</strong></span><button type="button" onClick={onCategoryClear}>{t('clearFilter')}</button></div>}{path != null && <div className="burst-filter-notice"><span>{t('filteredByPath')} <strong>{path}</strong></span><button type="button" onClick={onPathClear}>{t('clearFilter')}</button></div>}</div><label className="filter-search request-search"><Search size={15} /><input type="search" name="request-filter-query" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={draftFilters.search} placeholder={t('searchRequests')} aria-label={t('searchRequests')} onChange={(event) => setDraftFilters((value) => ({ ...value, search: event.target.value }))} onKeyDown={(event) => { if (event.key === 'Enter') applyFilters() }} /></label><label className="filter-select"><select aria-label={t('responseStatus')} value={draftFilters.status} onChange={(event) => setDraftFilters((value) => ({ ...value, status: event.target.value as RequestFilters['status'] }))}><option value="">{t('allStatuses')}</option><option value="2xx">2xx · {t('statusSuccess')}</option><option value="3xx">3xx · {t('statusRedirect')}</option><option value="4xx">4xx · {t('statusClientError')}</option><option value="5xx">5xx · {t('statusServerError')}</option></select><span className="filter-select-value">{draftFilters.status ? `${draftFilters.status} · ${draftFilters.status === '2xx' ? t('statusSuccess') : draftFilters.status === '3xx' ? t('statusRedirect') : draftFilters.status === '4xx' ? t('statusClientError') : t('statusServerError')}` : t('allStatuses')}</span><ChevronDown size={13} /></label><label className="request-without-burst-filter"><input type="checkbox" checked={draftFilters.withoutBurst} onChange={(event) => setDraftFilters((value) => ({ ...value, withoutBurst: event.target.checked }))} /><span>{t('onlyRequestsWithoutBurst')}</span></label><button type="button" className="filter-button" onClick={resetFilters}>{t('resetFilters')}</button><button type="button" className="primary-button filter-submit" onClick={applyFilters}>{t('applyFilters')}</button></div>
     {!result.loading && !counts.loading && !result.error && !counts.error && <>
       <div className={`metric-grid request-metrics${burstId != null ? ' has-burst' : ''}`}><MetricCard t={t} language={language} label={t('totalRequests')} value={numberText(result.data?.total ?? total, language)} icon={Activity} iconClass="blue" trend={trends.data?.metrics.request_count} trendLoading={trends.loading} trendAbsoluteUnit={t('requestsLabel')} /><MetricCard t={t} language={language} label={t('errorResponses')} value={numberText(trends.data?.metrics.error_request_count?.current ?? errorCount, language)} icon={ShieldAlert} iconClass="amber" trend={trends.data?.metrics.error_request_count} trendLoading={trends.loading} trendAbsoluteUnit={t('errorResponses')} /><MetricCard t={t} language={language} label={t('writeRequests')} value={numberText(countRow?.write_count, language)} icon={ArrowUpRight} iconClass="violet" trend={trends.data?.metrics.write_request_count} trendLoading={trends.loading} trendAbsoluteUnit={t('writeRequests')} />{burstId != null && <div className="panel metric-card burst-context-card"><div className="metric-top"><span>{t('burstDetails')} · #{burstId}</span><span className="metric-icon amber"><Activity size={17} /></span></div><div className="metric-bottom"><strong className="metric-value-compact">{activeBurst ? dateText(activeBurst.start_time, language) : '…'}</strong></div><div className="metric-foot"><div className="metric-caption">{t('duration')}: {activeBurst ? preciseSecondsText((new Date(activeBurst.end_time).getTime() - new Date(activeBurst.start_time).getTime()) / 1000, language) : '…'}</div><div className="metric-trend steady"><Activity size={13} /><span>{activeBurst ? `${decimalText(activeBurst.avg_count, language)} ${t('requestsPerSecond')}` : '…'}</span></div></div></div>}</div>
       <div className="panel data-list-panel requests-list-panel"><ListHeading title={t('requests')} />
         <Paginator total={result.data?.total ?? 0} pageIndex={pageIndex} pageSize={pageSize} onPageChange={setPageIndex} onPageSizeChange={onPageSizeChange} t={t} language={language} />
-        <TableScroller t={t}><table className={requestTableClass}><thead><tr><SortableHeader column="start_utc" label={t('startTime')} sort={sort} onSort={changeSort} filtered={true} filterLabel={t('filteredColumn')} /><SortableHeader column="request_method" label={t('method')} sort={sort} onSort={changeSort} /><SortableHeader column="request_path" label={t('requestPath')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || category != null || path != null)} filterLabel={t('filteredColumn')} /><SortableHeader column="host" label={t('host')} sort={sort} onSort={changeSort} className="request-host-col" filtered={Boolean(filters.search.trim() || host != null)} filterLabel={t('filteredColumn')} hidden={hideHostColumn} /><SortableHeader column="downstream_status" label={t('responseStatus')} sort={sort} onSort={changeSort} className="request-status-col" filtered={Boolean(filters.status)} filterLabel={t('filteredColumn')} />{!hideActorColumn && <SortableHeader column="actor_ip" label={t('actor')} sort={sort} onSort={changeSort} className="request-actor-col" filtered={Boolean(filters.search.trim() || actorIp != null)} filterLabel={t('filteredColumn')} />}<SortableHeader column="user_agent" label={t('userAgent')} sort={sort} onSort={changeSort} className="request-user-agent-col" /><SortableHeader column="duration" label={t('durationShort')} sort={sort} onSort={changeSort} /><SortableHeader column="downstream_content_size" label={t('responseSize')} sort={sort} onSort={changeSort} />{burstId == null && <SortableHeader column="burst_id" label={t('burstIdLabel')} sort={sort} onSort={changeSort} className="request-burst-id-col" />}</tr></thead><tbody>{requests.length ? requests.map((request) => <tr key={request.request_id}><td><span className="request-time-cell"><span>{requestDateTimeText(request.start_utc, language)} . {timestampMillisText(request.start_utc, language)}</span><small>{elapsedDurationText(request.duration / 1_000_000, language)}</small></span></td><td><span className="method-cell">{request.request_scheme.toLowerCase() === 'https' && <span className="https-lock" title="HTTPS" aria-label="HTTPS"><LockKeyhole size={13} /></span>}{request.request_scheme.toLowerCase() === 'http' && <span className="http-lock" title="HTTP" aria-label="HTTP"><LockOpen size={13} /></span>}<span className={`method-badge ${request.request_method.toLowerCase()}`}>{request.request_method}</span></span></td><td><span className="request-path-detail"><code className="path-cell">{request.request_path}</code>{category == null && request.categories && <small>{request.categories}</small>}</span></td>{!hideHostColumn && <td className={`host-cell request-host-col${request.host_known ? ' known-host-name' : ''}`}>{request.host || '—'}</td>}<td className="request-status-col"><span className={`response-code ${request.downstream_status < 400 ? 'response-success' : ''}`}>{request.downstream_status}</span></td>{!hideActorColumn && <td className="request-actor-col"><span className="actor-detail"><strong className="primary-cell">{request.actor_ip}</strong><ActorMetadata {...request} /></span></td>}<td className="request-user-agent-col"><span className="user-agent-cell">{request.user_agent || '—'}</span></td><td>{numberText(request.duration / 1_000_000, language)} ms</td><td>{numberText(request.downstream_content_size, language)} B</td>{burstId == null && <td className="request-burst-id-col">{request.burst_id == null ? '—' : numberText(request.burst_id, language)}</td>}</tr>) : <EmptyRows t={t} columns={10 - Number(hideActorColumn) - Number(hideHostColumn) - Number(burstId != null)} />}</tbody></table></TableScroller>
+        <TableScroller t={t}><table className={requestTableClass}><thead><tr><SortableHeader column="start_utc" label={t('startTime')} sort={sort} onSort={changeSort} filtered={true} filterLabel={t('filteredColumn')} /><SortableHeader column="request_method" label={t('method')} sort={sort} onSort={changeSort} /><SortableHeader column="request_path" label={t('requestPath')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || category != null || path != null)} filterLabel={t('filteredColumn')} /><SortableHeader column="host" label={t('host')} sort={sort} onSort={changeSort} className="request-host-col" filtered={Boolean(filters.search.trim() || host != null)} filterLabel={t('filteredColumn')} hidden={hideHostColumn} /><SortableHeader column="downstream_status" label={t('responseStatus')} sort={sort} onSort={changeSort} className="request-status-col" filtered={Boolean(filters.status)} filterLabel={t('filteredColumn')} />{!hideActorColumn && <SortableHeader column="actor_ip" label={t('actor')} sort={sort} onSort={changeSort} className="request-actor-col" filtered={Boolean(filters.search.trim() || actorIp != null)} filterLabel={t('filteredColumn')} />}<SortableHeader column="user_agent" label={t('userAgent')} sort={sort} onSort={changeSort} className="request-user-agent-col" /><SortableHeader column="duration" label={t('durationShort')} sort={sort} onSort={changeSort} /><SortableHeader column="downstream_content_size" label={t('responseSize')} sort={sort} onSort={changeSort} />{burstId == null && <SortableHeader column="burst_id" label={t('burstIdLabel')} sort={sort} onSort={changeSort} className="request-burst-id-col" />}</tr></thead><tbody>{requests.length ? requests.map((request) => <tr key={request.request_id}><td><span className="incident-time-cell"><strong>{requestDateTimeText(request.start_utc, language)} . {timestampMillisText(request.start_utc, language)}</strong><small>{elapsedDurationText(request.duration / 1_000_000, language)}</small></span></td><td><span className="method-cell">{request.request_scheme.toLowerCase() === 'https' && <span className="https-lock" title="HTTPS" aria-label="HTTPS"><LockKeyhole size={13} /></span>}{request.request_scheme.toLowerCase() === 'http' && <span className="http-lock" title="HTTP" aria-label="HTTP"><LockOpen size={13} /></span>}<span className={`method-badge ${request.request_method.toLowerCase()}`}>{request.request_method}</span></span></td><td><span className="request-path-detail"><code className="path-cell">{request.request_path}</code>{category == null && request.categories && <small>{request.categories}</small>}</span></td>{!hideHostColumn && <td className={`host-cell request-host-col${request.host_known ? ' known-host-name' : ''}`}>{request.host || '—'}</td>}<td className="request-status-col"><span className={`response-code ${request.downstream_status < 400 ? 'response-success' : ''}`}>{request.downstream_status}</span></td>{!hideActorColumn && <td className="request-actor-col"><span className="actor-detail"><strong className="primary-cell">{request.actor_ip}</strong><ActorMetadata {...request} /></span></td>}<td className="request-user-agent-col"><span className="user-agent-cell">{request.user_agent || '—'}</span></td><td>{numberText(request.duration / 1_000_000, language)} ms</td><td>{numberText(request.downstream_content_size, language)} B</td>{burstId == null && <td className="request-burst-id-col">{request.burst_id == null ? '—' : numberText(request.burst_id, language)}</td>}</tr>) : <EmptyRows t={t} columns={10 - Number(hideActorColumn) - Number(hideHostColumn) - Number(burstId != null)} />}</tbody></table></TableScroller>
         <Paginator total={result.data?.total ?? 0} pageIndex={pageIndex} pageSize={pageSize} onPageChange={setPageIndex} onPageSizeChange={onPageSizeChange} t={t} language={language} />
       </div>
     </>}
@@ -2364,6 +2485,139 @@ function PathsGuidePage({ t }: { t: (key: MessageKey) => string }) {
   return <InfoGuidePage t={t} title="pathsGuideTitle" subtitle="pathsGuideSubtitle" entries={entries} note="pathsGuideCaveat" />
 }
 
+function HoneypotGuidePage({ t }: { t: (key: MessageKey) => string }) {
+  const entries: GuideEntry[] = [
+    { title: 'honeypotGuideCaptureTitle', description: 'honeypotGuideCaptureBody' },
+    { title: 'honeypotGuideGroupsTitle', description: 'honeypotGuideGroupsBody' },
+    { title: 'honeypotGuidePostsTitle', description: 'honeypotGuidePostsBody' },
+    { title: 'honeypotGuideRequestsTitle', description: 'honeypotGuideRequestsBody' },
+  ]
+  return <InfoGuidePage t={t} title="honeypotGuideTitle" subtitle="honeypotGuideSubtitle" entries={entries} note="honeypotGuideCaveat" />
+}
+
+function HoneypotPage({ t, language, range, onRangeChange, lastImport, pageSize, onPageSizeChange, sort, onSortChange, filters, onFiltersChange, onGroupRequestsSelect }: PaginatedPageProps & { sort: HoneypotSort; onSortChange: (sort: HoneypotSort) => void; filters: HoneypotFilters; onFiltersChange: (filters: HoneypotFilters) => void; onGroupRequestsSelect: (group: HoneypotGroup) => void }) {
+  const [pageIndex, setPageIndex] = useState(0)
+  const [draftFilters, setDraftFilters] = useState<HoneypotFilters>(filters)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [expandedGroup, setExpandedGroup] = useState<HoneypotGroup | null>(null)
+  const [deletingGroup, setDeletingGroup] = useState<string | null>(null)
+  const [actionError, setActionError] = useState('')
+  const periodSummary = useApiData<HoneypotSummary>(apiUrl('honeypot/summary', range.query), 15_000)
+  const query = Object.fromEntries(Object.entries({
+    search: filters.search.trim(), method: filters.postsOnly ? 'POST' : '',
+    sort_by: sort.column, sort_order: sort.direction,
+    limit: String(pageSize), offset: String(pageIndex * pageSize),
+  }).filter(([, value]) => value))
+  const groups = useApiData<HoneypotGroupsResponse>(apiUrl('honeypot/groups', range.query, query), 15_000)
+  const groupEventsQuery = expandedGroup ? {
+    ...(expandedGroup.client_ip === null ? {} : { client_ip: expandedGroup.client_ip }),
+    from: expandedGroup.first_time, to: expandedGroup.last_time,
+    ...(filters.postsOnly ? { method: 'POST' } : {}),
+    ...(filters.search.trim() ? { search: filters.search.trim() } : {}),
+  } : undefined
+  const groupEvents = useApiData<HoneypotEventsResponse>(expandedGroup ? apiUrl('honeypot/group-events', undefined, groupEventsQuery) : null)
+  const detail = useApiData<HoneypotEventDetail>(selectedId ? apiUrl(`honeypot/events/${selectedId}`) : null, 0, false, false)
+  useEffect(() => {
+    if (!selectedId) return
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setSelectedId(null) }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [selectedId])
+  const submittedFields = detail.data?.body_text && detail.data.content_type?.toLowerCase().includes('application/x-www-form-urlencoded')
+    ? Array.from(new URLSearchParams(detail.data.body_text).entries())
+    : []
+  useEffect(() => { setPageIndex(0); setSelectedId(null); setExpandedGroup(null) }, [range.query, filters.search, filters.postsOnly, sort, pageSize])
+  useEffect(() => setDraftFilters(filters), [filters])
+  const applyFilters = () => { setPageIndex(0); setSelectedId(null); setExpandedGroup(null); onFiltersChange(draftFilters) }
+  const resetFilters = () => { setDraftFilters({ ...defaultHoneypotFilters }); setPageIndex(0); setSelectedId(null); setExpandedGroup(null); onFiltersChange({ ...defaultHoneypotFilters }) }
+  const deleteGroup = async (group: HoneypotGroup) => {
+    const actor = group.client_ip || '—'
+    const confirmation = t('confirmHoneypotDeleteTestSession')
+      .replace('{ip}', actor)
+      .replace('{requests}', numberText(group.request_count, language))
+    if (!window.confirm(confirmation)) return
+    const key = `${group.client_ip ?? ''}-${group.first_time}`
+    setDeletingGroup(key)
+    setActionError('')
+    try {
+      const response = await apiFetch(apiUrl('honeypot/groups', undefined, {
+        client_ip: group.client_ip ?? '', from: group.first_time, to: group.last_time,
+      }), { method: 'DELETE' })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      if (expandedGroup?.client_ip === group.client_ip && expandedGroup.first_time === group.first_time) setExpandedGroup(null)
+      groups.reload()
+      periodSummary.reload()
+    } catch {
+      setActionError(t('honeypotDeleteTestSessionFailed'))
+    } finally {
+      setDeletingGroup(null)
+    }
+  }
+  const changeSort = (column: HoneypotSortColumn) => {
+    setPageIndex(0)
+    onSortChange({ column, direction: sort.column === column && sort.direction === 'asc' ? 'desc' : 'asc' })
+  }
+  return <>
+    <PageHeading title={t('honeypot')} subtitle={t('honeypotSubtitle')} t={t} language={language} range={range} onRangeChange={onRangeChange} lastImport={lastImport} />
+    <section className="metric-grid honeypot-period-metrics">
+      <MetricCard t={t} language={language} label={t('honeypotRequests')} value={periodSummary.error ? '—' : periodSummary.loading && !periodSummary.data ? '…' : numberText(periodSummary.data?.request_count ?? 0, language)} icon={Bug} iconClass="violet" caption={t('honeypotAccessesNote')} />
+      <MetricCard t={t} language={language} label={t('honeypotUniqueActors')} value={periodSummary.error ? '—' : periodSummary.loading && !periodSummary.data ? '…' : numberText(periodSummary.data?.actor_count ?? 0, language)} icon={Users} iconClass="blue" caption={t('honeypotUniqueActorsNote')} />
+      <MetricCard t={t} language={language} label={t('honeypotPostsWithData')} value={periodSummary.error ? '—' : periodSummary.loading && !periodSummary.data ? '…' : numberText(periodSummary.data?.post_with_data_count ?? 0, language)} icon={FileText} iconClass="green" caption={t('honeypotPostsWithDataNote')} />
+      <MetricCard t={t} language={language} label={t('honeypotExecutionAttempts')} value={periodSummary.error ? '—' : periodSummary.loading && !periodSummary.data ? '…' : numberText(periodSummary.data?.uploaded_execution_attempt_count ?? 0, language)} icon={ShieldAlert} iconClass="amber" caption={t('honeypotExecutionAttemptsNote')} />
+    </section>
+    <p className="honeypot-grouping-hint">{t('honeypotGroupingHint')}</p>
+    {actionError && <div className="log-error" role="alert">{actionError}</div>}
+    <PageDataState loading={groups.loading} error={groups.error} retry={groups.reload} t={t} />
+    <section className="panel table-panel honeypot-panel">
+      <div className="filter-toolbar honeypot-toolbar">
+        <label className="filter-search"><Search size={15} /><input type="search" value={draftFilters.search} placeholder={t('honeypotSearch')} aria-label={t('honeypotSearch')} onChange={(event) => setDraftFilters((value) => ({ ...value, search: event.target.value }))} onKeyDown={(event) => { if (event.key === 'Enter') applyFilters() }} /></label>
+        <label className="request-without-burst-filter"><input type="checkbox" checked={draftFilters.postsOnly} onChange={(event) => setDraftFilters((value) => ({ ...value, postsOnly: event.target.checked }))} /><span>{t('honeypotPostsOnly')}</span></label>
+        <button type="button" className="filter-button" onClick={resetFilters}>{t('resetFilters')}</button><button type="button" className="primary-button filter-submit" onClick={applyFilters}>{t('applyFilters')}</button>
+        <span className="honeypot-events-count">{t('honeypotSessions')}: {numberText(groups.data?.total ?? 0, language)} · {t('honeypotRequests')}: {numberText(groups.data?.total_events ?? 0, language)}</span>
+      </div>
+      <Paginator total={groups.data?.total ?? 0} pageIndex={pageIndex} pageSize={pageSize} onPageChange={(page) => { setPageIndex(page); setSelectedId(null); setExpandedGroup(null) }} onPageSizeChange={(size) => { onPageSizeChange(size); setPageIndex(0); setSelectedId(null); setExpandedGroup(null) }} t={t} language={language} />
+      <div className="table-scroll"><table className="honeypot-table"><thead><tr><SortableHeader column="time" label={t('dateTime')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.postsOnly)} filterLabel={t('filteredColumn')} /><SortableHeader column="client_ip" label={t('actor')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.postsOnly)} filterLabel={t('filteredColumn')} /><SortableHeader column="request_count" label={t('honeypotRequests')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.postsOnly)} filterLabel={t('filteredColumn')} /><SortableHeader column="path_count" label={t('honeypotPaths')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.postsOnly)} filterLabel={t('filteredColumn')} /><SortableHeader column="post_count" label={t('honeypotPostCount')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.postsOnly)} filterLabel={t('filteredColumn')} /><SortableHeader column="body_bytes" label={t('honeypotSize')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.postsOnly)} filterLabel={t('filteredColumn')} /></tr></thead><tbody>
+        {groups.data?.items.map((group) => {
+          const expanded = expandedGroup?.client_ip === group.client_ip && expandedGroup.first_time === group.first_time
+          return <Fragment key={`${group.client_ip}-${group.first_time}`}>
+            <tr>
+              <td><button type="button" className="table-link honeypot-time-link" aria-label={`${t('honeypotOpenRequests')}: ${requestDateTimeText(group.first_time, language)}`} onClick={() => onGroupRequestsSelect(group)}><span className="incident-time-cell"><strong>{requestDateTimeText(group.first_time, language)}</strong><small>{incidentDurationText(group.first_time, group.last_time, language)}</small></span></button></td>
+              <td><span className="actor-detail"><strong className="primary-cell">{group.client_ip || '—'}</strong><ActorMetadata provider={group.provider} asn={group.asn} country={group.country} city={group.city} /></span></td>
+              <td><span className="honeypot-group-actions"><button type="button" className="table-link honeypot-group-toggle" aria-label={expanded ? t('honeypotCollapseGroup') : t('honeypotExpandGroup')} onClick={() => setExpandedGroup(expanded ? null : group)}>{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{numberText(group.request_count, language)}</button><button type="button" className="icon-button honeypot-delete-session" aria-label={t('honeypotDeleteTestSession')} title={t('honeypotDeleteTestSession')} disabled={deletingGroup === `${group.client_ip ?? ''}-${group.first_time}`} onClick={() => void deleteGroup(group)}><Trash2 size={14} /></button></span></td>
+              <td>{numberText(group.path_count, language)}</td>
+              <td><span className="honeypot-group-posts">{numberText(group.post_count, language)}<small>{numberText(group.body_count, language)} {t('honeypotData').toLowerCase()}</small></span></td>
+              <td>{numberText(group.body_bytes, language)} B</td>
+            </tr>
+            {expanded && <tr className="honeypot-group-expanded"><td colSpan={6}><div className="honeypot-group-events">
+              <PageDataState loading={groupEvents.loading} error={groupEvents.error} retry={groupEvents.reload} t={t} />
+              {groupEvents.data && <div className="table-scroll"><table><thead><tr><th>{t('dateTime')}</th><th>{t('honeypotMethod')}</th><th>{t('honeypotPath')}</th><th>{t('honeypotRule')}</th><th>{t('honeypotPhase')}</th><th>{t('honeypotSize')}</th><th>{t('honeypotStatus')}</th><th>{t('honeypotData')}</th></tr></thead><tbody>
+                {groupEvents.data.items.map((event) => <tr key={event.event_id}>
+                  <td><span className="incident-time-cell"><strong>{requestDateTimeText(event.time, language)} . {timestampMillisText(event.time, language)}</strong><small>{elapsedDurationText(event.duration / 1_000_000, language)}</small></span></td>
+                  <td><span className="method-cell">{event.scheme?.split(',', 1)[0].trim().toLowerCase() === 'https' ? <span className="https-lock" title="HTTPS" aria-label="HTTPS"><LockKeyhole size={13} /></span> : <span className="http-lock" title="HTTP" aria-label="HTTP"><LockOpen size={13} /></span>}<span className="method-badge">{event.method}</span></span></td>
+                  <td className="honeypot-path"><code className="path-cell">{event.path}</code></td><td>{event.rule || '—'}</td><td>{honeypotPhaseText(event.session_phase, t)}</td><td>{numberText(event.body_bytes, language)} B</td>
+                  <td><span className={`response-code ${(event.status ?? 0) < 400 ? 'response-success' : ''}`}>{event.status ?? '—'}</span></td>
+                  <td>{event.has_body ? <button type="button" className="table-link honeypot-body-link" onClick={() => setSelectedId(event.event_id)}><FileText size={13} />{t('honeypotViewData')}</button> : '—'}</td>
+                </tr>)}
+              </tbody></table></div>}
+            </div></td></tr>}
+          </Fragment>
+        })}
+        {!groups.loading && groups.data?.items.length === 0 && <EmptyRows t={t} columns={6} />}
+      </tbody></table></div>
+      <Paginator total={groups.data?.total ?? 0} pageIndex={pageIndex} pageSize={pageSize} onPageChange={(page) => { setPageIndex(page); setSelectedId(null); setExpandedGroup(null) }} onPageSizeChange={(size) => { onPageSizeChange(size); setPageIndex(0); setSelectedId(null); setExpandedGroup(null) }} t={t} language={language} />
+    </section>
+    {selectedId && <div className="honeypot-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedId(null) }}><section className="panel honeypot-detail honeypot-detail-dialog" id="honeypot-event-details" role="dialog" aria-modal="true" aria-labelledby="honeypot-details-title"><div className="panel-header"><h2 id="honeypot-details-title">{t('honeypotDetails')}</h2><button type="button" className="icon-button" onClick={() => setSelectedId(null)} aria-label={t('close')}><X size={16} /></button></div>
+      <PageDataState loading={detail.loading} error={detail.error} retry={detail.reload} t={t} />
+      {detail.data && <><dl className="honeypot-meta"><dt>{t('dateTime')}</dt><dd>{dateText(detail.data.time, language)}</dd><dt>{t('actor')}</dt><dd><span className="actor-detail"><strong className="primary-cell">{detail.data.client_ip || '—'}</strong><ActorMetadata provider={detail.data.provider} asn={detail.data.asn} country={detail.data.country} city={detail.data.city} /></span></dd><dt>{t('host')}</dt><dd>{detail.data.host || '—'}</dd><dt>{t('honeypotSessionId')}</dt><dd>{detail.data.session_id || '—'}</dd><dt>{t('honeypotPhase')}</dt><dd>{honeypotPhaseText(detail.data.session_phase, t)}</dd><dt>{t('honeypotAgent')}</dt><dd>{detail.data.user_agent || '—'}</dd><dt>Content-Type</dt><dd>{detail.data.content_type || '—'}</dd><dt>SHA-256</dt><dd>{detail.data.body_sha256 || '—'}</dd></dl>
+        <h3>{t('honeypotBody')}</h3>
+        {submittedFields.length > 0 && <><h3>{t('honeypotFields')}</h3><dl className="honeypot-meta">{submittedFields.map(([key, value], index) => <Fragment key={`${key}-${index}`}><dt>{key}</dt><dd>{value}</dd></Fragment>)}</dl></>}
+        {detail.data.body_text !== null ? <pre className="honeypot-body honeypot-body-modal">{detail.data.body_text || t('honeypotBodyMissing')}</pre> : detail.data.body_base64 ? <><p>{t('honeypotBodyBinary')}</p><pre className="honeypot-body honeypot-body-modal">{detail.data.body_base64}</pre></> : <p>{t('honeypotBodyMissing')}</p>}
+        {Boolean(detail.data.body_clipped) && <p className="honeypot-clipped">{t('honeypotTruncated')}</p>}
+      </>}
+    </section></div>}
+  </>
+}
+
 function LoggingPage({ t }: { t: (key: MessageKey) => string }) {
   const [service, setService] = useState<LogService>('collector')
   const services: { key: LogService; label: MessageKey }[] = [
@@ -2468,6 +2722,7 @@ function AdministrationPage({ t, language }: { t: (key: MessageKey) => string; l
         <HealthCard icon={Activity} label={t('collector')} status={formatActivity(collector?.activity)} detail={collector?.available ? t('collectorAvailable') : t('collectorUnavailable')} healthy={collector?.available === true} />
         <HealthCard icon={Globe2} label={t('api')} status={status.data?.status === 'ok' ? t('connected') : t('degraded')} detail={status.data?.status === 'ok' ? t('apiConnected') : t('apiUnavailable')} healthy={status.data?.status === 'ok'} />
         <HealthCard icon={Database} label={t('database')} status={status.data?.database === 'ok' ? t('operational') : t('degraded')} detail={status.data?.database === 'ok' ? t('databaseConnected') : t('apiUnavailable')} healthy={status.data?.database === 'ok'} />
+        {status.data?.honeypot_configured && <HealthCard icon={Bug} label={t('honeypot')} status={status.data.honeypot_available ? t('operational') : t('notStarted')} detail={status.data.honeypot_available ? t('connected') : t('honeypotNotRunning')} healthy={status.data.honeypot_available === true} />}
       </section>
       <section className="panel admin-activity-panel">
         <div className="admin-section-heading"><div><h2>{t('collectorActivity')}</h2><p>{t('collectorActivityHint')}</p></div></div>
@@ -2483,6 +2738,7 @@ function AdministrationPage({ t, language }: { t: (key: MessageKey) => string; l
         <div className="config-groups">
           <ConfigGroup title={t('serverSettings')} rows={configRows([['INM2_UI_PORT', 'webPort'], ['INM2_API_PORT', 'apiPort'], ['INPUT_LOG_DIR', 'inputLogDirectory'], ['GEOLITE_DB_DIR', 'geoDatabaseDirectory']])} />
           <ConfigGroup title={t('securitySettings')} rows={configRows([['INM2_COOKIE_SECURE', 'secureCookie'], ['INM2_TOTP_ENABLED', 'totpEnabled']])} />
+          {status.data?.honeypot_configured && <ConfigGroup title={t('honeypot')} rows={configRows([['HONEYPOT_ENABLED', 'honeypotEnabledSetting'], ['HONEYPOT_HOST', 'honeypotHostSetting'], ['TRAEFIK_DOCKER_NETWORK', 'honeypotNetworkSetting'], ['HONEYPOT_HTTP_ENTRYPOINT', 'honeypotHttpEntryPointSetting'], ['HONEYPOT_ENTRYPOINT', 'honeypotHttpsEntryPointSetting'], ['HONEYPOT_CERT_RESOLVER', 'honeypotCertResolverSetting'], ['HONEYPOT_UID', 'honeypotUidSetting'], ['HONEYPOT_GID', 'honeypotGidSetting']])} />}
           <ConfigGroup title={t('importSettings')} rows={configRows([['LOG_FILES', 'inputFiles'], ['INPUT_INTERVAL_SECONDS', 'secondsUnit'], ['INPUT_SAVE_MARGIN_CHARACTERS', 'charactersUnit'], ['IGNORE_REQUEST_ROUTES', 'ignoreRequestRoutesHint'], ['KNOWN_HOSTS', 'knownHostsHint']])} />
           <ConfigGroup title={t('maintenanceSettings')} rows={configRows([['MAINTENANCE_INTERVAL_DAYS', 'daysUnit'], ['MAINTENANCE_INACTIVE_DAYS', 'daysUnit']])} />
           <ConfigGroup title={t('burstSettings')} rows={configRows([['BURST_MAX_GAP_SECONDS', 'secondsUnit'], ['BURST_MIN_REQUESTS', 'requestsUnit'], ['BURST_WINDOW_SECONDS', 'secondsUnit']])} />
@@ -2496,8 +2752,8 @@ function AdministrationPage({ t, language }: { t: (key: MessageKey) => string; l
   </>
 }
 
-function HealthCard({ icon: Icon, label, status, detail, healthy }: { icon: typeof Activity; label: string; status: string; detail: string; healthy: boolean }) {
-  return <div className="panel health-card"><div className="health-card-icon"><Icon size={17} /></div><div className="health-card-body"><span>{label}</span><strong><i className={healthy ? '' : 'offline-dot'} />{status}</strong><small>{detail}</small></div><span className={`health-card-check ${healthy ? '' : 'system-check-error'}`}>{healthy ? '✓' : '!'}</span></div>
+function HealthCard({ icon: Icon, label, status, detail, healthy, neutral = false }: { icon: typeof Activity; label: string; status: string; detail: string; healthy: boolean; neutral?: boolean }) {
+  return <div className="panel health-card"><div className="health-card-icon"><Icon size={17} /></div><div className="health-card-body"><span>{label}</span><strong><i className={neutral ? 'offline-dot neutral-dot' : healthy ? '' : 'offline-dot'} />{status}</strong><small>{detail}</small></div><span className={`health-card-check ${neutral ? 'system-check-neutral' : healthy ? '' : 'system-check-error'}`}>{neutral ? '–' : healthy ? '✓' : '!'}</span></div>
 }
 
 function AdminDetail({ label, value }: { label: string; value: string }) {

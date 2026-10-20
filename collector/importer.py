@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 import ipaddress
 import json
+import os
 import re
+import fcntl
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from glob import escape as escape_glob
@@ -165,6 +167,11 @@ class Importer:
         total = 0
         logger.info("Import cycle started for %d configured source(s)", len(self.config.log_files))
         try:
+            honeypot_count = self.import_honeypot_log()
+            total += honeypot_count
+            if on_record_imported is not None:
+                for _ in range(honeypot_count):
+                    on_record_imported()
             for entry in self.config.log_files:
                 if ":" in entry:
                     # Backward compatibility for existing configurations.
@@ -272,7 +279,7 @@ class Importer:
                     total += count
                     logger.info("Imported %d request(s) from %s", count, input_name)
                     if reader.skipped_count:
-                        logger.info("Skipped %d request(s) by import filters", reader.skipped_count)
+                        logger.info("Skipped %d request(s) (filtered or duplicate)", reader.skipped_count)
         finally:
             # Assign imported rows once, preserving the prior import's open tail.
             self._rebuild_pending_bursts()
@@ -281,6 +288,68 @@ class Importer:
             self._merge_pending_incidents()
         logger.info("Import cycle completed: %d request(s) imported", total)
         return total
+
+    def import_honeypot_log(self) -> int:
+        """Import and acknowledge the honeypot's shared JSONL queue."""
+        log_path = Path(os.environ.get("HONEYPOT_LOG_PATH", "/logs/honeypot.jsonl"))
+        if not log_path.is_file():
+            return 0
+        imported = 0
+        with log_path.open("r+b") as stream:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            contents = stream.read()
+            complete = contents.rfind(b"\n") + 1
+            if not complete:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                return 0
+            lines = contents[:complete].splitlines()
+            with self.database.connection:
+                for line_number, line in enumerate(lines, start=1):
+                    try:
+                        event = json.loads(line.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        logger.warning("Skipping malformed honeypot event line %d", line_number)
+                        continue
+                    if not isinstance(event, dict):
+                        logger.warning("Skipping non-object honeypot event line %d", line_number)
+                        continue
+                    event_id = event.get("event_id")
+                    if not isinstance(event_id, str) or not re.fullmatch(r"[a-f0-9]{32}", event_id):
+                        logger.warning("Skipping honeypot event with invalid identifier on line %d", line_number)
+                        continue
+                    client_ip = event.get("client_ip")
+                    geo = self.geolocator.lookup(client_ip) if isinstance(client_ip, str) and client_ip else {}
+                    cursor = self.database.connection.execute(
+                        """INSERT OR IGNORE INTO honeypot_event (
+                               event_id, time, client_ip, provider, asn, country, city,
+                               host, scheme, session_id, session_phase, method, path, user_agent,
+                               content_type, body_bytes, body_clipped, body_sha256, rule,
+                               status, duration, body_text, body_base64, body_file
+                           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            event_id, event.get("time", ""), client_ip,
+                            geo.get("provider"), geo.get("asn"), geo.get("country"), geo.get("city"),
+                            event.get("host"), event.get("scheme"), event.get("session_id"), event.get("session_phase"),
+                            event.get("method", ""), event.get("path", ""),
+                            event.get("user_agent"), event.get("content_type"),
+                            int(event.get("body_bytes", 0)), int(bool(event.get("body_clipped"))),
+                            event.get("body_sha256"), event.get("rule"), event.get("status"),
+                            int(event.get("duration", 0)), event.get("body_text"), event.get("body_base64"),
+                            event.get("body_file"),
+                        ),
+                    )
+                    imported += cursor.rowcount
+            remaining = contents[complete:]
+            stream.seek(0)
+            stream.truncate()
+            if remaining:
+                stream.write(remaining)
+            stream.flush()
+            os.fsync(stream.fileno())
+            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+        if imported:
+            logger.info("Imported %d honeypot event(s) from %s", imported, log_path)
+        return imported
 
     def _create_traefik_reader(self, path: str) -> TraefikReader:
         return TraefikReader(path, self.config.input_save_margin_characters)
@@ -371,6 +440,12 @@ class Importer:
         timestamp = self._parse_timestamp(record.get("StartUTC") or record.get("time"))
         timestamp_text = timestamp.isoformat(timespec="microseconds").replace("+00:00", "Z")
         method = str(record.get("RequestMethod") or "").upper()
+        downstream_status = self._optional_int(record.get("DownstreamStatus"))
+        downstream_content_size = self._optional_int(record.get("DownstreamContentSize"))
+        duration = self._optional_int(record.get("Duration"))
+        request_path = record.get("RequestPath")
+        request_scheme = record.get("RequestScheme")
+        user_agent = record.get("request_User-Agent")
         categories = self._categories_for_record(record)
 
         # Keep each record's related rows atomic: the reader only consumes its
@@ -424,6 +499,28 @@ class Importer:
                     "SELECT host_id FROM host WHERE name = ?", (request_host,)
                 ).fetchone()[0]
 
+            duplicate = connection.execute(
+                """SELECT request_id FROM request
+                   WHERE actor_id = ? AND host_id IS ? AND start_utc = ?
+                     AND request_method IS ? AND request_path IS ? AND request_scheme IS ?
+                     AND user_agent IS ? AND downstream_status IS ?
+                     AND downstream_content_size IS ? AND duration IS ?
+                   LIMIT 1""",
+                (
+                    actor_id, host_id, timestamp_text, method or None, request_path,
+                    request_scheme, user_agent, downstream_status,
+                    downstream_content_size, duration,
+                ),
+            ).fetchone()
+            if duplicate is not None:
+                if log_position is not None:
+                    self._write_log_position(connection, *log_position)
+                logger.debug(
+                    "Skipping duplicate access-log record matching request %s",
+                    duplicate["request_id"],
+                )
+                return False
+
             latest = connection.execute(
                 """SELECT start_utc FROM request
                    WHERE actor_id = ? AND host_id IS ?
@@ -442,15 +539,15 @@ class Importer:
                 (
                     actor_id,
                     host_id,
-                    self._optional_int(record.get("DownstreamContentSize")),
-                    self._optional_int(record.get("DownstreamStatus")),
-                    self._optional_int(record.get("Duration")),
+                    downstream_content_size,
+                    downstream_status,
+                    duration,
                     request_host,
                     method or None,
-                    record.get("RequestPath"),
-                    record.get("RequestScheme"),
+                    request_path,
+                    request_scheme,
                     timestamp_text,
-                    record.get("request_User-Agent"),
+                    user_agent,
                 ),
             )
             request_id = cursor.lastrowid
@@ -462,7 +559,7 @@ class Importer:
             if log_position is not None:
                 self._write_log_position(connection, *log_position)
         self._queue_burst_request(key, request_id, timestamp_text, latest_before)
-        if self.PATH_SCAN_CATEGORIES.intersection(categories) or (self._optional_int(record.get("DownstreamStatus")) or 0) >= 400:
+        if self.PATH_SCAN_CATEGORIES.intersection(categories) or (downstream_status or 0) >= 400:
             self._pending_low_slow_checks[actor_id] = max(
                 self._pending_low_slow_checks.get(actor_id, timestamp), timestamp
             )

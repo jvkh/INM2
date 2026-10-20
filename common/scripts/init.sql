@@ -116,9 +116,41 @@ CREATE TABLE IF NOT EXISTS settings (
     PRIMARY KEY (group_name, name)
 );
 
+-- Honeypot events are separate from imported proxy requests so their captured
+-- POST bodies can be inspected without changing traffic or burst totals.
+CREATE TABLE IF NOT EXISTS honeypot_event (
+    event_id       TEXT PRIMARY KEY,
+    time           TEXT NOT NULL,
+    client_ip      TEXT,
+    provider       TEXT,
+    asn            TEXT,
+    country        TEXT,
+    city           TEXT,
+    host           TEXT,
+    scheme         TEXT,
+    session_id     TEXT,
+    session_phase  TEXT,
+    method         TEXT NOT NULL,
+    path           TEXT NOT NULL,
+    user_agent     TEXT,
+    content_type   TEXT,
+    body_bytes     INTEGER NOT NULL DEFAULT 0,
+    body_clipped   INTEGER NOT NULL DEFAULT 0 CHECK (body_clipped IN (0, 1)),
+    body_sha256    TEXT,
+    rule           TEXT,
+    status         INTEGER,
+    duration       INTEGER NOT NULL DEFAULT 0,
+    body_text      TEXT,
+    body_base64    TEXT,
+    body_file      TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_request_actor_time ON request(actor_id, start_utc);
 CREATE INDEX IF NOT EXISTS idx_request_host_time ON request(host_id, start_utc);
 CREATE INDEX IF NOT EXISTS idx_request_time ON request(start_utc);
+CREATE INDEX IF NOT EXISTS idx_honeypot_event_time ON honeypot_event(time DESC);
+CREATE INDEX IF NOT EXISTS idx_honeypot_event_ip_time ON honeypot_event(client_ip, time DESC);
+CREATE INDEX IF NOT EXISTS idx_honeypot_event_method_time ON honeypot_event(method, time DESC);
 CREATE INDEX IF NOT EXISTS idx_request_status ON request(downstream_status);
 -- Burst reconstruction groups requests by actor and host inside a time range.
 CREATE INDEX IF NOT EXISTS idx_request_actor_host_time ON request(actor_id, host_id, start_utc);

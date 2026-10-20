@@ -4,7 +4,11 @@ COPY VERSION ./VERSION
 COPY ui/package*.json ./ui/
 WORKDIR /app/ui
 RUN npm install
-COPY ui/ ./
+COPY ui/index.html ./
+COPY ui/favicon.svg ./
+COPY ui/vite.config.ts ./
+COPY ui/tsconfig*.json ./
+COPY ui/src ./src
 RUN npm run build
 
 FROM nginx:1.27-alpine

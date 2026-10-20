@@ -10,6 +10,12 @@ Es sind bislang keine veröffentlichten Versions-Tags vorhanden. Daher werden ke
 
 ## Unveröffentlicht
 
+- Optionalen, regelbasierten HTTP-Honeypot als ressourcenarmen Python-Dienst hinter Traefik ergänzt; keine externen Dienste, kein LLM und kein veröffentlichter Host-Port.
+- Honeypot-POST-Bodies einschließlich übermittelter Login-Felder erfasst; große Bodies und Uploads werden getrennt abgelegt und vom Collector importiert.
+- Honeypot-Seite an die Hauptlisten angepasst: gemeinsamer Zeitfilter und Paginator, Sortierung und Freitextsuche, Akteur-Metadaten sowie direkter Zugriff auf übermittelte Daten.
+- Honeypot-Statistikregisterkarte mit Zugriffshäufigkeit, HTTP-Methoden, Erkennungsregeln und Abgleich mit gespeicherten Vorfällen ergänzt; der Zeitverlauf zeigt Honeypot-Zugriffe als zusätzliche Kachel, sobald der Dienst konfiguriert ist.
+- Im Install-Script einen Aktivierungsschalter für den Honeypot ergänzt; bei Deaktivierung blendet INM2 Honeypot-Menüpunkt, Statistiken und Statushinweise aus.
+- Deutsche und englische Dokumentation für den optionalen Honeypot ergänzt.
 - Pfad-Scan-Erkennung ergänzt: mindestens acht verschiedene sensible Pfade derselben Quell-IP und desselben Hosts innerhalb von zehn Minuten erzeugen einen Vorfall, der in der Glocke erscheint.
 - Langsame, hostübergreifende Pfadscans mit konfigurierbaren Schwellen für Zeitfenster, Pfad- und Hostanzahl sowie Mindestdauer ergänzt.
 - Linux-Setup um Menüpunkte für Pflichtangaben, Ports, Zugangssicherheit sowie Burst- und Vorfalleinstellungen ergänzt.

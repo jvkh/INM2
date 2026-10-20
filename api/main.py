@@ -26,6 +26,7 @@ from api.request_paths import router as request_paths_router
 from api.logging_view import router as logging_router
 from api.statistics import router as statistics_router
 from api.incidents import router as incidents_router
+from api.honeypot import router as honeypot_router
 
 configure_file_logging("api")
 
@@ -84,4 +85,5 @@ app.include_router(incidents_router, prefix="/api/v1")
 app.include_router(logging_router, prefix="/api/v1")
 app.include_router(status_router, prefix="/api/v1")
 app.include_router(request_counts_router, prefix="/api/v1")
+app.include_router(honeypot_router, prefix="/api/v1")
 register_error_handlers(app)

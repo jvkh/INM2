@@ -18,8 +18,10 @@ project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # Intentionally do not use --delete: files on the Raspberry Pi are preserved.
 # Instance configuration and runtime data are excluded from upload entirely.
 rsync -avz --human-readable --progress \
+  --exclude='/deploy-to-server' \
   --exclude='/.git/' \
   --exclude='/.env' \
+  --exclude='/honeypot/.env' \
   --exclude='/docker-compose.yml' \
   --exclude='/databases/' \
   --exclude='/logs/' \
@@ -28,3 +30,4 @@ rsync -avz --human-readable --progress \
   --exclude='node_modules/' \
   --exclude='dist/' \
   "$project_dir/" "$target"
+  

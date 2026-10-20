@@ -10,6 +10,12 @@ There are no published version tags in the repository yet. No earlier releases a
 
 ## Unreleased
 
+- Added an optional, rule-based HTTP honeypot as a resource-light Python service behind Traefik; it uses no external services or LLM and publishes no host port.
+- Captured honeypot POST bodies, including submitted login fields; large bodies and uploads are stored separately and imported by the collector.
+- Aligned the Honeypot page with the main lists: shared time range and paginator, sorting and free-text search, actor metadata, and direct access to submitted data.
+- Added a Honeypot statistics tab with access frequency, HTTP methods, detection rules, and matching against stored incidents; the time series gains an additional Honeypot tile whenever the service is configured.
+- Added a Honeypot enable switch to the setup script; when disabled, INM2 hides the Honeypot menu entry, statistics, and status notices.
+- Added German and English documentation for the optional honeypot.
 - Added path-scan detection: at least eight distinct sensitive paths from the same source IP and host within ten minutes create an incident shown in notifications.
 - Added low-and-slow multi-host path-scan detection with configurable time window, path and host counts, and minimum duration.
 - Added Linux setup menu items for required settings, ports, access security, and burst and incident thresholds.

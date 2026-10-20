@@ -59,6 +59,19 @@ networks:
 
 `traefik-proxy` must be an existing Docker network also used by the Traefik container. This example assumes that the Docker provider is enabled and that `websecure` and the `letsencrypt` certificate resolver are configured in Traefik. Middleware is optional. The UI listens on port `80` in the container; `INM2_UI_PORT` is an additional published host port and is not used as the Traefik target in this Docker network example. File-based Traefik configurations and other network setups require the corresponding service target.
 
+### Optional HTTP honeypot
+
+The rule-based Python honeypot is a standalone subproject in `honeypot/`. INM2 works without it; the service is started separately with its own Compose file. The setup script can enable or disable the honeypot. When disabled, INM2 hides its menu entry, statistics, and status notice. When enabled, INM2 shows a warning if the service is not running.
+
+```sh
+cd honeypot
+cp .env.example .env
+# Update .env for your Traefik installation
+docker compose up -d --build
+```
+
+Traefik access logs continue to be imported as usual. The honeypot also writes events to `logs/honeypot.jsonl`; the collector imports them into the database and truncates the file after a successful import. POST contents, including submitted login fields and uploads, are stored. A fake file and backup manager invites uploads of archives, configuration files, and scripts; uploaded files are never executed. Bodies up to 64 KiB are embedded in the JSONL event; larger bodies and uploads are stored as files under `logs/honeypot-bodies/`. The capture limit is 10 MiB per request. Details: [HTTP honeypot](docs/HONEYPOT.en.md).
+
 ```dotenv
 INPUT_LOG_DIR=/var/log/my-service
 LOG_FILES=access.log

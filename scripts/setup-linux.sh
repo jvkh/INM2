@@ -10,8 +10,8 @@ SETUP_CREATED_ENV=0
 SETUP_COMPLETE=0
 BOOTSTRAP_REQUIRED=0
 BACKUP_CREATED=0
-declare -A ENV_UPDATES=()
-declare -A ENV_BASELINE=()
+ENV_UPDATE_KEYS=''
+ENV_BASELINE_KEYS=''
 SCREEN_ACTIVE=0
 SCREEN_SECTION=''
 SCREEN_HELP=''
@@ -20,6 +20,48 @@ LAST_NOTICE=''
 BACKUP_NOTICE=''
 LANGUAGE='de'
 LANGUAGE_FILE="${XDG_CONFIG_HOME:-${HOME:-/tmp}/.config}/inm2/setup-language"
+
+# Keep the environment maps in plain variables so the installer also runs on
+# the Bash 3.2 shipped with older macOS systems.
+env_map_has() {
+  local prefix="$1" key="$2" keys_var="${1}_KEYS" keys=""
+  eval "keys=\${$keys_var-}"
+  case " $keys " in *" $key "*) return 0 ;; *) return 1 ;; esac
+}
+
+env_map_get() {
+  local variable="${1}_${2}"
+  REPLY="${!variable-}"
+}
+
+env_map_set() {
+  local prefix="$1" key="$2" value="$3" keys_var="${1}_KEYS" keys="" variable="${1}_${2}"
+  eval "keys=\${$keys_var-}"
+  case " $keys " in *" $key "*) ;; *)
+    if [[ -n "$keys" ]]; then keys="$keys $key"; else keys="$key"; fi
+    printf -v "$keys_var" '%s' "$keys"
+    ;;
+  esac
+  printf -v "$variable" '%s' "$value"
+}
+
+env_map_unset() {
+  local prefix="$1" key="$2" keys_var="${1}_KEYS" keys="" rebuilt="" item variable="${1}_${2}"
+  eval "keys=\${$keys_var-}"
+  for item in $keys; do
+    [[ "$item" == "$key" ]] && continue
+    if [[ -n "$rebuilt" ]]; then rebuilt="$rebuilt $item"; else rebuilt="$item"; fi
+  done
+  printf -v "$keys_var" '%s' "$rebuilt"
+  unset "$variable"
+}
+
+env_map_clear() {
+  local prefix="$1" keys_var="${1}_KEYS" keys="" key variable
+  eval "keys=\${$keys_var-}"
+  for key in $keys; do variable="${prefix}_${key}"; unset "$variable"; done
+  printf -v "$keys_var" '%s' ''
+}
 
 translate() {
   local text="$1"
@@ -46,6 +88,12 @@ translate() {
     '  5  Import, Wartung und optionale Daten') printf '  5  Import, maintenance, and optional data' ;;
     '  6  Admin-Passwort ändern') printf '  6  Change administrator password' ;;
     '  7  .env-Backupdateien löschen') printf '  7  Delete .env backup files' ;;
+    '  8  Honeypot konfigurieren') printf '  8  Configure honeypot' ;;
+    'Honeypot aktivieren (ja/nein)') printf 'Enable honeypot (yes/no)' ;;
+    'Bitte ja oder nein eingeben.') printf 'Enter yes or no.' ;;
+    'Schalterstatus: eingeschaltet') printf 'Switch status: on' ;;
+    'Schalterstatus: ausgeschaltet') printf 'Switch status: off' ;;
+    'Honeypot deaktiviert. Seine Bereiche werden in INM2 ausgeblendet.') printf 'Honeypot disabled. Its sections are hidden in INM2.' ;;
     '  0  Beenden') printf '  0  Exit' ;;
     'Ports') printf 'Ports' ;;
     'Zugangssicherheit') printf 'Access security' ;;
@@ -54,6 +102,13 @@ translate() {
     'Admin-Passwort ändern') printf 'Change administrator password' ;;
     '.env-Backupdateien löschen') printf 'Delete .env backup files' ;;
     'Sprache / Language') printf 'Language: English' ;;
+    'Honeypot konfigurieren') printf 'Configure honeypot' ;;
+    'Öffentlicher Honeypot-Hostname') printf 'Public honeypot hostname' ;;
+    'Name des externen Traefik-Docker-Netzwerks') printf 'External Traefik Docker network name' ;;
+    'HTTP-EntryPoint von Traefik') printf 'Traefik HTTP entrypoint' ;;
+    'HTTPS-EntryPoint von Traefik') printf 'Traefik HTTPS entrypoint' ;;
+    'Traefik-Zertifikatsresolver') printf 'Traefik certificate resolver' ;;
+    'Honeypot-Konfiguration gespeichert. Starten mit: cd honeypot && docker compose up -d --build') printf 'Honeypot configuration saved. Start it with: cd honeypot && docker compose up -d --build' ;;
     'Beenden') printf 'Exit' ;;
     'Systemvoraussetzungen geprüft: Docker, Compose v2, Docker-Dienst und Projektdateien.') printf 'Requirements checked: Docker, Compose v2, Docker service, and project files.' ;;
     'Vorhandene .env gefunden. Änderungen werden gesichert.') printf 'Existing .env found. Changes will be backed up.' ;;
@@ -267,9 +322,9 @@ wait_for_retry() {
 }
 
 prompt_value() {
-  local label="$1" default="$2" result
+  local label="$1" default="$2" result extra_help="${3:-}" current_status="${4:-}"
   while true; do
-    render_prompt "$label" "$default"
+    render_prompt "$label" "$default" "$extra_help" "$current_status"
     if ! read -r -p "$(translate 'Eingabe: ')" result </dev/tty; then handle_input_eof; fi
     result="${result:-$default}"
     if [[ "$result" == *"'"* ]]; then SCREEN_STATUS="Einfache Anführungszeichen werden in diesem Wert nicht unterstützt."; continue; fi
@@ -331,12 +386,14 @@ apply_env_updates() {
       BACKUP_NOTICE="Sicherung der vorherigen .env: $backup_file"
     fi
   fi
-  for key in "${!ENV_UPDATES[@]}"; do
-    if [[ "${ENV_UPDATES[$key]}" == *"'"* || "${ENV_UPDATES[$key]}" == *$'\r'* || "${ENV_UPDATES[$key]}" == *$'\n'* ]]; then
+  for key in $ENV_UPDATE_KEYS; do
+    env_map_get ENV_UPDATES "$key"
+    value="$REPLY"
+    if [[ "$value" == *"'"* || "$value" == *$'\r'* || "$value" == *$'\n'* ]]; then
       LAST_NOTICE="Der Wert für $key kann nicht sicher in .env geschrieben werden. Wert korrigieren und erneut speichern."
       return 1
     fi
-    printf -v "$key" '%s' "${ENV_UPDATES[$key]}"
+    printf -v "$key" '%s' "$value"
     export "$key"
     update_keys+=" $key"
   done
@@ -376,7 +433,7 @@ apply_env_updates() {
     LAST_NOTICE='Die aktualisierte .env-Datei konnte nicht gespeichert werden. Speicherplatz und Schreibrechte prüfen.'
     return 1
   fi
-  ENV_UPDATES=()
+  env_map_clear ENV_UPDATES
 }
 
 prompt_yes_no() {
@@ -385,7 +442,7 @@ prompt_yes_no() {
   while true; do
     render_prompt "$label" "$prompt_default" 'Antwort: j oder n.'
     if ! read -r -p "$(translate "Antwort [$prompt_default]: ")" answer </dev/tty; then handle_input_eof; fi
-    answer="${answer,,}"
+    answer="$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]')"
     if [[ -z "$answer" ]]; then REPLY="$default"; return; fi
     case "$answer" in
       j|ja|y|yes) REPLY=true; return ;;
@@ -590,11 +647,12 @@ screen_box_top() {
 }
 
 render_prompt() {
-  local label="$1" default="${2:-}" extra_help="${3:-}"
+  local label="$1" default="${2:-}" extra_help="${3:-}" current_status="${4:-}"
   screen_header
   printf '\n%s%s%s\n%s' "$C_BOLD" "$(translate "${SCREEN_SECTION:-Eingabe}")" "$C_RESET" "$C_CYAN"; screen_rule; printf '%s\n' "$C_RESET"
   printf '\n'; print_wrapped "$label"; printf '\n'
   if [[ -n "$default" ]]; then print_wrapped "Aktueller Wert: $default"; printf '\n'; fi
+  if [[ -n "$current_status" ]]; then print_wrapped "$(translate "$current_status")"; printf '\n'; fi
   if [[ -n "$SCREEN_HELP" ]]; then printf '\n%s›%s ' "$C_BLUE" "$C_RESET"; print_wrapped "$SCREEN_HELP"; fi
   if [[ -n "$extra_help" ]]; then printf '\n%s›%s ' "$C_BLUE" "$C_RESET"; print_wrapped "$extra_help"; fi
   if [[ -n "$SCREEN_STATUS" ]]; then printf '\n%s' "$C_YELLOW"; print_wrapped "$SCREEN_STATUS"; printf '%s\n' "$C_RESET"; fi
@@ -692,21 +750,24 @@ check_tty() {
 
 set_update() {
   local key="$1" value="$2" baseline
-  if [[ -n "${ENV_BASELINE[$key]+x}" ]]; then baseline="${ENV_BASELINE[$key]}"
-  else get_env_value "$key" ''; baseline="$REPLY"
+  if env_map_has ENV_BASELINE "$key"; then
+    env_map_get ENV_BASELINE "$key"
+    baseline="$REPLY"
+  else
+    get_env_value "$key" ''; baseline="$REPLY"
   fi
-  if [[ "$value" == "$baseline" ]]; then unset 'ENV_UPDATES[$key]'
-  else ENV_UPDATES["$key"]="$value"
+  if [[ "$value" == "$baseline" ]]; then env_map_unset ENV_UPDATES "$key"
+  else env_map_set ENV_UPDATES "$key" "$value"
   fi
 }
 
 load_default() {
   get_env_value "$1" "$2"
-  ENV_BASELINE["$1"]="$REPLY"
+  env_map_set ENV_BASELINE "$1" "$REPLY"
 }
 
 save_group() {
-  if ((${#ENV_UPDATES[@]} == 0)); then return 0; fi
+  if [[ -z "$ENV_UPDATE_KEYS" ]]; then return 0; fi
   if ! apply_env_updates; then return 1; fi
   if (( BOOTSTRAP_REQUIRED == 0 )); then SETUP_COMPLETE=1; fi
   ENV_EXISTS=1
@@ -841,7 +902,7 @@ menu_required() {
     set_update INM2_AUTH_SECRET "$secret"
     if ! save_group; then return 1; fi
     if ! generate_password_hash; then return 1; fi
-    ENV_UPDATES=()
+    env_map_clear ENV_UPDATES
     set_update INM2_ADMIN_PASSWORD_HASH "$PASSWORD_HASH"
   fi
   if ! save_group; then return 1; fi
@@ -977,6 +1038,86 @@ menu_password() {
   LAST_NOTICE='Admin-Passwort geändert. Damit es gilt: docker compose up -d api'
 }
 
+menu_honeypot() {
+  local honeypot_dir="$ROOT_DIR/honeypot" config_file="$ROOT_DIR/honeypot/.env"
+  local enabled default_answer current_status host network http_entry https_entry resolver temp_file source_file line honeypot_uid honeypot_gid
+  section 'Honeypot konfigurieren'
+  if [[ ! -f "$honeypot_dir/docker-compose.yml" || ! -f "$honeypot_dir/.env.example" ]]; then
+    LAST_NOTICE='Honeypot-Projektdateien fehlen.'
+    return 1
+  fi
+  source_file="$config_file"
+  [[ -f "$source_file" ]] || source_file="$honeypot_dir/.env.example"
+  read_honeypot_value() {
+    local key="$1" fallback="$2" found=''
+    line="$(grep -m 1 "^${key}=" "$source_file" 2>/dev/null || true)"
+    [[ -z "$line" ]] || found="${line#*=}"
+    REPLY="${found:-$fallback}"
+  }
+  read_honeypot_value HONEYPOT_ENABLED true; enabled="$(printf '%s' "$REPLY" | tr '[:upper:]' '[:lower:]')"
+  case "$enabled" in
+    ja|j|yes|y|true|1|on|ein|an|eingeschaltet) enabled=true ;;
+    nein|n|no|false|0|off|aus|ausgeschaltet) enabled=false ;;
+    *) enabled=true ;;
+  esac
+  if [[ "$enabled" == true ]]; then default_answer='ja'; current_status='Schalterstatus: eingeschaltet'; else default_answer='nein'; current_status='Schalterstatus: ausgeschaltet'; fi
+  [[ "$LANGUAGE" != en ]] || { if [[ "$enabled" == true ]]; then default_answer='yes'; else default_answer='no'; fi; }
+  prompt_value 'Honeypot aktivieren (ja/nein)' "$default_answer" '' "$current_status"
+  enabled="$(printf '%s' "$REPLY" | tr '[:upper:]' '[:lower:]')"
+  case "$enabled" in
+    ja|j|yes|y|true|1|on|ein|an|eingeschaltet) enabled=true ;;
+    nein|n|no|false|0|off|aus|ausgeschaltet) enabled=false ;;
+    *) LAST_NOTICE='Bitte ja oder nein eingeben.'; return 1 ;;
+  esac
+  read_honeypot_value HONEYPOT_HOST honeypot.example.org
+  if [[ "$enabled" == true ]]; then prompt_value 'Öffentlicher Honeypot-Hostname' "$REPLY"; fi; host="$REPLY"
+  read_honeypot_value TRAEFIK_DOCKER_NETWORK traefik-proxy
+  if [[ "$enabled" == true ]]; then prompt_value 'Name des externen Traefik-Docker-Netzwerks' "$REPLY"; fi; network="$REPLY"
+  read_honeypot_value HONEYPOT_HTTP_ENTRYPOINT web
+  if [[ "$enabled" == true ]]; then prompt_value 'HTTP-EntryPoint von Traefik' "$REPLY"; fi; http_entry="$REPLY"
+  read_honeypot_value HONEYPOT_ENTRYPOINT websecure
+  if [[ "$enabled" == true ]]; then prompt_value 'HTTPS-EntryPoint von Traefik' "$REPLY"; fi; https_entry="$REPLY"
+  read_honeypot_value HONEYPOT_CERT_RESOLVER letsencrypt
+  if [[ "$enabled" == true ]]; then prompt_value 'Traefik-Zertifikatsresolver' "$REPLY"; fi; resolver="$REPLY"
+  honeypot_uid="$(id -u)"
+  honeypot_gid="$(id -g)"
+  if [[ ! "$host" =~ ^[A-Za-z0-9.-]+$ || ! "$network" =~ ^[A-Za-z0-9_.-]+$ || ! "$http_entry" =~ ^[A-Za-z0-9_.-]+$ || ! "$https_entry" =~ ^[A-Za-z0-9_.-]+$ || ! "$resolver" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+    LAST_NOTICE='Bitte gültige Host-, Netzwerk- und EntryPoint-Namen ohne Leerzeichen eingeben.'
+    return 1
+  fi
+  if [[ -f "$config_file" ]]; then
+    local backup
+    if ! backup="$(mktemp "$ROOT_DIR/.env.backup.honeypot.XXXXXX")" || ! cp -p -- "$config_file" "$backup"; then
+      LAST_NOTICE='Die vorhandene Honeypot-Konfiguration konnte nicht gesichert werden.'
+      return 1
+    fi
+    chmod 600 "$backup" 2>/dev/null || true
+  fi
+  if ! temp_file="$(mktemp "$honeypot_dir/.env.tmp.XXXXXX")"; then
+    LAST_NOTICE='Die Honeypot-Konfiguration konnte nicht geschrieben werden.'
+    return 1
+  fi
+  if ! {
+    printf 'HONEYPOT_ENABLED=%s\n' "$enabled"
+    printf 'HONEYPOT_HOST=%s\n' "$host"
+    printf 'TRAEFIK_DOCKER_NETWORK=%s\n' "$network"
+    printf 'HONEYPOT_HTTP_ENTRYPOINT=%s\n' "$http_entry"
+    printf 'HONEYPOT_ENTRYPOINT=%s\n' "$https_entry"
+    printf 'HONEYPOT_CERT_RESOLVER=%s\n' "$resolver"
+    printf 'HONEYPOT_UID=%s\n' "$honeypot_uid"
+    printf 'HONEYPOT_GID=%s\n' "$honeypot_gid"
+  } >"$temp_file" || ! chmod 600 "$temp_file" || ! mv -f -- "$temp_file" "$config_file"; then
+    rm -f -- "$temp_file"
+    LAST_NOTICE='Die Honeypot-Konfiguration konnte nicht gespeichert werden.'
+    return 1
+  fi
+  if [[ "$enabled" == true ]]; then
+    LAST_NOTICE='Honeypot-Konfiguration gespeichert. Starten mit: cd honeypot && docker compose up -d --build'
+  else
+    LAST_NOTICE='Honeypot deaktiviert. Seine Bereiche werden in INM2 ausgeblendet.'
+  fi
+}
+
 menu_backup_cleanup() {
   local file count=0 removed=0 failed=0
   local backups=()
@@ -1065,11 +1206,12 @@ while true; do
     printf '%s' "$C_YELLOW"; print_wrapped '  Weitere Menüpunkte erscheinen nach der Ersteinrichtung.'; printf '%s\n' "$C_RESET"
   fi
   print_wrapped '  7  .env-Backupdateien löschen'
+  print_wrapped '  8  Honeypot konfigurieren'
   print_wrapped '  0  Beenden'
   printf '%s└' "$C_CYAN"; screen_rule; printf '┘%s\n' "$C_RESET"
   if [[ -n "$LAST_NOTICE" ]]; then printf '\n%s' "$C_GREEN"; print_wrapped "$LAST_NOTICE"; printf '%s\n' "$C_RESET"; fi
   if ! read -r -p "$(translate 'Auswahl: ')" MENU_CHOICE </dev/tty; then handle_input_eof; fi
-  MENU_CHOICE="${MENU_CHOICE,,}"
+  MENU_CHOICE="$(printf '%s' "$MENU_CHOICE" | tr '[:upper:]' '[:lower:]')"
   LAST_NOTICE=''
   case "$MENU_CHOICE" in
     1) menu_required || true ;;
@@ -1079,6 +1221,7 @@ while true; do
     5) if (( ENV_EXISTS )); then menu_other_settings || true; else LAST_NOTICE='Bitte zuerst die Pflichtangaben einrichten.'; fi ;;
     6) if (( ENV_EXISTS )); then menu_password || true; else LAST_NOTICE='Bitte zuerst die Pflichtangaben einrichten.'; fi ;;
     7) menu_backup_cleanup || true ;;
+    8) menu_honeypot || true ;;
     e) if [[ "$LANGUAGE" == de ]]; then toggle_language; else LAST_NOTICE='Die Sprache ist bereits Englisch.'; fi ;;
     d) if [[ "$LANGUAGE" == en ]]; then toggle_language; else LAST_NOTICE='Die Sprache ist bereits Deutsch.'; fi ;;
     0) break ;;

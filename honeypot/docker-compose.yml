@@ -1,0 +1,48 @@
+services:
+  honeypot:
+    build:
+      context: ..
+      dockerfile: honeypot/Dockerfile
+    restart: unless-stopped
+    user: "${HONEYPOT_UID:-1000}:${HONEYPOT_GID:-1000}"
+    read_only: true
+    mem_limit: 64m
+    cpus: 0.25
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    expose:
+      - "8080"
+    environment:
+      HONEYPOT_ADDR: ":8080"
+      HONEYPOT_LOG_PATH: /logs/honeypot.jsonl
+      HONEYPOT_BODY_DIR: /logs/honeypot-bodies
+      HONEYPOT_STATE_PATH: /logs/honeypot.state
+    volumes:
+      - ../logs:/logs
+    networks:
+      - traefik-proxy
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_DOCKER_NETWORK:-traefik-proxy}
+      - traefik.http.routers.inm2-honeypot-http.rule=Host(`${HONEYPOT_HOST:-honeypot.example.org}`)
+      - traefik.http.routers.inm2-honeypot-http.entrypoints=${HONEYPOT_HTTP_ENTRYPOINT:-web}
+      - traefik.http.routers.inm2-honeypot-http.middlewares=inm2-honeypot-https-redirect
+      - traefik.http.routers.inm2-honeypot-http.service=inm2-honeypot
+      - traefik.http.middlewares.inm2-honeypot-https-redirect.redirectscheme.scheme=https
+      - traefik.http.routers.inm2-honeypot.rule=Host(`${HONEYPOT_HOST:-honeypot.example.org}`)
+      - traefik.http.routers.inm2-honeypot.entrypoints=${HONEYPOT_ENTRYPOINT:-websecure}
+      - traefik.http.routers.inm2-honeypot.tls=true
+      - traefik.http.routers.inm2-honeypot.tls.certresolver=${HONEYPOT_CERT_RESOLVER:-letsencrypt}
+      - traefik.http.services.inm2-honeypot.loadbalancer.server.port=8080
+
+networks:
+  traefik-proxy:
+    external: true
+    name: ${TRAEFIK_DOCKER_NETWORK:-traefik-proxy}

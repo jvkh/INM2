@@ -57,6 +57,19 @@ networks:
 
 `traefik-proxy` muss ein bereits vorhandenes Docker-Netzwerk sein, mit dem auch der Traefik-Container verbunden ist. Das Beispiel setzt voraus, dass der Docker-Provider aktiv ist und `websecure` sowie der Zertifikatsresolver `letsencrypt` in Traefik existieren. Middleware ist optional. Die UI lauscht im Container auf Port `80`; `INM2_UI_PORT` ist der zusätzlich veröffentlichte Host-Port und muss für dieses Docker-Netzwerk-Beispiel nicht als Traefik-Ziel verwendet werden. Bei einer dateibasierten Traefik-Konfiguration oder einem anderen Netzwerkmodell ist stattdessen das dort übliche Service-Ziel einzutragen.
 
+### Optionaler HTTP-Honeypot
+
+Der regelbasierte Python-Honeypot ist ein eigenständiges Teilprojekt in `honeypot/`. INM2 funktioniert unabhängig davon; der Dienst wird separat mit seiner eigenen Compose-Datei gestartet. Im Install-Script lässt sich der Honeypot aktivieren oder deaktivieren. Bei Deaktivierung blendet INM2 den Menüpunkt, die Statistikdaten und den Statushinweis aus. Bei Aktivierung zeigt INM2 einen Warnhinweis, wenn der Dienst nicht läuft.
+
+```sh
+cd honeypot
+cp .env.example .env
+# .env an die Traefik-Installation anpassen
+docker compose up -d --build
+```
+
+Die Access-Logs von Traefik werden weiterhin regulär importiert. Zusätzlich schreibt der Honeypot seine Ereignisse nach `logs/honeypot.jsonl`; der Collector übernimmt sie in die Datenbank und kürzt die Datei nach erfolgreichem Import. POST-Inhalte einschließlich übermittelter Login-Felder und Uploads werden gespeichert. Das Portal bietet eine fingierte Datei- und Backup-Verwaltung als Upload-Köder; hochgeladene Dateien und Skripte werden niemals ausgeführt. Bodies bis 64 KiB liegen im JSONL-Ereignis, größere Bodies und Uploads als Dateien in `logs/honeypot-bodies/`; pro Request werden höchstens 10 MiB erfasst. Details: [HTTP-Honeypot](docs/HONEYPOT.de.md).
+
 Das Setup fragt den vollständigen Hostpfad zu einer Eingabe-Logdatei ab, zum Beispiel `/var/log/my-service/access.log`. Es bindet deren Ordner schreibgeschützt im Collector ein. `LOG_FILES` enthält danach nur den Dateinamen; rotierte Dateien wie `access.log.1` und `access.log.2.gz` werden automatisch mitgelesen. Der Hostordner kann später über `INPUT_LOG_DIR` in `.env` angepasst werden.
 
 ```dotenv

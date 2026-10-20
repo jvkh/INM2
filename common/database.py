@@ -60,10 +60,23 @@ class Database:
             self.connection.executescript(self.schema_path.read_text(encoding="utf-8"))
             self._migrate_incident_table()
             self._migrate_incident_summary()
+            self._migrate_honeypot_event()
             self.connection.execute(
                 "INSERT OR IGNORE INTO incident_criterion (incident_id, incident_type) SELECT incident_id, incident_type FROM incident"
             )
             self.connection.commit()
+
+    def _migrate_honeypot_event(self) -> None:
+        """Add cached IP metadata to existing honeypot event tables."""
+        columns = {
+            row[1]
+            for row in self.connection.execute("PRAGMA table_info(honeypot_event)")
+        }
+        for name in ("provider", "asn", "country", "city", "scheme", "session_id", "session_phase"):
+            if name not in columns:
+                self.connection.execute(f"ALTER TABLE honeypot_event ADD COLUMN {name} TEXT")
+        if "duration" not in columns:
+            self.connection.execute("ALTER TABLE honeypot_event ADD COLUMN duration INTEGER NOT NULL DEFAULT 0")
 
     def _migrate_incident_table(self) -> None:
         """Move legacy path-scan findings into the shared incident schema."""
