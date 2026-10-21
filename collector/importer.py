@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import ipaddress
 import json
+import hashlib
 import os
 import re
 import fcntl
@@ -167,6 +168,11 @@ class Importer:
         total = 0
         logger.info("Import cycle started for %d configured source(s)", len(self.config.log_files))
         try:
+            cowrie_count = self.import_cowrie_log()
+            total += cowrie_count
+            if on_record_imported is not None:
+                for _ in range(cowrie_count):
+                    on_record_imported()
             honeypot_count = self.import_honeypot_log()
             total += honeypot_count
             if on_record_imported is not None:
@@ -244,6 +250,13 @@ class Importer:
                             f"inode:{file_identity}", file_identity, 0, fingerprint
                         )
 
+                    def save_skipped_position(
+                        next_offset: int, file_identity: str, fingerprint: str | None
+                    ) -> None:
+                        self._save_log_position(
+                            f"inode:{file_identity}", file_identity, next_offset, fingerprint
+                        )
+
                     def import_and_report(
                         record: dict[str, Any],
                         next_offset: int,
@@ -271,6 +284,7 @@ class Importer:
                             file_identity=position["identity"] if position else None,
                             file_fingerprint=position.get("fingerprint") if position else None,
                             on_position_reset=save_reset_position,
+                            on_invalid_line=save_skipped_position,
                             sealed=sealed,
                         )
                     except Exception:
@@ -279,7 +293,7 @@ class Importer:
                     total += count
                     logger.info("Imported %d request(s) from %s", count, input_name)
                     if reader.skipped_count:
-                        logger.info("Skipped %d request(s) (filtered or duplicate)", reader.skipped_count)
+                        logger.info("Skipped %d request(s) (malformed, filtered, or duplicate)", reader.skipped_count)
         finally:
             # Assign imported rows once, preserving the prior import's open tail.
             self._rebuild_pending_bursts()
@@ -288,6 +302,129 @@ class Importer:
             self._merge_pending_incidents()
         logger.info("Import cycle completed: %d request(s) imported", total)
         return total
+
+    def import_cowrie_log(self) -> int:
+        """Incrementally import Cowrie JSON events, including submitted passwords."""
+        enabled = os.environ.get("COWRIE_ENABLED", "false").strip().lower()
+        if enabled not in {"1", "true", "yes", "on"}:
+            logger.debug("Cowrie import is disabled (COWRIE_ENABLED=%r)", enabled)
+            return 0
+        log_path = Path(os.environ.get("COWRIE_LOG_PATH", "").strip() or "/cowrie-logs/cowrie.json")
+        if not log_path.is_file():
+            logger.warning(
+                "Cowrie import is enabled, but log file %s is not accessible; check the collector bind mount",
+                log_path,
+            )
+            return 0
+        stat = log_path.stat()
+        identity = f"{stat.st_dev}:{stat.st_ino}"
+        position_name = "cowrie:" + str(log_path)
+        saved = self._get_log_position(position_name)
+        offset = saved["offset"] if saved and saved.get("identity") == identity else 0
+        if offset > stat.st_size:
+            logger.warning(
+                "Resetting Cowrie log position for %s from byte %d to 0: file size is %d",
+                log_path, offset, stat.st_size,
+            )
+            offset = 0
+        imported = 0
+        geo_enabled = self.geolocator.enabled
+        stored_fields = {
+            "eventid", "event_type", "timestamp", "time", "src_ip", "session", "username",
+            "password", "input", "message", "sensor",
+        }
+        with log_path.open("rb") as stream:
+            stream.seek(offset)
+            contents = stream.read()
+            complete = contents.rfind(b"\n") + 1
+            if not complete:
+                return 0
+            lines = contents[:complete].splitlines()
+            next_offset = offset + complete
+            with self.database.connection:
+                for line_number, line in enumerate(lines, start=1):
+                    try:
+                        event = json.loads(line.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        logger.warning("Skipping malformed Cowrie event line %d", line_number)
+                        continue
+                    if not isinstance(event, dict):
+                        continue
+                    event_type = str(event.get("eventid") or event.get("event_type") or "unknown")
+                    source_ip = event.get("src_ip")
+                    geo = self.geolocator.lookup(str(source_ip)) if source_ip and geo_enabled else {}
+                    cursor = self.database.connection.execute(
+                        """INSERT OR IGNORE INTO cowrie_event (
+                               event_id, time, src_ip, session, event_type, username,
+                               password, input, message, sensor, provider, asn, country, city, extra_json
+                           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            hashlib.sha256(line).hexdigest(),
+                            str(event.get("timestamp") or event.get("time") or ""),
+                            str(source_ip) if source_ip else None,
+                            str(event.get("session")) if event.get("session") else None,
+                            event_type,
+                            str(event.get("username")) if event.get("username") is not None else None,
+                            str(event.get("password")) if event.get("password") is not None else None,
+                            str(event.get("input")) if event.get("input") is not None else None,
+                            str(event.get("message")) if event.get("message") is not None else None,
+                            str(event.get("sensor")) if event.get("sensor") is not None else None,
+                            geo.get("provider"), geo.get("asn"), geo.get("country"), geo.get("city"),
+                            json.dumps({key: value for key, value in event.items() if key not in stored_fields}, ensure_ascii=False) or None,
+                        ),
+                    )
+                    imported += cursor.rowcount
+                self._write_log_position(
+                    self.database.connection, position_name, identity, next_offset
+                )
+        if imported:
+            logger.info("Imported %d Cowrie event(s) from %s", imported, log_path)
+        # Recover extra attributes for events imported by earlier versions of
+        # the collector while the corresponding JSON lines are still present.
+        pending_ids = {
+            row["event_id"]
+            for row in self.database.query(
+                "SELECT event_id FROM cowrie_event WHERE extra_json IS NULL"
+            )
+        }
+        if pending_ids:
+            with log_path.open("rb") as stream, self.database.connection:
+                for line in stream:
+                    event_id = hashlib.sha256(line.rstrip(b"\r\n")).hexdigest()
+                    if event_id not in pending_ids:
+                        continue
+                    try:
+                        event = json.loads(line.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        continue
+                    extras = {key: value for key, value in event.items() if key not in stored_fields} if isinstance(event, dict) else {}
+                    self.database.connection.execute(
+                        "UPDATE cowrie_event SET extra_json=? WHERE event_id=?",
+                        (json.dumps(extras, ensure_ascii=False), event_id),
+                    )
+                    pending_ids.discard(event_id)
+            if pending_ids:
+                logger.info("No original Cowrie JSON line found for %d older event(s); preserving them without extra fields", len(pending_ids))
+                with self.database.connection:
+                    self.database.connection.execute(
+                        "UPDATE cowrie_event SET extra_json='{}' WHERE extra_json IS NULL"
+                    )
+        if geo_enabled:
+            pending_ips = self.database.query(
+                """SELECT DISTINCT src_ip FROM cowrie_event WHERE src_ip IS NOT NULL
+                   AND (provider IS NULL OR asn IS NULL OR country IS NULL OR city IS NULL)"""
+            )
+            if pending_ips:
+                with self.database.connection:
+                    for row in pending_ips:
+                        geo = self.geolocator.lookup(row["src_ip"])
+                        self.database.connection.execute(
+                            """UPDATE cowrie_event SET provider=COALESCE(provider, ?),
+                                   asn=COALESCE(asn, ?), country=COALESCE(country, ?), city=COALESCE(city, ?)
+                               WHERE src_ip=?""",
+                            (geo.get("provider"), geo.get("asn"), geo.get("country"), geo.get("city"), row["src_ip"]),
+                        )
+        return imported
 
     def import_honeypot_log(self) -> int:
         """Import and acknowledge the honeypot's shared JSONL queue."""
@@ -339,6 +476,8 @@ class Importer:
                         ),
                     )
                     imported += cursor.rowcount
+            # Only acknowledge complete records after their DB transaction
+            # succeeded; keep an incomplete trailing record for the next poll.
             remaining = contents[complete:]
             stream.seek(0)
             stream.truncate()

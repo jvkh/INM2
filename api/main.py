@@ -27,6 +27,8 @@ from api.logging_view import router as logging_router
 from api.statistics import router as statistics_router
 from api.incidents import router as incidents_router
 from api.honeypot import router as honeypot_router
+from api.cowrie import router as cowrie_router
+from api.maintenance import router as maintenance_router
 
 configure_file_logging("api")
 
@@ -86,4 +88,6 @@ app.include_router(logging_router, prefix="/api/v1")
 app.include_router(status_router, prefix="/api/v1")
 app.include_router(request_counts_router, prefix="/api/v1")
 app.include_router(honeypot_router, prefix="/api/v1")
+app.include_router(cowrie_router, prefix="/api/v1")
+app.include_router(maintenance_router, prefix="/api/v1")
 register_error_handlers(app)

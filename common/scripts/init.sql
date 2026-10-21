@@ -116,6 +116,12 @@ CREATE TABLE IF NOT EXISTS settings (
     PRIMARY KEY (group_name, name)
 );
 
+-- Source IPs protected from inactivity cleanup across all imported data.
+CREATE TABLE IF NOT EXISTS maintenance_exclusion (
+    ip         TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Honeypot events are separate from imported proxy requests so their captured
 -- POST bodies can be inspected without changing traffic or burst totals.
 CREATE TABLE IF NOT EXISTS honeypot_event (
@@ -151,6 +157,23 @@ CREATE INDEX IF NOT EXISTS idx_request_time ON request(start_utc);
 CREATE INDEX IF NOT EXISTS idx_honeypot_event_time ON honeypot_event(time DESC);
 CREATE INDEX IF NOT EXISTS idx_honeypot_event_ip_time ON honeypot_event(client_ip, time DESC);
 CREATE INDEX IF NOT EXISTS idx_honeypot_event_method_time ON honeypot_event(method, time DESC);
+
+-- Cowrie SSH honeypot events, including submitted login passwords.
+CREATE TABLE IF NOT EXISTS cowrie_event (
+    event_id       TEXT PRIMARY KEY,
+    time           TEXT NOT NULL,
+    src_ip         TEXT,
+    session        TEXT,
+    event_type     TEXT NOT NULL,
+    username       TEXT,
+    password       TEXT,
+    input          TEXT,
+    message        TEXT,
+    sensor         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_cowrie_event_time ON cowrie_event(time DESC);
+CREATE INDEX IF NOT EXISTS idx_cowrie_event_ip_time ON cowrie_event(src_ip, time DESC);
 CREATE INDEX IF NOT EXISTS idx_request_status ON request(downstream_status);
 -- Burst reconstruction groups requests by actor and host inside a time range.
 CREATE INDEX IF NOT EXISTS idx_request_actor_host_time ON request(actor_id, host_id, start_utc);

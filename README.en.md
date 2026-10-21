@@ -28,6 +28,17 @@ The interactive Linux setup checks Docker Engine with Compose v2, the Docker ser
 
 The setup asks for the full host path to an input log file, for example `/var/log/my-service/access.log`. It mounts that directory read-only in the collector. `LOG_FILES` then contains only the filename; rotated files such as `access.log.1` and `access.log.2.gz` are discovered automatically. The host directory can later be changed through `INPUT_LOG_DIR` in `.env`.
 
+### Optional Cowrie SSH
+
+Enable it in the setup menu under **Honeypot → Configure Cowrie SSH**, then start Cowrie from its project directory:
+
+```sh
+cd honeypot/3rd_party
+docker compose up -d
+```
+
+Cowrie publishes Pi port `2222`. For the FRITZ!Box mapping described above, forward external port `22` to Pi port `2222` (Cowrie) and external port `2222` to Pi port `22` (real Pi SSH). Cowrie JSON logs are stored under `cowrie-data/var/log/cowrie/`. During maintenance, INM2 removes rotated Cowrie JSON and diagnostic logs older than `MAINTENANCE_LOG_RETENTION_DAYS` (14 days by default), while keeping the active log. The same retention period removes older Web and Cowrie events from the INM2 database. You can start maintenance manually from the administration page; set the retention value to `0` to disable this cleanup. The Web Honeypot queue is truncated through the last fully read record after each successful import. The **Honeypot → Cowrie SSH** page and **SSH** statistics tab appear when enabled. INM2 also stores attempted login passwords in the database, so protect database backups.
+
 The setup checks the log source and UI port. It does not start the application. After configuration, start it with `docker compose up -d --build`.
 
 ### Example: Traefik Docker provider

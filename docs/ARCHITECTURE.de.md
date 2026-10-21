@@ -16,7 +16,7 @@ Compose baut die Images aus den Dockerfiles im Repository. Die UI ist auf dem Ho
 
 ## Datenfluss
 
-1. Der Collector liest die Dateinamen aus `LOG_FILES` im unter `/input-logs` schreibgeschützt eingebundenen Verzeichnis. Unterstützt werden Traefik-JSON-Objekte pro Zeile. Passende rotierte Dateien werden ebenfalls erfasst.
+1. Der Collector liest die Dateinamen aus `LOG_FILES` im unter `/input-logs` schreibgeschützt eingebundenen Verzeichnis. Unterstützt werden Traefik-JSON-Objekte pro Zeile. Passende rotierte Dateien werden ebenfalls erfasst. Wenn `COWRIE_ENABLED=true` gesetzt ist, liest er zusätzlich `cowrie.json` inkrementell aus `/cowrie-logs` und speichert SSH-Ereignisse separat. Cowries Login-Ereignisse einschließlich Passwortwerten werden übernommen und in `cowrie_event.password` gespeichert.
 2. Vollständige verarbeitbare Zeilen werden in Requests, Akteure, Hosts und Kategorien überführt. Die Bursterkennung verarbeitet neue Requests inkrementell und ergänzt bei passendem Abstand den letzten Burst des vorherigen Imports. Nur bei der einmaligen Übernahme vorhandener Daten sowie bei rückdatierten Requests wird die Historie der betroffenen Akteur-/Host-Kombination neu aufgebaut. Nur global routbare Client-IP-Adressen werden importiert; private, Loopback-, Link-Local-, reservierte und ungültige Adressen werden übersprungen.
 3. Bei Bedarf ergänzt der Collector City-/Länder- und ASN-/Providerdaten aus lokalen GeoLite2-MMDB-Dateien. Diese Anreicherung ist optional.
 4. Collector und API verwenden dieselbe SQLite-Datei unter `databases/inm2.sqlite3`. Die Datenbank nutzt WAL, damit Lesezugriffe der API während eines Imports weiterlaufen können; kurze Schreibkonflikte werden bis zu 30 Sekunden abgewartet. Die UI greift ausschließlich über HTTP auf die API zu.
@@ -47,7 +47,7 @@ Die Bursterkennung trennt Folgen, sobald der Abstand zwischen zwei Requests `BUR
 
 ## Zeitsteuerung und Wartung
 
-Der Scheduler startet fällige Jobs beim Start des Collectors und plant den nächsten Lauf jeweils nach Abschluss des aktuellen Laufs. `INPUT_INTERVAL_SECONDS` steuert das Importintervall; `MAINTENANCE_INTERVAL_DAYS` das Wartungsintervall. Wartung entfernt Akteure, die länger als `MAINTENANCE_INACTIVE_DAYS` inaktiv waren, einschließlich zugehöriger abhängiger Daten.
+Der Scheduler startet fällige Jobs beim Start des Collectors und plant den nächsten Lauf jeweils nach Abschluss des aktuellen Laufs. `INPUT_INTERVAL_SECONDS` steuert das Importintervall; `MAINTENANCE_INTERVAL_DAYS` das Wartungsintervall. Wartung entfernt Akteure, die länger als `MAINTENANCE_INACTIVE_DAYS` inaktiv waren, einschließlich zugehöriger abhängiger Daten. Zusätzlich löscht sie Web-/Cowrie-Ereignisse und rotierte Cowrie-JSON-/Diagnoselogs, die älter als `MAINTENANCE_LOG_RETENTION_DAYS` sind; `0` deaktiviert diese Bereinigung.
 
 ## Persistenz und Mounts
 
@@ -55,8 +55,9 @@ Der Scheduler startet fällige Jobs beim Start des Collectors und plant den näc
 - `./logs` wird für Collector, API und UI nach `/logs` eingebunden; Betriebsprotokolle sind je Dienst getrennt.
 - Das Verzeichnis aus `INPUT_LOG_DIR` wird schreibgeschützt nach `/input-logs` eingebunden.
 - Das Verzeichnis aus `GEOLITE_DB_DIR` wird schreibgeschützt nach `/geoip` eingebunden.
+- Cowries `var/` liegt unter `./cowrie-data/var`; `var/log/cowrie` ist für den Collector nach `/cowrie-logs` eingebunden, damit er datierte Rotationen nach `MAINTENANCE_LOG_RETENTION_DAYS` löschen kann. Der aktive Log bleibt erhalten.
 
-Die Compose-Datei bindet Verzeichnisse vom Host ein. Sichern und überwachen Sie die Datenbank daher auf dem Host. Der Collector liest Access-Logs und Rotationen schreibgeschützt und verändert oder löscht sie nicht.
+Die Compose-Datei bindet Verzeichnisse vom Host ein. Sichern und überwachen Sie die Datenbank daher auf dem Host. Der Collector liest Access-Logs und Rotationen schreibgeschützt und verändert oder löscht sie nicht. Die Web-Honeypot-Warteschlange wird nach erfolgreichem Import bis zur letzten vollständigen gelesenen Zeile gekürzt.
 
 ## Konfiguration
 

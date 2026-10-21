@@ -228,6 +228,12 @@ LOG_FILES=access.log
 
 Compose mounts the host directory in `INPUT_LOG_DIR` read-only at `/input-logs`. `LOG_FILES` names files in that directory. The setup accepts the full host path to an input log file, saves its directory in `INPUT_LOG_DIR`, and stores only its filename in `LOG_FILES`. The default host directory is `./logs`.
 
+### Cowrie SSH
+
+When `COWRIE_ENABLED=true`, the collector incrementally reads `/cowrie-logs/cowrie.json`. The Cowrie Compose service persists its `var/` directory under `./cowrie-data/var`; the collector can remove date-rotated Cowrie logs older than `MAINTENANCE_LOG_RETENTION_DAYS`. Maintenance also removes older Web/Cowrie events from INM2, and can be started manually from the administration page. The Web Honeypot JSONL queue is truncated after successful import through the last fully read line. Events are stored separately in `cowrie_event` and shown on **Honeypot → Cowrie SSH** and the SSH statistics tab. Cowrie login password fields and message text are stored with the events in INM2. Setting the retention period to `0` disables this cleanup.
+
+Expanded Cowrie IP groups show their matching SSH events and a command analysis. Command analysis groups commands by case-insensitive text with surrounding whitespace removed, counts occurrences and sessions, groups command sequences per session, and assigns a purpose using simple text-pattern heuristics. Sequence analysis is limited to 10,000 commands and 50 distinct sequences. Categories are indicators, not definitive behavior or malware detection.
+
 The Traefik reader processes complete JSON lines before the end-of-file buffer configured by `INPUT_SAVE_MARGIN_CHARACTERS` in the active file. The value must be greater than zero. Matching rotated segments (`access.log.*`, including `.gz`) are discovered automatically and read through EOF in time order. Positions are keyed by device/inode identity and follow renamed segments. A SHA-256 fingerprint of the first complete log line (up to 64 KiB) detects a new file if an inode is reused. The fingerprint, position, and request are committed together. The collector never changes or deletes log files; logrotate handles rotation and retention.
 
 ### Configuration reference

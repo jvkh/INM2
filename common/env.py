@@ -25,6 +25,7 @@ class EnvConfig:
         "INPUT_SAVE_MARGIN_CHARACTERS": "4096",
         "MAINTENANCE_INTERVAL_DAYS": "1",
         "MAINTENANCE_INACTIVE_DAYS": "90",
+        "MAINTENANCE_LOG_RETENTION_DAYS": "14",
         "BURST_MAX_GAP_SECONDS": "5",
         "BURST_MIN_REQUESTS": "5",
         "BURST_WINDOW_SECONDS": "60",
@@ -40,6 +41,8 @@ class EnvConfig:
         "GEOLITE_ASN_DB": "/geoip/GeoLite2-ASN.mmdb",
         "IGNORE_REQUEST_ROUTES": "",
         "KNOWN_HOSTS": "",
+        "COWRIE_ENABLED": "false",
+        "COWRIE_LOG_PATH": "/cowrie-logs/cowrie.json",
     }
 
     def __init__(self, environ: Mapping[str, str] | None = None) -> None:
@@ -99,6 +102,13 @@ class EnvConfig:
     @property
     def maintenance_inactive_days(self) -> int:
         return self.get_int("MAINTENANCE_INACTIVE_DAYS")
+
+    @property
+    def maintenance_log_retention_days(self) -> int:
+        value = self.get_int("MAINTENANCE_LOG_RETENTION_DAYS")
+        if value < 0:
+            raise ValueError("MAINTENANCE_LOG_RETENTION_DAYS must not be negative")
+        return value
 
     @property
     def burst_max_gap_seconds(self) -> int:

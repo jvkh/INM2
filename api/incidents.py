@@ -19,6 +19,17 @@ IncidentType = Literal[
 ]
 
 
+@router.delete("/incidents/{incident_id}")
+def delete_incident(request: Request, incident_id: int = Path(ge=1)) -> dict[str, int | bool]:
+    """Delete one finding and its links without deleting the actor's requests."""
+    database = get_database(request)
+    with database.transaction() as connection:
+        cursor = connection.execute("DELETE FROM incident WHERE incident_id = ?", (incident_id,))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Incident not found")
+    return {"deleted": True, "incident_id": incident_id}
+
+
 def _utc_text(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
@@ -34,6 +45,7 @@ def get_incidents(
     search: str | None = Query(default=None, min_length=1),
     state: Literal["open", "acknowledged", "resolved"] | None = Query(default=None),
     incident_type: IncidentType | None = Query(default=None),
+    protected_only: bool = Query(default=False, description="Only actors protected from inactivity cleanup"),
     sort_by: Literal["incident_id", "incident_type", "first_seen", "last_seen", "actor_ip", "host", "indicator_count", "request_count", "state"] = Query(default="last_seen"),
     sort_order: Literal["asc", "desc"] = Query(default="desc"),
     limit: int = Query(default=25, ge=1, le=500),
@@ -46,6 +58,8 @@ def get_incidents(
 
     conditions = ["i.last_seen >= ?", "i.first_seen < ?"]
     parameters: list[Any] = [start, end]
+    if protected_only:
+        conditions.append("EXISTS (SELECT 1 FROM maintenance_exclusion AS me WHERE me.ip = a.ip)")
     if state:
         conditions.append("i.state = ?")
         parameters.append(state)

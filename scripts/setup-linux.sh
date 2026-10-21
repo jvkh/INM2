@@ -10,7 +10,7 @@ SETUP_CREATED_ENV=0
 SETUP_COMPLETE=0
 BOOTSTRAP_REQUIRED=0
 BACKUP_CREATED=0
-ENV_UPDATE_KEYS=''
+ENV_UPDATES_KEYS=''
 ENV_BASELINE_KEYS=''
 SCREEN_ACTIVE=0
 SCREEN_SECTION=''
@@ -88,7 +88,18 @@ translate() {
     '  5  Import, Wartung und optionale Daten') printf '  5  Import, maintenance, and optional data' ;;
     '  6  Admin-Passwort ändern') printf '  6  Change administrator password' ;;
     '  7  .env-Backupdateien löschen') printf '  7  Delete .env backup files' ;;
-    '  8  Honeypot konfigurieren') printf '  8  Configure honeypot' ;;
+    'Cowrie-SSH konfigurieren') printf 'Configure Cowrie SSH' ;;
+    'Cowrie-Anmeldeversuche einschließlich Passwörtern werden in INM2 gespeichert. Schützen und rotieren Sie Datenbank-Backups und die Originaldatei unter cowrie-data/var/log/cowrie.') printf 'Cowrie login attempts, including passwords, are stored in INM2. Protect and rotate database backups and the original file under cowrie-data/var/log/cowrie.' ;;
+    'Cowrie-Compose-Datei fehlt.') printf 'Cowrie Compose file is missing.' ;;
+    'Cowrie-Datenverzeichnis konnte nicht angelegt werden.') printf 'Could not create Cowrie data directory.' ;;
+    'Cowrie-Datenverzeichnis konnte nicht auf UID 999 gesetzt werden. Bitte im Projektverzeichnis `sudo chown -R 999:999 cowrie-data/var` ausführen und erneut aktivieren.') printf 'Could not set Cowrie data directory ownership to UID 999. Run `sudo chown -R 999:999 cowrie-data/var` from the project directory, then enable it again.' ;;
+    '  8  Web-Honeypot konfigurieren') printf '  8  Configure web honeypot' ;;
+    '  9  Cowrie-SSH konfigurieren') printf '  9  Configure Cowrie SSH' ;;
+    'Cowrie-SSH aktivieren (ja/nein)') printf 'Enable Cowrie SSH (yes/no)' ;;
+    'Cowrie aktiviert. INM2 API und Collector wurden aktualisiert. Cowrie selbst starten mit: cd honeypot/3rd_party && docker compose up -d') printf 'Cowrie enabled. INM2 API and collector were updated. Start Cowrie with: cd honeypot/3rd_party && docker compose up -d' ;;
+    'Cowrie ist in .env aktiviert, aber API und Collector konnten nicht aktualisiert werden. Bitte docker compose up -d api collector ausführen.') printf 'Cowrie is enabled in .env, but the API and collector could not be updated. Run docker compose up -d api collector.' ;;
+    'Cowrie ist in .env deaktiviert, aber API und Collector konnten nicht aktualisiert werden. Bitte docker compose up -d api collector ausführen.') printf 'Cowrie is disabled in .env, but the API and collector could not be updated. Run docker compose up -d api collector.' ;;
+    'Cowrie deaktiviert. Die SSH-Ereignisse werden in INM2 ausgeblendet.') printf 'Cowrie disabled. SSH events are hidden in INM2.' ;;
     'Honeypot aktivieren (ja/nein)') printf 'Enable honeypot (yes/no)' ;;
     'Bitte ja oder nein eingeben.') printf 'Enter yes or no.' ;;
     'Schalterstatus: eingeschaltet') printf 'Switch status: on' ;;
@@ -386,7 +397,7 @@ apply_env_updates() {
       BACKUP_NOTICE="Sicherung der vorherigen .env: $backup_file"
     fi
   fi
-  for key in $ENV_UPDATE_KEYS; do
+  for key in $ENV_UPDATES_KEYS; do
     env_map_get ENV_UPDATES "$key"
     value="$REPLY"
     if [[ "$value" == *"'"* || "$value" == *$'\r'* || "$value" == *$'\n'* ]]; then
@@ -767,7 +778,7 @@ load_default() {
 }
 
 save_group() {
-  if [[ -z "$ENV_UPDATE_KEYS" ]]; then return 0; fi
+  if [[ -z "$ENV_UPDATES_KEYS" ]]; then return 0; fi
   if ! apply_env_updates; then return 1; fi
   if (( BOOTSTRAP_REQUIRED == 0 )); then SETUP_COMPLETE=1; fi
   ENV_EXISTS=1
@@ -1118,6 +1129,55 @@ menu_honeypot() {
   fi
 }
 
+menu_cowrie() {
+  local enabled answer data_dir
+  section 'Cowrie-SSH konfigurieren'
+  explain 'Cowrie-Anmeldeversuche einschließlich Passwörtern werden in INM2 gespeichert. Schützen und rotieren Sie Datenbank-Backups und die Originaldatei unter cowrie-data/var/log/cowrie.'
+  if [[ ! -f "$ROOT_DIR/honeypot/3rd_party/docker-compose.yml" ]]; then
+    LAST_NOTICE='Cowrie-Compose-Datei fehlt.'
+    return 1
+  fi
+  load_default COWRIE_ENABLED false
+  enabled="$(printf '%s' "$REPLY" | tr '[:upper:]' '[:lower:]')"
+  case "$enabled" in ja|j|yes|y|true|1|on|ein|an) answer='ja' ;; *) answer='nein' ;; esac
+  [[ "$LANGUAGE" != en ]] || { [[ "$answer" == ja ]] && answer=yes || answer=no; }
+  prompt_value 'Cowrie-SSH aktivieren (ja/nein)' "$answer"
+  enabled="$(printf '%s' "$REPLY" | tr '[:upper:]' '[:lower:]')"
+  case "$enabled" in
+    ja|j|yes|y|true|1|on|ein|an) enabled=true ;;
+    nein|n|no|false|0|off|aus) enabled=false ;;
+    *) LAST_NOTICE='Bitte ja oder nein eingeben.'; return 1 ;;
+  esac
+  data_dir="$ROOT_DIR/cowrie-data/var"
+  if [[ "$enabled" == true ]]; then
+    if ! mkdir -p "$data_dir/log/cowrie" "$data_dir/lib/cowrie/tty" "$data_dir/lib/cowrie/downloads" "$data_dir/run/cowrie"; then
+      LAST_NOTICE='Cowrie-Datenverzeichnis konnte nicht angelegt werden.'
+      return 1
+    fi
+    # The official Cowrie image runs as UID/GID 999 and writes to its var volume.
+    if ! command -v chown >/dev/null 2>&1 || ! chown -R 999:999 "$data_dir" 2>/dev/null; then
+      LAST_NOTICE='Cowrie-Datenverzeichnis konnte nicht auf UID 999 gesetzt werden. Bitte im Projektverzeichnis `sudo chown -R 999:999 cowrie-data/var` ausführen und erneut aktivieren.'
+      return 1
+    fi
+  fi
+  set_update COWRIE_ENABLED "$enabled"
+  if ! save_group; then return 1; fi
+  env_map_clear ENV_UPDATES
+  if [[ "$enabled" == true ]]; then
+    if ! (cd "$ROOT_DIR" && docker compose up -d api collector); then
+      LAST_NOTICE='Cowrie ist in .env aktiviert, aber API und Collector konnten nicht aktualisiert werden. Bitte docker compose up -d api collector ausführen.'
+      return 1
+    fi
+    LAST_NOTICE='Cowrie aktiviert. INM2 API und Collector wurden aktualisiert. Cowrie selbst starten mit: cd honeypot/3rd_party && docker compose up -d'
+  else
+    if ! (cd "$ROOT_DIR" && docker compose up -d api collector); then
+      LAST_NOTICE='Cowrie ist in .env deaktiviert, aber API und Collector konnten nicht aktualisiert werden. Bitte docker compose up -d api collector ausführen.'
+      return 1
+    fi
+    LAST_NOTICE='Cowrie deaktiviert. Die SSH-Ereignisse werden in INM2 ausgeblendet.'
+  fi
+}
+
 menu_backup_cleanup() {
   local file count=0 removed=0 failed=0
   local backups=()
@@ -1206,7 +1266,8 @@ while true; do
     printf '%s' "$C_YELLOW"; print_wrapped '  Weitere Menüpunkte erscheinen nach der Ersteinrichtung.'; printf '%s\n' "$C_RESET"
   fi
   print_wrapped '  7  .env-Backupdateien löschen'
-  print_wrapped '  8  Honeypot konfigurieren'
+  print_wrapped '  8  Web-Honeypot konfigurieren'
+  print_wrapped '  9  Cowrie-SSH konfigurieren'
   print_wrapped '  0  Beenden'
   printf '%s└' "$C_CYAN"; screen_rule; printf '┘%s\n' "$C_RESET"
   if [[ -n "$LAST_NOTICE" ]]; then printf '\n%s' "$C_GREEN"; print_wrapped "$LAST_NOTICE"; printf '%s\n' "$C_RESET"; fi
@@ -1222,6 +1283,7 @@ while true; do
     6) if (( ENV_EXISTS )); then menu_password || true; else LAST_NOTICE='Bitte zuerst die Pflichtangaben einrichten.'; fi ;;
     7) menu_backup_cleanup || true ;;
     8) menu_honeypot || true ;;
+    9) menu_cowrie || true ;;
     e) if [[ "$LANGUAGE" == de ]]; then toggle_language; else LAST_NOTICE='Die Sprache ist bereits Englisch.'; fi ;;
     d) if [[ "$LANGUAGE" == en ]]; then toggle_language; else LAST_NOTICE='Die Sprache ist bereits Deutsch.'; fi ;;
     0) break ;;

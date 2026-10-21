@@ -16,7 +16,7 @@ Compose builds the images from the Dockerfiles in the repository. The UI is reac
 
 ## Data flow
 
-1. The collector reads filenames from `LOG_FILES` in the directory mounted read-only at `/input-logs`. It expects Traefik JSON objects, one per line, and also discovers matching rotated files.
+1. The collector reads filenames from `LOG_FILES` in the directory mounted read-only at `/input-logs`. It expects Traefik JSON objects, one per line, and also discovers matching rotated files. When `COWRIE_ENABLED=true`, it also incrementally reads `cowrie.json` from `/cowrie-logs` and stores SSH events separately. Cowrie login events, including password values, are imported into `cowrie_event.password`.
 2. Complete, processable lines are converted into requests, actors, hosts, and categories. Burst detection processes new requests incrementally and extends the previous import's last burst when the gap allows it. It rebuilds the full history only once when migrating existing data, or for an actor/host pair that receives a backdated request. Only globally routable client IP addresses are imported; private, loopback, link-local, reserved, and invalid addresses are skipped.
 3. When available, the collector adds city/country and ASN/provider data from local GeoLite2 MMDB files. This enrichment is optional.
 4. The collector and API use the same SQLite file at `databases/inm2.sqlite3`. The database uses WAL so API reads can continue during imports; short write conflicts are retried for up to 30 seconds. The UI accesses data only through HTTP requests to the API.
@@ -47,7 +47,7 @@ Burst detection splits a sequence when the gap between requests exceeds `BURST_M
 
 ## Scheduling and maintenance
 
-The scheduler runs due jobs when the collector starts and schedules each next run after the current run finishes. `INPUT_INTERVAL_SECONDS` controls the import interval; `MAINTENANCE_INTERVAL_DAYS` controls the maintenance interval. Maintenance removes actors inactive for longer than `MAINTENANCE_INACTIVE_DAYS`, along with dependent data.
+The scheduler runs due jobs when the collector starts and schedules each next run after the current run finishes. `INPUT_INTERVAL_SECONDS` controls the import interval; `MAINTENANCE_INTERVAL_DAYS` controls the maintenance interval. Maintenance removes actors inactive for longer than `MAINTENANCE_INACTIVE_DAYS`, along with dependent data. It also removes Web/Cowrie database events and rotated Cowrie JSON/diagnostic logs older than `MAINTENANCE_LOG_RETENTION_DAYS`; setting it to `0` disables that cleanup.
 
 ## Persistence and mounts
 
@@ -55,8 +55,9 @@ The scheduler runs due jobs when the collector starts and schedules each next ru
 - `./logs` is mounted at `/logs` for the collector, API, and UI; operational log files are kept separate by service.
 - The directory in `INPUT_LOG_DIR` is mounted read-only at `/input-logs`.
 - The directory in `GEOLITE_DB_DIR` is mounted read-only at `/geoip`.
+- Cowrie's `var/` is stored under `./cowrie-data/var`; `var/log/cowrie` is mounted at `/cowrie-logs` for the collector so it can delete dated rotations according to `MAINTENANCE_LOG_RETENTION_DAYS`. The active log is kept.
 
-Compose uses host bind mounts. Regular database backups and monitoring are recommended on the host. The collector reads access logs and rotated segments read-only and never modifies or deletes them.
+Compose uses host bind mounts. Regular database backups and monitoring are recommended on the host. The collector reads access logs and rotated segments read-only and never modifies or deletes them. After a successful import, the Web Honeypot queue is truncated through the last fully read line.
 
 ## Configuration
 

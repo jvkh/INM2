@@ -25,9 +25,14 @@ services:
       INM2_LOG_DIR: /logs
       INM2_COLLECTOR_PORT: ${INM2_COLLECTOR_PORT:-8001}
       HONEYPOT_LOG_PATH: /logs/honeypot.jsonl
+      COWRIE_ENABLED: ${COWRIE_ENABLED:-false}
+      COWRIE_LOG_PATH: /cowrie-logs/cowrie.json
     volumes:
       - ./databases:/app/databases
       - ./logs:/logs
+      - type: bind
+        source: ./cowrie-data/var/log/cowrie
+        target: /cowrie-logs
       - type: bind
         source: "${INPUT_LOG_DIR:-./logs}"
         target: /input-logs
@@ -53,6 +58,8 @@ services:
       COLLECTOR_CONTROL_URL: http://collector:${INM2_COLLECTOR_PORT:-8001}
       INM2_LOG_DIR: /logs
       HONEYPOT_BODY_DIR: /logs/honeypot-bodies
+      COWRIE_ENABLED: ${COWRIE_ENABLED:-false}
+      COWRIE_TTY_DIR: /cowrie-tty
       HONEYPOT_CONFIG_FILE: /honeypot-config/.env
       INM2_ADMIN_PASSWORD_HASH: ${INM2_ADMIN_PASSWORD_HASH:-}
       INM2_AUTH_SECRET: ${INM2_AUTH_SECRET:?Set INM2_AUTH_SECRET in .env}
@@ -64,6 +71,12 @@ services:
       - ./databases:/app/databases
       - ./logs:/logs
       - ./honeypot:/honeypot-config:ro
+      - type: bind
+        source: ./cowrie-data/var/lib/cowrie/tty
+        target: /cowrie-tty
+        read_only: true
+        bind:
+          create_host_path: false
     ports:
       # Host-local only: the UI reaches the API over the Compose network.
       - "127.0.0.1:${INM2_API_PORT:-8000}:8000"

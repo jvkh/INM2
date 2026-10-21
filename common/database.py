@@ -61,6 +61,7 @@ class Database:
             self._migrate_incident_table()
             self._migrate_incident_summary()
             self._migrate_honeypot_event()
+            self._migrate_cowrie_event()
             self.connection.execute(
                 "INSERT OR IGNORE INTO incident_criterion (incident_id, incident_type) SELECT incident_id, incident_type FROM incident"
             )
@@ -77,6 +78,13 @@ class Database:
                 self.connection.execute(f"ALTER TABLE honeypot_event ADD COLUMN {name} TEXT")
         if "duration" not in columns:
             self.connection.execute("ALTER TABLE honeypot_event ADD COLUMN duration INTEGER NOT NULL DEFAULT 0")
+
+    def _migrate_cowrie_event(self) -> None:
+        """Add submitted credentials and cached GeoIP metadata to Cowrie events."""
+        columns = {row[1] for row in self.connection.execute("PRAGMA table_info(cowrie_event)")}
+        for name in ("password", "provider", "asn", "country", "city", "extra_json"):
+            if name not in columns:
+                self.connection.execute(f"ALTER TABLE cowrie_event ADD COLUMN {name} TEXT")
 
     def _migrate_incident_table(self) -> None:
         """Move legacy path-scan findings into the shared incident schema."""

@@ -26,10 +26,12 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
                     burst_id: int | None, actor_ip: str | None,
                     actor_ip_exact: bool,
                     category: str | None, category_exact: bool, path: str | None,
-                    path_exact: bool, known: str | None, without_burst: bool,
+                    path_exact: bool, known: str | None, protected_only: bool, without_burst: bool,
                     burst_extreme: str | None, incident_id: int | None) -> dict[str, float]:
     request_conditions = ["r.start_utc >= ?", "r.start_utc < ?"]
     request_params: list[Any] = [start, end]
+    if page == "actors" and protected_only:
+        request_conditions.append("EXISTS (SELECT 1 FROM maintenance_exclusion AS me WHERE me.ip = a.ip)")
     if page == "actors" and country:
         request_conditions.append("a.country = ?" if country_exact else "a.country LIKE ?")
         request_params.append(country if country_exact else f"%{country}%")
@@ -197,6 +199,8 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
     burst_conditions = ["b.start_time >= ?", "b.start_time < ?"]
     burst_params: list[Any] = [start, end]
     if page == "bursts":
+        if protected_only:
+            burst_conditions.append("EXISTS (SELECT 1 FROM maintenance_exclusion AS me WHERE me.ip = a.ip)")
         if host:
             burst_conditions.append("h.name = ?" if host_exact else "h.name LIKE ?")
             burst_params.append(host if host_exact else f"%{host}%")
@@ -307,6 +311,7 @@ def get_metric_trends(
     path: str | None = Query(default=None, min_length=1),
     path_exact: bool = Query(default=False),
     known: Literal["own", "foreign"] | None = Query(default=None),
+    protected_only: bool = Query(default=False),
     without_burst: bool = Query(default=False),
     burst_extreme: Literal["min_requests", "max_requests", "min_duration", "max_duration"] | None = Query(default=None),
     incident_id: int | None = Query(default=None, ge=1),
@@ -320,8 +325,8 @@ def get_metric_trends(
     current_start, current_end = _utc_text(start_dt), _utc_text(end_dt)
     previous_start_text, previous_end_text = _utc_text(previous_start), current_start
     database = get_database(request)
-    previous = _period_metrics(database, previous_start_text, previous_end_text, page, search, host, host_exact, country, country_exact, provider, provider_exact, status_class, burst_id, actor_ip, actor_ip_exact, category, category_exact, path, path_exact, known, without_burst, burst_extreme, incident_id)
-    current = _period_metrics(database, current_start, current_end, page, search, host, host_exact, country, country_exact, provider, provider_exact, status_class, burst_id, actor_ip, actor_ip_exact, category, category_exact, path, path_exact, known, without_burst, burst_extreme, incident_id)
+    previous = _period_metrics(database, previous_start_text, previous_end_text, page, search, host, host_exact, country, country_exact, provider, provider_exact, status_class, burst_id, actor_ip, actor_ip_exact, category, category_exact, path, path_exact, known, protected_only, without_burst, burst_extreme, incident_id)
+    current = _period_metrics(database, current_start, current_end, page, search, host, host_exact, country, country_exact, provider, provider_exact, status_class, burst_id, actor_ip, actor_ip_exact, category, category_exact, path, path_exact, known, protected_only, without_burst, burst_extreme, incident_id)
     keys = current.keys()
     result = {}
     for key in keys:

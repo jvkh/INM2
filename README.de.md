@@ -72,6 +72,17 @@ Die Access-Logs von Traefik werden weiterhin regulär importiert. Zusätzlich sc
 
 Das Setup fragt den vollständigen Hostpfad zu einer Eingabe-Logdatei ab, zum Beispiel `/var/log/my-service/access.log`. Es bindet deren Ordner schreibgeschützt im Collector ein. `LOG_FILES` enthält danach nur den Dateinamen; rotierte Dateien wie `access.log.1` und `access.log.2.gz` werden automatisch mitgelesen. Der Hostordner kann später über `INPUT_LOG_DIR` in `.env` angepasst werden.
 
+### Optionales Cowrie-SSH
+
+Im Setup-Menü unter **Honeypot → Cowrie-SSH konfigurieren** aktivieren. Danach den Cowrie-Dienst im Projektverzeichnis starten:
+
+```sh
+cd honeypot/3rd_party
+docker compose up -d
+```
+
+Der Dienst veröffentlicht Pi-Port `2222`. Für die zuvor beschriebene FRITZ!Box-Zuordnung zeigt externer Port `22` auf Pi-Port `2222` (Cowrie) und externer Port `2222` auf Pi-Port `22` (echtes Pi-SSH). Cowries JSON-Protokolle werden unter `cowrie-data/var/log/cowrie/` gespeichert. Der INM2-Collector importiert sie und entfernt bei der täglichen Wartung rotierte Cowrie-JSON- und Diagnoseprotokolle, sobald sie älter als `MAINTENANCE_LOG_RETENTION_DAYS` sind (Standard: 14 Tage). Der aktive Log bleibt erhalten. Die gleiche Frist bereinigt ältere Web- und Cowrie-Ereignisse aus der INM2-Datenbank; die Wartung kann auf der Verwaltungsseite auch manuell gestartet werden. `0` deaktiviert diese Bereinigung. Die Web-Honeypot-Warteschlange wird nach jedem erfolgreichen Import bis zur gelesenen Position gekürzt; eine unvollständige letzte Zeile bleibt für den nächsten Import stehen. Die INM2-Ansicht **Honeypot → Cowrie-SSH** und der Reiter **SSH** unter Statistiken erscheinen nur bei aktivierter Schnittstelle. INM2 speichert auch versuchte Login-Passwörter in der Datenbank. Schützen Sie Datenbank und Backups.
+
 ```dotenv
 INPUT_LOG_DIR=/var/log/my-service
 LOG_FILES=access.log

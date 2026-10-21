@@ -10,6 +10,8 @@ Es sind bislang keine veröffentlichten Versions-Tags vorhanden. Daher werden ke
 
 ## Unveröffentlicht
 
+- Cowrie-SSH-Import mit eigener Ereignisansicht, SSH-Statistik und vorsichtig gekennzeichneten zeitlichen Querverbindungen zu `.env`-Requests des Web-Honeypots ergänzt.
+
 - Optionalen, regelbasierten HTTP-Honeypot als ressourcenarmen Python-Dienst hinter Traefik ergänzt; keine externen Dienste, kein LLM und kein veröffentlichter Host-Port.
 - Honeypot-POST-Bodies einschließlich übermittelter Login-Felder erfasst; große Bodies und Uploads werden getrennt abgelegt und vom Collector importiert.
 - Honeypot-Seite an die Hauptlisten angepasst: gemeinsamer Zeitfilter und Paginator, Sortierung und Freitextsuche, Akteur-Metadaten sowie direkter Zugriff auf übermittelte Daten.

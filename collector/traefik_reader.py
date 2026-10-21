@@ -57,6 +57,7 @@ class TraefikReader:
         start_offset: int = 0,
         file_identity: str | None = None,
         on_position_reset: Callable[[str, str | None], None] | None = None,
+        on_invalid_line: Callable[[int, str, str | None], None] | None = None,
         file_fingerprint: str | None = None,
         sealed: bool = False,
     ) -> int:
@@ -110,9 +111,26 @@ class TraefikReader:
                         break
                     if not sealed and log_file.tell() > safe_end:
                         break
-                    record = json.loads(line.decode("utf-8"))
+                    try:
+                        record = json.loads(line.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                        skipped += 1
+                        logger.warning(
+                            "Skipping malformed JSON in %s at byte %d: %s",
+                            self.path, line_start, exc,
+                        )
+                        if on_invalid_line is not None:
+                            on_invalid_line(log_file.tell(), current_identity, current_fingerprint)
+                        continue
                     if not isinstance(record, dict):
-                        raise ValueError(f"Expected a JSON object in {self.path} at byte {line_start}")
+                        skipped += 1
+                        logger.warning(
+                            "Skipping non-object JSON record in %s at byte %d",
+                            self.path, line_start,
+                        )
+                        if on_invalid_line is not None:
+                            on_invalid_line(log_file.tell(), current_identity, current_fingerprint)
+                        continue
                     imported_record = callback(
                         record, log_file.tell(), current_identity, current_fingerprint
                     )

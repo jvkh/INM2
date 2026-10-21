@@ -204,6 +204,7 @@ def list_honeypot_groups(
     search: str | None = Query(default=None, min_length=1, max_length=300),
     sort_by: Literal["time", "client_ip", "request_count", "post_count", "path_count", "body_bytes"] = Query(default="time"),
     sort_order: Literal["asc", "desc"] = Query(default="desc"),
+    protected_only: bool = Query(default=False, description="Only actors protected from inactivity cleanup"),
 ) -> dict[str, Any]:
     """Group consecutive requests from one actor into five-minute sessions."""
     database = get_database(request)
@@ -220,6 +221,8 @@ def list_honeypot_groups(
 
     match_conditions = list(time_conditions)
     match_parameters = list(time_parameters)
+    if protected_only:
+        match_conditions.append("EXISTS (SELECT 1 FROM maintenance_exclusion AS me WHERE me.ip = e.client_ip)")
     if method:
         match_conditions.append("e.method = ?")
         match_parameters.append(method.upper())

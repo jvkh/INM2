@@ -76,9 +76,13 @@ def get_status(request: Request) -> dict[str, Any]:
             "last_import_file": "",
             "import_count": 0,
         },
-        "environment": {},
+        "environment": {
+            "COWRIE_ENABLED": os.environ.get("COWRIE_ENABLED", "false"),
+            "COWRIE_LOG_PATH": os.environ.get("COWRIE_LOG_PATH", "/cowrie-logs/cowrie.json"),
+        },
         "honeypot_available": False,
         "honeypot_configured": _honeypot_is_configured(),
+        "cowrie_configured": os.environ.get("COWRIE_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"},
     }
     try:
         database = request.app.state.database
@@ -107,6 +111,16 @@ def get_status(request: Request) -> dict[str, Any]:
                 for name in HONEYPOT_ENVIRONMENT_KEYS
                 if honeypot_environment.get(name)
             })
+        # These settings are injected directly by Compose rather than EnvConfig.
+        for name, default in (("COWRIE_ENABLED", "false"), ("COWRIE_LOG_PATH", "/cowrie-logs/cowrie.json")):
+            environment[name] = os.environ.get(name, "").strip() or environment.get(name, default)
+        # The API and collector receive the same Compose setting. Prefer the
+        # enabled value if either container has it, so a stale API value does
+        # not hide a collector that is already configured for Cowrie.
+        api_cowrie_enabled = os.environ.get("COWRIE_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+        collector_cowrie_enabled = str(stored_environment.get("COWRIE_ENABLED", "false")).strip().lower() in {"1", "true", "yes", "on"}
+        cowrie_configured = api_cowrie_enabled or collector_cowrie_enabled
+        environment["COWRIE_ENABLED"] = "true" if cowrie_configured else "false"
         collector_status["available"] = True
         return {
             "status": "ok",
@@ -115,6 +129,7 @@ def get_status(request: Request) -> dict[str, Any]:
             "environment": environment,
             "honeypot_available": _honeypot_is_running(),
             "honeypot_configured": _honeypot_is_configured(),
+            "cowrie_configured": cowrie_configured,
         }
     except Exception:
         logger.exception("Could not read API status")

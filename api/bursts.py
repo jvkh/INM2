@@ -14,6 +14,17 @@ from common.search import parse_search
 router = APIRouter()
 
 
+@router.delete("/bursts/{id}")
+def delete_burst(request: Request, id: int = Path(ge=1, description="Burst ID")) -> dict[str, int | bool]:
+    """Delete a burst and its assignments while preserving its requests."""
+    database = get_database(request)
+    with database.transaction() as connection:
+        cursor = connection.execute("DELETE FROM burst WHERE burst_id = ?", (id,))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Burst not found")
+    return {"deleted": True, "burst_id": id}
+
+
 def _utc_timestamp(value: datetime) -> str:
     """Normalize timestamps to the UTC format stored by the collector."""
     if value.tzinfo is None:
@@ -82,6 +93,7 @@ def get_bursts(
     to: datetime = Query(description="End time, exclusive (ISO 8601)"),
     actor: str | None = Query(default=None, min_length=1, description="Actor IP substring"),
     actor_id: int | None = Query(default=None, ge=1),
+    protected_only: bool = Query(default=False, description="Only actors protected from inactivity cleanup"),
     host: str | None = Query(default=None, min_length=1),
     host_exact: bool = Query(default=False, description="Match the host exactly"),
     known: Literal["own", "foreign"] | None = Query(default=None, description="Limit to known or unknown hosts"),
@@ -104,6 +116,8 @@ def get_bursts(
 
     conditions = ["b.start_time >= ?", "b.start_time < ?"]
     parameters: list[Any] = [start, end]
+    if protected_only:
+        conditions.append("EXISTS (SELECT 1 FROM maintenance_exclusion AS me WHERE me.ip = a.ip)")
     if host is not None:
         conditions.append("h.name = ?" if host_exact else "h.name LIKE ?")
         parameters.append(host if host_exact else f"%{host}%")

@@ -160,6 +160,7 @@ def get_actors(
     from_: datetime = Query(alias="from", description="Start time, inclusive (ISO 8601)"),
     to: datetime = Query(description="End time, exclusive (ISO 8601)"),
     new_only: bool = Query(default=False, description="Only actors first seen in this period"),
+    protected_only: bool = Query(default=False, description="Only actors protected from inactivity cleanup"),
     provider: str | None = Query(default=None, min_length=1),
     country: str | None = Query(default=None, min_length=1),
     country_exact: bool = Query(default=False, description="Match the country exactly"),
@@ -182,6 +183,8 @@ def get_actors(
 
     conditions = ["r.start_utc >= ?", "r.start_utc < ?"]
     parameters: list[Any] = [start, end]
+    if protected_only:
+        conditions.append("EXISTS (SELECT 1 FROM maintenance_exclusion AS me WHERE me.ip = a.ip)")
     if new_only:
         conditions.extend(["a.first_time >= ?", "a.first_time < ?"])
         parameters.extend([start, end])
