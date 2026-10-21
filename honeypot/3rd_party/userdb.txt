@@ -1,0 +1,26 @@
+# Cowrie userdb format: username:uid:password
+# Decoy credentials based on commonly exposed weak passwords; all other
+# combinations are rejected. These are not real account credentials.
+root:x:123456
+root:x:123456789
+root:x:12345678
+root:x:12345
+root:x:qwerty
+root:x:password
+root:x:1234567890
+root:x:123123
+root:x:000000
+root:x:abc123
+root:x:password1
+root:x:iloveyou
+root:x:111111
+root:x:qwerty123
+root:x:admin
+root:x:letmein
+root:x:welcome
+root:x:monkey
+root:x:dragon
+root:x:sunshine
+root:x:princess
+admin:x:admin123
+debian:x:debian

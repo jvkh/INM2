@@ -5,9 +5,17 @@ services:
     restart: unless-stopped
     ports:
       - "2222:2222/tcp"
+    environment:
+      # Keep the shell prompt and SSH banner consistent with a Debian 12 host.
+      - COWRIE_HONEYPOT_HOSTNAME=web01
+      - COWRIE_SSH_VERSION=SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u3
+      # A honeypot should record forwarding attempts, never become a pivot.
+      - COWRIE_SSH_FORWARDING=no
     volumes:
       # Persistent Cowrie JSON events and session data; INM2 reads the log read-only.
       - ../../cowrie-data/var:/cowrie/cowrie-git/var
+      # Only listed username/password pairs are accepted by Cowrie's UserDB.
+      - ./userdb.txt:/cowrie/cowrie-git/etc/userdb.txt:ro
     cap_drop:
       - ALL
     security_opt:
