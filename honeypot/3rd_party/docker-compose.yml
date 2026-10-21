@@ -1,0 +1,19 @@
+services:
+  cowrie:
+    image: cowrie/cowrie:latest
+    container_name: cowrie
+    restart: unless-stopped
+    ports:
+      - "2222:2222/tcp"
+    volumes:
+      # Persistent Cowrie JSON events and session data; INM2 reads the log read-only.
+      - ../../cowrie-data/var:/cowrie/cowrie-git/var
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

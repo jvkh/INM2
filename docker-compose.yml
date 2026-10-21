@@ -2,12 +2,14 @@ services:
   ui:
     build:
       context: .
-      dockerfile: UI/Dockerfile
+      dockerfile: ui/Dockerfile
     restart: unless-stopped
     depends_on:
       - api
+    volumes:
+      - ./logs:/logs
     ports:
-      - "3000:80"
+      - "${INM2_UI_PORT:-3000}:80"
 
   collector:
     build:
@@ -15,24 +17,66 @@ services:
       dockerfile: collector/Dockerfile
     command: ["python", "-m", "collector.main"]
     expose:
-      - "8001"
+      - "${INM2_COLLECTOR_PORT:-8001}"
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      INM2_LOG_DIR: /logs
+      INM2_COLLECTOR_PORT: ${INM2_COLLECTOR_PORT:-8001}
+      HONEYPOT_LOG_PATH: /logs/honeypot.jsonl
+      COWRIE_ENABLED: ${COWRIE_ENABLED:-false}
+      COWRIE_LOG_PATH: /cowrie-logs/cowrie.json
     volumes:
       - ./databases:/app/databases
       - ./logs:/logs
-      - ./databases/geoip:/geoip:ro
+      - type: bind
+        source: ./cowrie-data/var/log/cowrie
+        target: /cowrie-logs
+      - type: bind
+        source: "${INPUT_LOG_DIR:-./logs}"
+        target: /input-logs
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${GEOLITE_DB_DIR:-./databases/geoip}"
+        target: /geoip
+        read_only: true
+        bind:
+          create_host_path: false
 
   api:
     build:
       context: .
       dockerfile: api/Dockerfile
+    env_file:
+      - path: ./honeypot/.env
+        required: false
     command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
-      COLLECTOR_CONTROL_URL: http://collector:8001
+      COLLECTOR_CONTROL_URL: http://collector:${INM2_COLLECTOR_PORT:-8001}
+      INM2_LOG_DIR: /logs
+      HONEYPOT_BODY_DIR: /logs/honeypot-bodies
+      COWRIE_ENABLED: ${COWRIE_ENABLED:-false}
+      COWRIE_TTY_DIR: /cowrie-tty
+      HONEYPOT_CONFIG_FILE: /honeypot-config/.env
+      INM2_ADMIN_PASSWORD_HASH: ${INM2_ADMIN_PASSWORD_HASH:-}
+      INM2_AUTH_SECRET: ${INM2_AUTH_SECRET:?Set INM2_AUTH_SECRET in .env}
+      INM2_COOKIE_SECURE: ${INM2_COOKIE_SECURE:-true}
+      INM2_TOTP_ENABLED: ${INM2_TOTP_ENABLED:-false}
+      INM2_TOTP_SECRET: ${INM2_TOTP_SECRET:-}
     restart: unless-stopped
     volumes:
       - ./databases:/app/databases
+      - ./logs:/logs
+      - ./honeypot:/honeypot-config:ro
+      - type: bind
+        source: ./cowrie-data/var/lib/cowrie/tty
+        target: /cowrie-tty
+        read_only: true
+        bind:
+          create_host_path: false
     ports:
-      - "8000:8000"
+      # Host-local only: the UI reaches the API over the Compose network.
+      - "127.0.0.1:${INM2_API_PORT:-8000}:8000"

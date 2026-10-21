@@ -2,7 +2,7 @@
 
 [Deutsche Version](README.de.md) · [Installation and operation guide](../README.en.md)
 
-This file covers standalone development of the web interface only. For installing and running the complete application, use the README in the repository root.
+This file covers standalone development of the web interface only. Installation and operation of the complete application are described in the README in the repository root.
 
 ## Prerequisites
 

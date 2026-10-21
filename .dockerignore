@@ -9,6 +9,7 @@ __pycache__/
 *.sqlite3-*
 logs/
 databases/
+cowrie-data/
 node_modules/
 **/node_modules/
 dist/
