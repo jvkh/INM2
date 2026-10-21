@@ -2426,7 +2426,7 @@ function TableScroller({ children, className = '', t }: { children: ReactNode; c
 function SortableHeader<T extends string>({ column, label, sort, onSort, filtered = false, filterLabel, className, hidden = false }: { column: T; label: string; sort: { column: T; direction: 'asc' | 'desc' }; onSort: (column: T) => void; filtered?: boolean; filterLabel?: string; className?: string; hidden?: boolean }) {
   const active = sort.column === column
   if (hidden) return null
-  return <th className={className} aria-sort={active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}><button type="button" className="sort-header" title={filtered ? `${label} · ${filterLabel ?? ''}` : label} aria-label={filtered ? `${label} · ${filterLabel ?? ''}` : label} onClick={() => onSort(column)}>{label}{active && (sort.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}{filtered && <Filter size={11} className="column-filter-marker" aria-hidden="true" />}</button></th>
+  return <th className={className} aria-sort={active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}><button type="button" className="sort-header" title={filtered ? `${label} · ${filterLabel ?? ''}` : undefined} aria-label={filtered ? `${label} · ${filterLabel ?? ''}` : label} onClick={() => onSort(column)}>{label}{active && (sort.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}{filtered && <Filter size={11} className="column-filter-marker" aria-hidden="true" />}</button></th>
 }
 
 function Paginator({ total, pageIndex, pageSize, onPageChange, onPageSizeChange, pageSizes = allowedPageSizes, t, language }: { total: number; pageIndex: number; pageSize: PageSize; onPageChange: (page: number) => void; onPageSizeChange: (size: PageSize) => void; pageSizes?: PageSize[]; t: (key: MessageKey) => string; language: Language }) {
@@ -2564,24 +2564,53 @@ function CowrieDifference({ value, other }: { value: string; other: string }) {
 }
 
 type CowrieGroupPanel = 'commands' | 'ssh'
+type CowrieDetailSortColumn = 'time' | 'event_type'
+type CowrieGroupSortColumn = 'last_time' | 'src_ip' | 'event_count' | 'failed_login_count' | 'command_count'
+type CowrieCommandSortColumn = 'category' | 'command' | 'occurrences' | 'session_count'
+type CowrieSequenceSortColumn = 'commands' | 'session_count' | 'first_time'
 
 function CowrieGroupAnalysisView({ analysis, loading, error, retry, t, language }: {
   analysis: CowrieGroupAnalysis | null; loading: boolean; error: string | null; retry: () => void;
   t: (key: MessageKey) => string; language: Language
 }) {
+  const [searchDraft, setSearchDraft] = useState('')
+  const [search, setSearch] = useState('')
+  const [commandSort, setCommandSort] = useState<{ column: CowrieCommandSortColumn; direction: 'asc' | 'desc' }>({ column: 'occurrences', direction: 'desc' })
+  const [sequenceSort, setSequenceSort] = useState<{ column: CowrieSequenceSortColumn; direction: 'asc' | 'desc' }>({ column: 'session_count', direction: 'desc' })
   const categoryLabels = {
     discovery: 'cowrieCommandDiscovery', credential_access: 'cowrieCommandCredentialAccess', download: 'cowrieCommandDownload',
     persistence: 'cowrieCommandPersistence', execution: 'cowrieCommandExecution', destructive: 'cowrieCommandDestructive', other: 'cowrieCommandOther',
   } as const
+  const locale = language === 'de' ? 'de-DE' : 'en-GB'
+  const normalizedSearch = search.trim().toLocaleLowerCase(locale)
+  const filteredCommands = (analysis?.commands ?? []).filter((command) => !normalizedSearch || `${command.command} ${command.normalized_command} ${t(categoryLabels[command.category])}`.toLocaleLowerCase(locale).includes(normalizedSearch)).sort((left, right) => {
+    let comparison = 0
+    if (commandSort.column === 'category') comparison = t(categoryLabels[left.category]).localeCompare(t(categoryLabels[right.category]), locale)
+    else if (commandSort.column === 'command') comparison = left.command.localeCompare(right.command, locale)
+    else if (commandSort.column === 'occurrences') comparison = left.occurrences - right.occurrences
+    else comparison = left.session_count - right.session_count
+    return commandSort.direction === 'asc' ? comparison : -comparison
+  })
+  const filteredSequences = (analysis?.command_sequences ?? []).filter((sequence) => !normalizedSearch || sequence.commands.join(' ').toLocaleLowerCase(locale).includes(normalizedSearch)).sort((left, right) => {
+    let comparison = 0
+    if (sequenceSort.column === 'commands') comparison = left.commands.join(' ').localeCompare(right.commands.join(' '), locale)
+    else if (sequenceSort.column === 'session_count') comparison = left.session_count - right.session_count
+    else comparison = Date.parse(left.first_time) - Date.parse(right.first_time)
+    return sequenceSort.direction === 'asc' ? comparison : -comparison
+  })
+  const changeCommandSort = (column: CowrieCommandSortColumn) => setCommandSort((current) => ({ column, direction: current.column === column && current.direction === 'asc' ? 'desc' : 'asc' }))
+  const changeSequenceSort = (column: CowrieSequenceSortColumn) => setSequenceSort((current) => ({ column, direction: current.column === column && current.direction === 'asc' ? 'desc' : 'asc' }))
+  const applySearch = () => setSearch(searchDraft.trim())
   return <div className="cowrie-command-analysis">
     <PageDataState loading={loading && !analysis} error={error} retry={retry} t={t} />
-    {analysis && <><div className="cowrie-analysis-table-scroll"><table><thead><tr><th>{t('cowrieCommandCategory')}</th><th>{t('cowrieCommand')}</th><th>{t('cowrieCommandOccurrences')}</th><th>{t('cowrieSessions')}</th></tr></thead><tbody>
-      {analysis.commands.map((command) => <tr key={command.normalized_command}><td><span className="cowrie-command-category">{t(categoryLabels[command.category])}</span></td><td className="cowrie-analysis-detail"><code>{command.command}</code><small>{requestDateTimeText(command.first_time, language)} · {incidentDurationText(command.first_time, command.last_time, language)}</small></td><td>{numberText(command.occurrences, language)}</td><td>{numberText(command.session_count, language)}</td></tr>)}
-      {!analysis.commands.length && <EmptyRows t={t} columns={4} />}
-    </tbody></table></div>{analysis.command_total > analysis.commands.length && <p className="cowrie-analysis-footnote">{t('cowrieCommandsTruncated')}</p>}</>}
-    {analysis && <><h4 className="cowrie-command-sequences-title">{t('cowrieCommandSequences')}</h4><div className="cowrie-analysis-table-scroll"><table><thead><tr><th>{t('cowrieCommandSequence')}</th><th>{t('cowrieSessions')}</th><th>{t('dateTime')}</th></tr></thead><tbody>
-      {analysis.command_sequences.map((sequence, index) => <tr key={`${sequence.commands.join('\u001f')}-${index}`}><td className="cowrie-analysis-detail cowrie-command-sequence">{sequence.commands.map((command, commandIndex) => <Fragment key={`${commandIndex}-${command}`}><code>{command}</code>{commandIndex < sequence.commands.length - 1 && <span> → </span>}</Fragment>)}</td><td>{numberText(sequence.session_count, language)}</td><td><span className="incident-time-cell"><strong>{requestDateTimeText(sequence.first_time, language)}</strong><small>{incidentDurationText(sequence.first_time, sequence.last_time, language)}</small></span></td></tr>)}
-      {!analysis.command_sequences.length && <EmptyRows t={t} columns={3} />}
+    <div className="filter-toolbar burst-filters cowrie-analysis-filter-toolbar"><label className="filter-search"><Search size={15} /><input type="search" value={searchDraft} placeholder={t('cowrieAnalysisSearch')} aria-label={t('cowrieAnalysisSearch')} title={t('cowrieAnalysisSearchHint')} onChange={(event) => setSearchDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') applySearch() }} /></label><button type="button" className="filter-button" onClick={() => { setSearchDraft(''); setSearch('') }}>{t('resetFilters')}</button><button type="button" className="primary-button filter-submit" onClick={applySearch}>{t('applyFilters')}</button></div>
+    {analysis && <><div className="cowrie-analysis-table-scroll"><table><thead><tr><SortableHeader<CowrieCommandSortColumn> column="category" label={t('cowrieCommandCategory')} sort={commandSort} onSort={changeCommandSort} filtered={Boolean(normalizedSearch)} filterLabel={t('filteredColumn')} /><SortableHeader<CowrieCommandSortColumn> column="command" label={t('cowrieCommand')} sort={commandSort} onSort={changeCommandSort} filtered={Boolean(normalizedSearch)} filterLabel={t('filteredColumn')} /><SortableHeader<CowrieCommandSortColumn> column="occurrences" label={t('cowrieCommandOccurrences')} sort={commandSort} onSort={changeCommandSort} /><SortableHeader<CowrieCommandSortColumn> column="session_count" label={t('cowrieSessions')} sort={commandSort} onSort={changeCommandSort} /></tr></thead><tbody>
+      {filteredCommands.map((command) => <tr key={command.normalized_command}><td><span className="cowrie-command-category">{t(categoryLabels[command.category])}</span></td><td className="cowrie-analysis-detail"><code>{command.command}</code><small>{requestDateTimeText(command.first_time, language)} · {incidentDurationText(command.first_time, command.last_time, language)}</small></td><td>{numberText(command.occurrences, language)}</td><td>{numberText(command.session_count, language)}</td></tr>)}
+      {filteredCommands.length === 0 && <EmptyRows t={t} columns={4} />}
+    </tbody></table></div></>}
+    {analysis && <><h4 className="cowrie-command-sequences-title">{t('cowrieCommandSequences')}</h4><div className="cowrie-analysis-table-scroll"><table><thead><tr><SortableHeader<CowrieSequenceSortColumn> column="commands" label={t('cowrieCommandSequence')} sort={sequenceSort} onSort={changeSequenceSort} filtered={Boolean(normalizedSearch)} filterLabel={t('filteredColumn')} /><SortableHeader<CowrieSequenceSortColumn> column="session_count" label={t('cowrieSessions')} sort={sequenceSort} onSort={changeSequenceSort} /><SortableHeader<CowrieSequenceSortColumn> column="first_time" label={t('dateTime')} sort={sequenceSort} onSort={changeSequenceSort} /></tr></thead><tbody>
+      {filteredSequences.map((sequence, index) => <tr key={`${sequence.commands.join('\u001f')}-${index}`}><td className="cowrie-analysis-detail cowrie-command-sequence">{sequence.commands.map((command, commandIndex) => <Fragment key={`${commandIndex}-${command}`}><code>{command}</code>{commandIndex < sequence.commands.length - 1 && <span> → </span>}</Fragment>)}</td><td>{numberText(sequence.session_count, language)}</td><td className="cowrie-analysis-detail"><small>{requestDateTimeText(sequence.first_time, language)} · {incidentDurationText(sequence.first_time, sequence.last_time, language)}</small></td></tr>)}
+      {filteredSequences.length === 0 && <EmptyRows t={t} columns={3} />}
     </tbody></table></div>{analysis.command_sequences_truncated && <p className="cowrie-analysis-footnote">{t('cowrieCommandSequencesTruncated')}</p>}</>}
   </div>
 }
@@ -2597,8 +2626,12 @@ function CowriePage({ t, language, range, onRangeChange, lastImport }: RangePage
   const [draftProtectedOnly, setDraftProtectedOnly] = useState(false)
   const [pageIndex, setPageIndex] = useState(0)
   const [pageSize, setPageSize] = useState<PageSize>(25)
+  const [groupSort, setGroupSort] = useState<{ column: CowrieGroupSortColumn; direction: 'asc' | 'desc' }>({ column: 'last_time', direction: 'desc' })
   const [expandedGroup, setExpandedGroup] = useState<CowrieGroup | null>(null)
   const [openGroupPanel, setOpenGroupPanel] = useState<CowrieGroupPanel>('commands')
+  const [detailSearchDraft, setDetailSearchDraft] = useState('')
+  const [detailSearch, setDetailSearch] = useState('')
+  const [detailSort, setDetailSort] = useState<{ column: CowrieDetailSortColumn; direction: 'asc' | 'desc' }>({ column: 'time', direction: 'desc' })
   const [selectedEvent, setSelectedEvent] = useState<CowrieEvent | null>(null)
   const [selectedTtyGroup, setSelectedTtyGroup] = useState<CowrieGroup | null>(null)
   const [ttyPage, setTtyPage] = useState(0)
@@ -2611,7 +2644,7 @@ function CowriePage({ t, language, range, onRangeChange, lastImport }: RangePage
   const [actionError, setActionError] = useState('')
   const summary = useApiData<CowrieSummary>(apiUrl('cowrie/summary', range.query))
   const groups = useApiData<{ items: CowrieGroup[]; total: number }>(apiUrl('cowrie/groups', range.query, {
-    limit: String(pageSize), offset: String(pageIndex * pageSize), ...(search ? { search } : {}), ...(eventType ? { event_type: eventType } : {}), ...(protectedOnly ? { protected_only: 'true' } : {}),
+    limit: String(pageSize), offset: String(pageIndex * pageSize), ...(search ? { search } : {}), ...(eventType ? { event_type: eventType } : {}), ...(protectedOnly ? { protected_only: 'true' } : {}), sort_by: groupSort.column, sort_order: groupSort.direction,
   }))
   const groupEvents = useApiData<{ items: CowrieEvent[]; total: number }>(expandedGroup ? apiUrl('cowrie/group-events', undefined, {
     src_ip: expandedGroup.src_ip ?? '', from: expandedGroup.first_time, to: expandedGroup.last_time, ...(search ? { search } : {}), ...(eventType ? { event_type: eventType } : {}),
@@ -2625,8 +2658,17 @@ function CowriePage({ t, language, range, onRangeChange, lastImport }: RangePage
     : groupEvents.loading
   const groupPanelBusy = selectedGroupTabLoading || isGroupPanelRendering
   const cowrieDetailItems = groupEvents.data?.items ?? []
+  const normalizedDetailSearch = detailSearch.trim().toLocaleLowerCase(language === 'de' ? 'de-DE' : 'en-GB')
+  const filteredCowrieDetailItems = cowrieDetailItems.filter((item) => !normalizedDetailSearch || [item.src_ip, item.session, item.event_type, item.username, item.password, item.input, item.message, item.sensor, item.extra_json].some((value) => value?.toLocaleLowerCase(language === 'de' ? 'de-DE' : 'en-GB').includes(normalizedDetailSearch))).sort((left, right) => {
+    let order = 0
+    if (detailSort.column === 'time') order = Date.parse(left.time) - Date.parse(right.time)
+    else order = cowrieEventLabel(left.event_type).localeCompare(cowrieEventLabel(right.event_type), language === 'de' ? 'de-DE' : 'en-GB')
+    return detailSort.direction === 'asc' ? order : -order
+  })
   const cowrieDetailIndex = selectedEvent ? cowrieDetailItems.findIndex((item) => item.event_id === selectedEvent.event_id) : -1
   const moveCowrieDetail = (offset: number) => { const item = cowrieDetailItems[cowrieDetailIndex + offset]; if (item) setSelectedEvent(item) }
+  const sortCowrieDetails = (column: CowrieDetailSortColumn) => setDetailSort((current) => ({ column, direction: current.column === column && current.direction === 'asc' ? 'desc' : 'asc' }))
+  const applyDetailSearch = () => setDetailSearch(detailSearchDraft.trim())
   const showGroupPanel = (panel: CowrieGroupPanel) => {
     if (panel === openGroupPanel) return
     setPendingGroupPanel(panel)
@@ -2636,6 +2678,7 @@ function CowriePage({ t, language, range, onRangeChange, lastImport }: RangePage
     if (!isGroupPanelRendering && pendingGroupPanel && openGroupPanel === pendingGroupPanel) setPendingGroupPanel(null)
   }, [isGroupPanelRendering, openGroupPanel, pendingGroupPanel])
   const applySearch = () => { setPageIndex(0); setSearch(searchDraft.trim()); setEventType(draftEventType); setProtectedOnly(draftProtectedOnly); setExpandedGroup(null) }
+  const changeGroupSort = (column: CowrieGroupSortColumn) => { setPageIndex(0); setExpandedGroup(null); setGroupSort((current) => ({ column, direction: current.column === column && current.direction === 'asc' ? 'desc' : 'asc' })) }
   const resetFilters = () => { setSearchDraft(''); setSearch(''); setEventType(''); setDraftEventType(''); setProtectedOnly(false); setDraftProtectedOnly(false); setPageIndex(0); setExpandedGroup(null) }
   const deleteGroup = async (group: CowrieGroup) => {
     if (!group.src_ip) return
@@ -2699,7 +2742,7 @@ function CowriePage({ t, language, range, onRangeChange, lastImport }: RangePage
         <span className="honeypot-events-count">{t('cowrieEvents')}: {numberText(groups.data?.total ?? 0, language)}</span>
       </div>
       <Paginator total={groups.data?.total ?? 0} pageIndex={pageIndex} pageSize={pageSize} onPageChange={(page) => { setPageIndex(page); setExpandedGroup(null) }} onPageSizeChange={(size) => { setPageSize(size); setPageIndex(0); setExpandedGroup(null) }} t={t} language={language} />
-      <div className="table-scroll"><table className="honeypot-table"><thead><tr><th>{t('dateTime')}</th><th>{t('actor')}</th><th>{t('cowrieEvents')}</th><th>{t('cowrieFailedLoginsShort')}</th><th>{t('cowrieCommands')}</th><th>{t('cowrieTtyLink')}</th></tr></thead><tbody>
+      <div className="table-scroll"><table className="honeypot-table"><thead><tr><SortableHeader<CowrieGroupSortColumn> column="last_time" label={t('dateTime')} sort={groupSort} onSort={changeGroupSort} filtered filterLabel={t('filteredColumn')} /><SortableHeader<CowrieGroupSortColumn> column="src_ip" label={t('actor')} sort={groupSort} onSort={changeGroupSort} filtered={Boolean(search || protectedOnly)} filterLabel={t('filteredColumn')} /><SortableHeader<CowrieGroupSortColumn> column="event_count" label={t('cowrieEvents')} sort={groupSort} onSort={changeGroupSort} filtered={Boolean(search || eventType)} filterLabel={t('filteredColumn')} /><SortableHeader<CowrieGroupSortColumn> column="failed_login_count" label={t('cowrieFailedLoginsShort')} sort={groupSort} onSort={changeGroupSort} filtered={Boolean(search || eventType)} filterLabel={t('filteredColumn')} /><SortableHeader<CowrieGroupSortColumn> column="command_count" label={t('cowrieCommands')} sort={groupSort} onSort={changeGroupSort} filtered={Boolean(search || eventType)} filterLabel={t('filteredColumn')} /><th>{t('cowrieTtyLink')}</th></tr></thead><tbody>
         {groups.data?.items.map((group) => {
           const expanded = expandedGroup?.src_ip === group.src_ip && expandedGroup.first_time === group.first_time
           return <Fragment key={`${group.src_ip}-${group.first_time}`}>
@@ -2720,9 +2763,10 @@ function CowriePage({ t, language, range, onRangeChange, lastImport }: RangePage
                   </div>
                   <div className="cowrie-group-tabpanel" id="cowrie-tabpanel" role="tabpanel" aria-busy={groupPanelBusy} aria-labelledby={openGroupPanel === 'commands' ? 'cowrie-tab-commands' : 'cowrie-tab-ssh'}>
                     {openGroupPanel === 'commands' ? <CowrieGroupAnalysisView analysis={currentGroupAnalysis} loading={groupAnalysis.loading || Boolean(expandedGroup?.src_ip && !currentGroupAnalysis && !groupAnalysis.error)} error={groupAnalysis.error} retry={groupAnalysis.reload} t={t} language={language} /> : <>
+                      <div className="filter-toolbar burst-filters cowrie-detail-filter-toolbar"><label className="filter-search"><Search size={15} /><input type="search" value={detailSearchDraft} placeholder={t('cowrieDetailSearch')} aria-label={t('cowrieDetailSearch')} title={t('cowrieDetailSearchHint')} onChange={(event) => setDetailSearchDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') applyDetailSearch() }} /></label><button type="button" className="filter-button" onClick={() => { setDetailSearchDraft(''); setDetailSearch('') }}>{t('resetFilters')}</button><button type="button" className="primary-button filter-submit" onClick={applyDetailSearch}>{t('applyFilters')}</button></div>
                       <PageDataState loading={groupEvents.loading} error={groupEvents.error} retry={groupEvents.reload} t={t} />
-                      {groupEvents.data && <><div className="cowrie-session-time"><span><small>{t('startTime')}</small><strong>{requestDateTimeText(expandedGroup?.first_time, language)}</strong></span><span><small>{t('duration')}</small><strong>{expandedGroup ? incidentDurationText(expandedGroup.first_time, expandedGroup.last_time, language) : '—'}</strong></span></div><div className="table-scroll"><table><thead><tr><th>{t('dateTime')}</th><th>{t('cowrieEventType')}</th><th>{t('cowrieCommand')}</th><th>{t('honeypotData')}</th></tr></thead><tbody>
-                        {groupEvents.data.items.map((item) => {
+                      {groupEvents.data && <><div className="cowrie-session-time"><span><small>{t('startTime')}</small><strong>{requestDateTimeText(expandedGroup?.first_time, language)}</strong></span><span><small>{t('duration')}</small><strong>{expandedGroup ? incidentDurationText(expandedGroup.first_time, expandedGroup.last_time, language) : '—'}</strong></span></div><div className="table-scroll"><table><thead><tr><SortableHeader<CowrieDetailSortColumn> column="time" label={t('dateTime')} sort={detailSort} onSort={sortCowrieDetails} /><SortableHeader<CowrieDetailSortColumn> column="event_type" label={t('cowrieEventType')} sort={detailSort} onSort={sortCowrieDetails} filtered={Boolean(normalizedDetailSearch)} filterLabel={t('filteredColumn')} /><th>{t('cowrieCommand')}{normalizedDetailSearch && <Filter size={11} className="column-filter-marker" aria-hidden="true" />}</th><th>{t('honeypotData')}{normalizedDetailSearch && <Filter size={11} className="column-filter-marker" aria-hidden="true" />}</th></tr></thead><tbody>
+                        {filteredCowrieDetailItems.map((item) => {
                           const payload = item.input ?? item.message ?? ''
                           const content = item.input ? `${t('cowrieInput')}: ${payload}` : item.message ? `${t('cowrieMessage')}: ${payload}` : ''
                           const truncated = content.length > 100
@@ -2735,7 +2779,7 @@ function CowriePage({ t, language, range, onRangeChange, lastImport }: RangePage
                             <td><button type="button" className="table-link honeypot-body-link" onClick={() => setSelectedEvent(item)}><FileText size={13} />{t('honeypotViewData')}</button></td>
                           </tr>
                         })}
-                        {!groupEvents.loading && groupEvents.data.items.length === 0 && <EmptyRows t={t} columns={4} />}
+                        {!groupEvents.loading && filteredCowrieDetailItems.length === 0 && <EmptyRows t={t} columns={4} />}
                       </tbody></table></div></>}
                     </>}
                   </div>

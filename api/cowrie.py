@@ -197,6 +197,8 @@ def groups(
     search: str | None = Query(default=None, min_length=1, max_length=300),
     event_type: str | None = Query(default=None, min_length=1, max_length=100),
     protected_only: bool = Query(default=False, description="Only actors protected from inactivity cleanup"),
+    sort_by: str = Query(default="last_time"),
+    sort_order: str = Query(default="desc"),
 ) -> dict[str, Any]:
     """Group events from one source IP into five-minute sessions."""
     _require_enabled(request)
@@ -219,6 +221,16 @@ def groups(
         conditions.append("(" + " OR ".join(f"COALESCE({column}, '') LIKE ?" for column in columns) + ")")
         parameters.extend([term] * len(columns))
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
+    sort_columns = {
+        "first_time": "first_time",
+        "last_time": "last_time",
+        "src_ip": "src_ip",
+        "event_count": "event_count",
+        "failed_login_count": "failed_login_count",
+        "command_count": "command_count",
+    }
+    order_column = sort_columns.get(sort_by, "last_time")
+    order_direction = "ASC" if sort_order.lower() == "asc" else "DESC"
     cte = f"""WITH filtered AS (
         SELECT e.*, LAG(julianday(e.time)) OVER (PARTITION BY e.src_ip ORDER BY e.time, e.event_id) AS prev_time
         FROM cowrie_event e {where}
@@ -234,7 +246,7 @@ def groups(
     )"""
     total = database.query(f"{cte} SELECT COUNT(*) AS total FROM grouped", parameters)[0]["total"]
     rows = database.query(
-        f"{cte} SELECT * FROM grouped ORDER BY last_time DESC, src_ip LIMIT ? OFFSET ?",
+        f"{cte} SELECT * FROM grouped ORDER BY {order_column} {order_direction}, src_ip ASC, first_time DESC LIMIT ? OFFSET ?",
         [*parameters, limit, offset],
     )
     for row in rows:
@@ -299,7 +311,7 @@ def group_commands(
            FROM cowrie_event WHERE src_ip=? AND julianday(time)>=julianday(?)
              AND julianday(time)<=julianday(?) AND event_type='cowrie.command.input'
              AND COALESCE(trim(input),'')<>''
-           GROUP BY lower(trim(input)) ORDER BY occurrences DESC, normalized_command LIMIT 100""",
+           GROUP BY lower(trim(input)) ORDER BY occurrences DESC, normalized_command""",
         (src_ip, start, end),
     )
     for command in commands:
@@ -309,14 +321,15 @@ def group_commands(
            AND julianday(time)>=julianday(?) AND julianday(time)<=julianday(?)
            AND event_type='cowrie.command.input' AND session IS NOT NULL
            AND COALESCE(trim(input),'')<>''
-           ORDER BY session, julianday(time), event_id LIMIT 10000""",
+           ORDER BY session, julianday(time), event_id LIMIT 10001""",
         (src_ip, start, end),
     )
+    sequence_rows_truncated = len(sequence_rows) > 10000
+    sequence_rows = sequence_rows[:10000]
     per_session: dict[str, list[dict[str, str]]] = {}
     for row in sequence_rows:
         sequence = per_session.setdefault(row["session"], [])
-        if len(sequence) < 20:
-            sequence.append({"command": row["input"].strip(), "time": row["time"]})
+        sequence.append({"command": row["input"].strip(), "time": row["time"]})
     grouped_sequences: dict[tuple[str, ...], dict[str, Any]] = {}
     for sequence in per_session.values():
         if not sequence:
@@ -332,7 +345,7 @@ def group_commands(
             grouped["session_count"] += 1
             grouped["first_time"] = min(grouped["first_time"], sequence[0]["time"])
             grouped["last_time"] = max(grouped["last_time"], sequence[-1]["time"])
-    sequences = sorted(grouped_sequences.values(), key=lambda item: (-item["session_count"], item["commands"]))[:50]
+    sequences = sorted(grouped_sequences.values(), key=lambda item: (-item["session_count"], item["commands"]))
     return {
         "src_ip": src_ip,
         "from": start,
@@ -341,7 +354,7 @@ def group_commands(
         "command_total": int(command_total),
         "command_sequences": sequences,
         "command_sequence_total": len(grouped_sequences),
-        "command_sequences_truncated": len(sequence_rows) >= 10000 or len(grouped_sequences) > 50,
+        "command_sequences_truncated": sequence_rows_truncated,
     }
 
 

@@ -558,6 +558,7 @@ button { color: inherit; cursor: pointer; }
 .cowrie-group-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .cowrie-tab-count { display: inline-flex; align-items: center; justify-content: center; min-width: 15px; height: 15px; padding: 0 4px; border: 1px solid var(--badge-outline); border-radius: 10px; background: color-mix(in srgb, var(--accent) 18%, var(--surface)); color: var(--accent); font-size: 9px; font-weight: 600; line-height: 1; white-space: nowrap; }
 .cowrie-group-tabpanel { min-height: 80px; padding: 12px 0 2px; }
+.cowrie-detail-filter-toolbar .filter-search,.cowrie-analysis-filter-toolbar .filter-search { flex: 1 1 280px; max-width: 520px; }
 .cowrie-session-time { display: flex; flex-wrap: wrap; gap: 18px; margin: 0 0 10px; }
 .cowrie-session-time > span { display: flex; flex-direction: column; gap: 3px; }
 .cowrie-session-time small { color: var(--muted); font-size: 9px; }
