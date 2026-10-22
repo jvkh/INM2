@@ -355,6 +355,8 @@ def list_honeypot_group_events(
     to: datetime = Query(),
     method: str | None = Query(default=None, min_length=1, max_length=16),
     search: str | None = Query(default=None, min_length=1, max_length=300),
+    sort_by: Literal["time", "method", "path", "rule", "session_phase", "body_bytes", "status", "response_page", "has_body"] = Query(default="time"),
+    sort_order: Literal["asc", "desc"] = Query(default="desc"),
 ) -> dict[str, Any]:
     """Return requests in a selected session for its expandable table row."""
     start = _utc_timestamp(from_)
@@ -377,6 +379,11 @@ def list_honeypot_group_events(
         )
         conditions.append("(" + " OR ".join(f"COALESCE(CAST({column} AS TEXT), '') LIKE ?" for column in searchable) + ")")
         parameters.extend([f"%{search.strip()}%"] * len(searchable))
+    sort_columns = {
+        "time": "e.time", "method": "e.method", "path": "e.path", "rule": "e.rule",
+        "session_phase": "e.session_phase", "body_bytes": "e.body_bytes", "status": "e.status",
+        "response_page": "e.response_page", "has_body": "has_body",
+    }
     items = database.query(
         f"""SELECT e.event_id, e.time, e.client_ip,
                   COALESCE(e.provider, a.provider) AS provider,
@@ -389,7 +396,7 @@ def list_honeypot_group_events(
                        THEN 1 ELSE 0 END AS has_body
            FROM honeypot_event AS e LEFT JOIN actor AS a ON a.ip = e.client_ip
            WHERE {' AND '.join(conditions)}
-           ORDER BY e.time, e.event_id""",
+           ORDER BY {sort_columns[sort_by]} {sort_order.upper()}, e.event_id {sort_order.upper()}""",
         parameters,
     )
     return {"items": items, "total": len(items)}

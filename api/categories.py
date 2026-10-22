@@ -34,7 +34,6 @@ def get_categories(
     if start >= end:
         raise HTTPException(status_code=422, detail="'from' must be earlier than 'to'")
 
-    conditions = ["r.start_utc >= ?", "r.start_utc < ?"]
     parameters: list[Any] = [start, end]
 
     having_clause = ""
@@ -44,21 +43,21 @@ def get_categories(
         pattern = f"%{term.replace('%', '')}%"
         read_expr = "CAST(SUM(CASE WHEN UPPER(COALESCE(r.request_method, '')) IN ('GET', 'HEAD', 'OPTIONS') THEN 1 ELSE 0 END) AS TEXT)"
         write_expr = "CAST(SUM(CASE WHEN UPPER(COALESCE(r.request_method, '')) IN ('POST', 'PUT', 'PATCH', 'DELETE') THEN 1 ELSE 0 END) AS TEXT)"
-        other_expr = "CAST(SUM(CASE WHEN UPPER(COALESCE(r.request_method, '')) NOT IN ('GET', 'HEAD', 'OPTIONS', 'POST', 'PUT', 'PATCH', 'DELETE') THEN 1 ELSE 0 END) AS TEXT)"
+        other_expr = "CAST(SUM(CASE WHEN r.request_id IS NOT NULL AND UPPER(COALESCE(r.request_method, '')) NOT IN ('GET', 'HEAD', 'OPTIONS', 'POST', 'PUT', 'PATCH', 'DELETE') THEN 1 ELSE 0 END) AS TEXT)"
         http_expr = "CAST(SUM(CASE WHEN LOWER(COALESCE(r.request_scheme, '')) = 'http' THEN 1 ELSE 0 END) AS TEXT)"
         https_expr = "CAST(SUM(CASE WHEN LOWER(COALESCE(r.request_scheme, '')) = 'https' THEN 1 ELSE 0 END) AS TEXT)"
-        other_scheme_expr = "CAST(SUM(CASE WHEN LOWER(COALESCE(r.request_scheme, '')) NOT IN ('http', 'https') THEN 1 ELSE 0 END) AS TEXT)"
+        other_scheme_expr = "CAST(SUM(CASE WHEN r.request_id IS NOT NULL AND LOWER(COALESCE(r.request_scheme, '')) NOT IN ('http', 'https') THEN 1 ELSE 0 END) AS TEXT)"
         database = get_database(request)
-        denominator = database.query("SELECT COUNT(DISTINCT r.request_id) AS total FROM request AS r JOIN request_category AS rc ON rc.request_id=r.request_id WHERE r.start_utc >= ? AND r.start_utc < ?", (start, end))[0]["total"]
-        traffic_share_expr = f"CAST(COUNT(*) * 100.0 / {denominator or 1} AS TEXT)"
-        https_share_expr = "CAST(SUM(CASE WHEN LOWER(COALESCE(r.request_scheme, '')) = 'https' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) AS TEXT)"
+        denominator = database.query("SELECT COUNT(*) AS total FROM request AS r WHERE r.start_utc >= ? AND r.start_utc < ?", (start, end))[0]["total"]
+        traffic_share_expr = f"CAST(COUNT(r.request_id) * 100.0 / {denominator or 1} AS TEXT)"
+        https_share_expr = "CAST(SUM(CASE WHEN LOWER(COALESCE(r.request_scheme, '')) = 'https' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(r.request_id), 0) AS TEXT)"
         expressions = {
-            "category": ["c.category_name"], "requests": ["CAST(COUNT(*) AS TEXT)"],
+            "category": ["c.category_name"], "requests": ["CAST(COUNT(r.request_id) AS TEXT)"],
             "read_count": [read_expr], "write_count": [write_expr], "other_count": [other_expr],
             "http_count": [http_expr], "https_count": [https_expr],
             "scheme": [https_share_expr], "traffic_share": [traffic_share_expr], "https_share": [https_share_expr],
         }
-        chosen = (["c.category_name", "CAST(COUNT(*) AS TEXT)", read_expr, write_expr, other_expr, http_expr, https_expr, other_scheme_expr, traffic_share_expr, https_share_expr]
+        chosen = (["c.category_name", "CAST(COUNT(r.request_id) AS TEXT)", read_expr, write_expr, other_expr, http_expr, https_expr, other_scheme_expr, traffic_share_expr, https_share_expr]
                  if field is None else expressions.get(field, []))
         if term and chosen:
             having_clause = "HAVING (" + " OR ".join(f"{expr} LIKE ?" for expr in chosen) + ")"
@@ -70,25 +69,27 @@ def get_categories(
     order_by = f"{sort_expressions[sort_by]} {sort_order.upper()}, c.category_name ASC, c.category_id"
     items = database.query(
         f"""SELECT c.category_id, c.category_name,
-                   COUNT(*) AS total_count,
+                   COUNT(r.request_id) AS total_count,
                    SUM(CASE WHEN UPPER(COALESCE(r.request_method, ''))
                                  IN ('GET', 'HEAD', 'OPTIONS') THEN 1 ELSE 0 END) AS read_count,
                    SUM(CASE WHEN UPPER(COALESCE(r.request_method, ''))
                                  IN ('POST', 'PUT', 'PATCH', 'DELETE') THEN 1 ELSE 0 END) AS write_count,
-                   SUM(CASE WHEN UPPER(COALESCE(r.request_method, ''))
+                   SUM(CASE WHEN r.request_id IS NOT NULL
+                                 AND UPPER(COALESCE(r.request_method, ''))
                                  NOT IN ('GET', 'HEAD', 'OPTIONS', 'POST', 'PUT', 'PATCH', 'DELETE')
                             THEN 1 ELSE 0 END) AS other_count,
                    SUM(CASE WHEN LOWER(COALESCE(r.request_scheme, '')) = 'http'
                             THEN 1 ELSE 0 END) AS http_count,
                    SUM(CASE WHEN LOWER(COALESCE(r.request_scheme, '')) = 'https'
                             THEN 1 ELSE 0 END) AS https_count,
-                   SUM(CASE WHEN LOWER(COALESCE(r.request_scheme, ''))
+                   SUM(CASE WHEN r.request_id IS NOT NULL
+                                 AND LOWER(COALESCE(r.request_scheme, ''))
                                  NOT IN ('http', 'https')
                             THEN 1 ELSE 0 END) AS other_scheme_count
-            FROM request AS r
-            JOIN request_category AS rc ON rc.request_id = r.request_id
-            JOIN category AS c ON c.category_id = rc.category_id
-            WHERE {' AND '.join(conditions)}
+            FROM category AS c
+            LEFT JOIN request_category AS rc ON rc.category_id = c.category_id
+            LEFT JOIN request AS r ON r.request_id = rc.request_id
+                                   AND r.start_utc >= ? AND r.start_utc < ?
             GROUP BY c.category_id, c.category_name
             {having_clause}
             ORDER BY {order_by}""",

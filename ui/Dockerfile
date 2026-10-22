@@ -6,6 +6,7 @@ WORKDIR /app/ui
 RUN npm install
 COPY ui/index.html ./
 COPY ui/favicon.svg ./
+COPY ui/public ./public
 COPY ui/vite.config.ts ./
 COPY ui/tsconfig*.json ./
 COPY ui/src ./src

@@ -103,7 +103,7 @@ def get_bursts(
     asn: str | None = Query(default=None, min_length=1),
     city: str | None = Query(default=None, min_length=1),
     search: str | None = Query(default=None, min_length=1, description="Search burst fields; qualify with field:value such as host: or ip:"),
-    sort_by: Literal["burst_id", "start_time", "actor_ip", "host", "country", "duration", "requests", "avg_count"] = Query(default="start_time"),
+    sort_by: Literal["burst_id", "start_time", "actor_ip", "host", "country", "duration", "read_count", "write_count", "other_count", "requests", "avg_count"] = Query(default="start_time"),
     sort_order: Literal["asc", "desc"] = Query(default="asc"),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
@@ -232,6 +232,9 @@ def get_bursts(
         "host": "h.name",
         "country": "a.country",
         "duration": "(julianday(b.end_time) - julianday(b.start_time))",
+        "read_count": "b.read_count",
+        "write_count": "b.write_count",
+        "other_count": "b.other_count",
         "requests": "(b.read_count + b.write_count + b.other_count)",
         "avg_count": "b.avg_count",
     }

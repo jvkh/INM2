@@ -1711,6 +1711,11 @@ class Importer:
         if port and port not in cls.COMMON_WEB_PORTS:
             categories.append("andere Dienste")
 
+        host = str(record.get("RequestHost") or "").strip()
+        hostname = urlsplit(host if "://" in host else f"//{host}").hostname
+        if hostname and hostname.rstrip(".").casefold().endswith(".onion"):
+            categories.append("Darknet-Zugriffe")
+
         # Keep every request visible in category summaries, including requests
         # that did not match a known probe pattern.
         return categories or ["Andere Dienste"]

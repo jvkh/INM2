@@ -12,6 +12,21 @@ from typing import Any, Iterator, Sequence
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DATABASE_PATH = PROJECT_ROOT / "databases" / "inm2.sqlite3"
 DEFAULT_SCHEMA_PATH = PROJECT_ROOT / "common" / "scripts" / "init.sql"
+KNOWN_CATEGORIES = (
+    "Sensible Dateien",
+    "Webshell",
+    "Datenbank-Dienste",
+    "Monitoring-Dienste",
+    "Container-Dienste",
+    "CMS-Aufrufe",
+    "Admin-Zugriffe",
+    "API-Zugriffe",
+    "Informationslecks",
+    "Schwachstellensuche",
+    "Scanner",
+    "Darknet-Zugriffe",
+    "Andere Dienste",
+)
 
 
 class Database:
@@ -63,8 +78,10 @@ class Database:
             self._migrate_honeypot_event()
             self._migrate_cowrie_event()
             self._migrate_request_content_size()
+            self._seed_known_categories()
             self._migrate_other_services_category()
             self._migrate_sensitive_files_category()
+            self._migrate_onion_host_category()
             self.connection.execute(
                 "INSERT OR IGNORE INTO incident_criterion (incident_id, incident_type) SELECT incident_id, incident_type FROM incident"
             )
@@ -162,6 +179,66 @@ class Database:
         )
         self.connection.execute(
             f"DELETE FROM category WHERE category_id IN ({','.join('?' for _ in aliases)})", aliases
+        )
+
+    def _migrate_onion_host_category(self) -> None:
+        """Classify existing requests addressed to onion hosts."""
+        migration_name = "onion_host_category_v1"
+        if self.connection.execute(
+            "SELECT 1 FROM settings WHERE group_name = 'migration' AND name = ?",
+            (migration_name,),
+        ).fetchone():
+            return
+        category_name = "Darknet-Zugriffe"
+        self.connection.execute(
+            "INSERT OR IGNORE INTO category (category_name) VALUES (?)",
+            (category_name,),
+        )
+        host_ids = [
+            row[0]
+            for row in self.connection.execute(
+                """SELECT host_id FROM host
+                   WHERE LOWER(RTRIM(name, '.')) LIKE '%.onion'
+                      OR LOWER(name) LIKE '%.onion:%'"""
+            )
+        ]
+        if not host_ids:
+            self.connection.execute(
+                "INSERT OR REPLACE INTO settings (group_name, name, value) VALUES ('migration', ?, '1')",
+                (migration_name,),
+            )
+            return
+        category_id = self.connection.execute(
+            "SELECT category_id FROM category WHERE category_name = ?",
+            (category_name,),
+        ).fetchone()[0]
+        placeholders = ",".join("?" for _ in host_ids)
+        self.connection.execute(
+            f"""INSERT OR IGNORE INTO request_category (request_id, category_id)
+                SELECT request_id, ? FROM request WHERE host_id IN ({placeholders})""",
+            [category_id, *host_ids],
+        )
+        self.connection.execute(
+            """INSERT INTO burst_category (burst_id, category_id, request_count)
+               SELECT br.burst_id, ?, COUNT(DISTINCT br.request_id)
+               FROM burst_request AS br
+               JOIN request_category AS rc ON rc.request_id = br.request_id
+               WHERE rc.category_id = ?
+               GROUP BY br.burst_id
+               ON CONFLICT (burst_id, category_id) DO UPDATE
+               SET request_count = excluded.request_count""",
+            (category_id, category_id),
+        )
+        self.connection.execute(
+            "INSERT OR REPLACE INTO settings (group_name, name, value) VALUES ('migration', ?, '1')",
+            (migration_name,),
+        )
+
+    def _seed_known_categories(self) -> None:
+        """Keep all supported categories available, even before first use."""
+        self.connection.executemany(
+            "INSERT OR IGNORE INTO category (category_name) VALUES (?)",
+            [(name,) for name in KNOWN_CATEGORIES],
         )
 
     def _migrate_honeypot_event(self) -> None:

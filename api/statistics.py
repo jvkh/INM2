@@ -65,10 +65,10 @@ def get_statistics(
     category_rows = database.query(
         """SELECT NULLIF(TRIM(c.category_name), '') AS name,
                   COUNT(DISTINCT r.request_id) AS request_count
-           FROM request AS r
-           JOIN request_category AS rc ON rc.request_id = r.request_id
-           JOIN category AS c ON c.category_id = rc.category_id
-           WHERE r.start_utc >= ? AND r.start_utc < ?
+           FROM category AS c
+           LEFT JOIN request_category AS rc ON rc.category_id = c.category_id
+           LEFT JOIN request AS r ON r.request_id = rc.request_id
+                                  AND r.start_utc >= ? AND r.start_utc < ?
            GROUP BY NULLIF(TRIM(c.category_name), '')
            ORDER BY request_count DESC, name COLLATE NOCASE ASC""",
         (start, end),

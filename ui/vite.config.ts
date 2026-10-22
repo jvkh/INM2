@@ -7,6 +7,15 @@ const appVersion = readFileSync(resolve(process.cwd(), '../VERSION'), 'utf8').tr
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('/node_modules/lucide-react/')) return 'icons'
+        },
+      },
+    },
+  },
   define: {
     __APP_VERSION__: JSON.stringify(appVersion),
   },
