@@ -473,6 +473,59 @@ def statistics(request: Request, from_: datetime = Query(alias="from"), to: date
     )
     total = sum(row["event_count"] for row in rows)
     by_type = [{**row, "share_percent": round(row["event_count"] * 100 / total, 2) if total else 0} for row in rows]
+    start_dt = from_ if from_.tzinfo else from_.replace(tzinfo=timezone.utc)
+    end_dt = to if to.tzinfo else to.replace(tzinfo=timezone.utc)
+    bucket_count = 24
+    bucket_duration = (end_dt - start_dt) / bucket_count
+    buckets = [
+        (_time(start_dt + bucket_duration * index), _time(start_dt + bucket_duration * (index + 1)))
+        for index in range(bucket_count)
+    ]
+    timeline_rows = database.query(
+        """WITH buckets(bucket_index, start_utc, end_utc) AS (VALUES """
+        + ",".join("(?, ?, ?)" for _ in buckets)
+        + """) SELECT b.bucket_index, b.start_utc AS \"from\", b.end_utc AS \"to\",
+                     COUNT(e.event_id) AS event_count
+             FROM buckets AS b LEFT JOIN cowrie_event AS e
+               ON julianday(e.time) >= julianday(b.start_utc) AND julianday(e.time) < julianday(b.end_utc)
+             GROUP BY b.bucket_index ORDER BY b.bucket_index""",
+        [value for index, bucket in enumerate(buckets) for value in (index, *bucket)],
+    )
+    country_groups = database.query(
+        """WITH filtered AS (
+               SELECT e.*, LAG(julianday(e.time)) OVER (PARTITION BY e.src_ip ORDER BY e.time, e.event_id) AS prev_time
+               FROM cowrie_event AS e
+               WHERE julianday(e.time) >= julianday(?) AND julianday(e.time) < julianday(?)
+           ), marked AS (
+               SELECT *, SUM(CASE WHEN prev_time IS NULL OR (julianday(time) - prev_time) * 86400 > 300 THEN 1 ELSE 0 END)
+                   OVER (PARTITION BY src_ip ORDER BY time, event_id) AS session_group
+               FROM filtered
+           ), grouped AS (
+               SELECT COALESCE(NULLIF(TRIM(MAX(country)), ''), 'Unbekannt') AS name
+               FROM marked GROUP BY src_ip, session_group
+           )
+           SELECT name, COUNT(*) AS request_count FROM grouped
+           GROUP BY name ORDER BY request_count DESC, name""", (start, end)
+    )
+    country_event_rows = database.query(
+        """SELECT COALESCE(NULLIF(TRIM(country), ''), 'Unbekannt') AS name, COUNT(*) AS event_count
+           FROM cowrie_event
+           WHERE julianday(time) >= julianday(?) AND julianday(time) < julianday(?)
+           GROUP BY COALESCE(NULLIF(TRIM(country), ''), 'Unbekannt')""", (start, end)
+    )
+    country_event_counts = {row["name"]: row["event_count"] for row in country_event_rows}
+    country_group_counts = {row["name"]: row["request_count"] for row in country_groups}
+    country_group_total = sum(country_group_counts.values())
+    countries = [
+        {
+            "name": name,
+            "event_count": event_count,
+            "group_count": country_group_counts.get(name, 0),
+            "event_share_percent": round(event_count * 100 / total, 2) if total else 0,
+            "group_share_percent": round(country_group_counts.get(name, 0) * 100 / country_group_total, 2) if country_group_total else 0,
+        }
+        for name, event_count in country_event_counts.items()
+    ]
     counts = database.query(
         """SELECT COUNT(*) AS event_count, COUNT(DISTINCT src_ip) AS actor_count,
                   COUNT(DISTINCT session) AS session_count,
@@ -480,4 +533,4 @@ def statistics(request: Request, from_: datetime = Query(alias="from"), to: date
                   SUM(CASE WHEN event_type = 'cowrie.command.input' AND COALESCE(TRIM(input), '') <> '' THEN 1 ELSE 0 END) AS command_count
            FROM cowrie_event WHERE julianday(time) >= julianday(?) AND julianday(time) < julianday(?)""", (start, end)
     )[0]
-    return {**{key: int(counts[key] or 0) for key in ("event_count", "actor_count", "session_count", "failed_login_count", "command_count")}, "by_type": by_type}
+    return {**{key: int(counts[key] or 0) for key in ("event_count", "actor_count", "session_count", "failed_login_count", "command_count")}, "by_type": by_type, "countries": countries, "timeline": timeline_rows}

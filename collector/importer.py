@@ -35,7 +35,7 @@ class Importer:
     READ_METHODS = {"GET", "HEAD", "OPTIONS"}
     WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
     CATEGORY_PATTERNS = {
-        "sensible Dateien": re.compile(
+        "Sensible Dateien": re.compile(
             r"(?:^|/)(?:\.env(?:\.[^/]*)?|\.git(?:/|$)|\.svn(?:/|$)|"
             r"\.htaccess|\.htpasswd|\.ds_store|id_rsa|authorized_keys|"
             r"wp-config\.php|config(?:uration)?\.(?:php|ya?ml|json)|"
@@ -163,18 +163,25 @@ class Importer:
         self,
         on_file_start: Callable[[str], None] | None = None,
         on_record_imported: Callable[[], None] | None = None,
+        on_source_imported: Callable[[str, int], None] | None = None,
+        on_cowrie_log_status: Callable[[bool], None] | None = None,
     ) -> int:
         """Process configured files and their rotated segments, oldest first."""
         total = 0
         logger.info("Import cycle started for %d configured source(s)", len(self.config.log_files))
         try:
-            cowrie_count = self.import_cowrie_log()
+            cowrie_count = self.import_cowrie_log(on_log_availability=on_cowrie_log_status)
             total += cowrie_count
+            if on_source_imported is not None and os.environ.get("COWRIE_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}:
+                on_source_imported(Path(os.environ.get("COWRIE_LOG_PATH", "") or "/cowrie-logs/cowrie.json").name, cowrie_count)
             if on_record_imported is not None:
                 for _ in range(cowrie_count):
                     on_record_imported()
             honeypot_count = self.import_honeypot_log()
             total += honeypot_count
+            honeypot_path = Path(os.environ.get("HONEYPOT_LOG_PATH", "/logs/honeypot.jsonl"))
+            if on_source_imported is not None and honeypot_path.is_file():
+                on_source_imported(honeypot_path.name, honeypot_count)
             if on_record_imported is not None:
                 for _ in range(honeypot_count):
                     on_record_imported()
@@ -217,6 +224,7 @@ class Importer:
                 if not inputs:
                     raise FileNotFoundError(f"No log file or rotated segment found for {path}")
 
+                source_imported = 0
                 for input_path, sealed in inputs:
                     input_name = str(input_path.absolute())
                     logger.info("Import source started: %s", input_name)
@@ -291,9 +299,12 @@ class Importer:
                         logger.exception("Import source failed: %s", input_name)
                         raise
                     total += count
+                    source_imported += count
                     logger.info("Imported %d request(s) from %s", count, input_name)
                     if reader.skipped_count:
                         logger.info("Skipped %d request(s) (malformed, filtered, or duplicate)", reader.skipped_count)
+                if on_source_imported is not None:
+                    on_source_imported(configured_path.name, source_imported)
         finally:
             # Assign imported rows once, preserving the prior import's open tail.
             self._rebuild_pending_bursts()
@@ -303,19 +314,25 @@ class Importer:
         logger.info("Import cycle completed: %d request(s) imported", total)
         return total
 
-    def import_cowrie_log(self) -> int:
+    def import_cowrie_log(self, on_log_availability: Callable[[bool], None] | None = None) -> int:
         """Incrementally import Cowrie JSON events, including submitted passwords."""
         enabled = os.environ.get("COWRIE_ENABLED", "false").strip().lower()
         if enabled not in {"1", "true", "yes", "on"}:
+            if on_log_availability is not None:
+                on_log_availability(False)
             logger.debug("Cowrie import is disabled (COWRIE_ENABLED=%r)", enabled)
             return 0
         log_path = Path(os.environ.get("COWRIE_LOG_PATH", "").strip() or "/cowrie-logs/cowrie.json")
         if not log_path.is_file():
+            if on_log_availability is not None:
+                on_log_availability(False)
             logger.warning(
                 "Cowrie import is enabled, but log file %s is not accessible; check the collector bind mount",
                 log_path,
             )
             return 0
+        if on_log_availability is not None:
+            on_log_availability(os.access(log_path, os.R_OK))
         stat = log_path.stat()
         identity = f"{stat.st_dev}:{stat.st_ino}"
         position_name = "cowrie:" + str(log_path)
@@ -460,9 +477,9 @@ class Importer:
                         """INSERT OR IGNORE INTO honeypot_event (
                                event_id, time, client_ip, provider, asn, country, city,
                                host, scheme, session_id, session_phase, method, path, user_agent,
-                               content_type, body_bytes, body_clipped, body_sha256, rule,
+                               content_type, body_bytes, body_clipped, body_sha256, rule, response_page,
                                status, duration, body_text, body_base64, body_file
-                           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
                             event_id, event.get("time", ""), client_ip,
                             geo.get("provider"), geo.get("asn"), geo.get("country"), geo.get("city"),
@@ -470,7 +487,7 @@ class Importer:
                             event.get("method", ""), event.get("path", ""),
                             event.get("user_agent"), event.get("content_type"),
                             int(event.get("body_bytes", 0)), int(bool(event.get("body_clipped"))),
-                            event.get("body_sha256"), event.get("rule"), event.get("status"),
+                            event.get("body_sha256"), event.get("rule"), event.get("response_page"), event.get("status"),
                             int(event.get("duration", 0)), event.get("body_text"), event.get("body_base64"),
                             event.get("body_file"),
                         ),
@@ -581,6 +598,7 @@ class Importer:
         method = str(record.get("RequestMethod") or "").upper()
         downstream_status = self._optional_int(record.get("DownstreamStatus"))
         downstream_content_size = self._optional_int(record.get("DownstreamContentSize"))
+        request_content_size = self._optional_int(record.get("RequestContentSize"))
         duration = self._optional_int(record.get("Duration"))
         request_path = record.get("RequestPath")
         request_scheme = record.get("RequestScheme")
@@ -639,19 +657,26 @@ class Importer:
                 ).fetchone()[0]
 
             duplicate = connection.execute(
-                """SELECT request_id FROM request
+                """SELECT request_id, request_content_size FROM request
                    WHERE actor_id = ? AND host_id IS ? AND start_utc = ?
                      AND request_method IS ? AND request_path IS ? AND request_scheme IS ?
                      AND user_agent IS ? AND downstream_status IS ?
-                     AND downstream_content_size IS ? AND duration IS ?
+                     AND downstream_content_size IS ?
+                     AND (request_content_size IS ? OR request_content_size IS NULL)
+                     AND duration IS ?
                    LIMIT 1""",
                 (
                     actor_id, host_id, timestamp_text, method or None, request_path,
                     request_scheme, user_agent, downstream_status,
-                    downstream_content_size, duration,
+                    downstream_content_size, request_content_size, duration,
                 ),
             ).fetchone()
             if duplicate is not None:
+                if duplicate["request_content_size"] is None and request_content_size is not None:
+                    connection.execute(
+                        "UPDATE request SET request_content_size = ? WHERE request_id = ?",
+                        (request_content_size, duplicate["request_id"]),
+                    )
                 if log_position is not None:
                     self._write_log_position(connection, *log_position)
                 logger.debug(
@@ -672,14 +697,15 @@ class Importer:
             cursor = connection.execute(
                 """INSERT INTO request (
                        actor_id, host_id, downstream_content_size, downstream_status,
-                       duration, request_host, request_method, request_path,
+                       request_content_size, duration, request_host, request_method, request_path,
                        request_scheme, start_utc, user_agent
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     actor_id,
                     host_id,
                     downstream_content_size,
                     downstream_status,
+                    request_content_size,
                     duration,
                     request_host,
                     method or None,
@@ -1382,6 +1408,8 @@ class Importer:
 
     def _get_category_id(self, category: str) -> int:
         connection = self.database.connection
+        if category.strip().casefold() == "andere dienste".casefold():
+            category = "Andere Dienste"
         connection.execute("INSERT OR IGNORE INTO category (category_name) VALUES (?)", (category,))
         return connection.execute(
             "SELECT category_id FROM category WHERE category_name = ?", (category,)

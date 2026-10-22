@@ -81,7 +81,7 @@ def get_requests(
     burst_id: int | None = Query(default=None, ge=1, description="Return requests associated with this burst"),
     burst_extreme: Literal["min_requests", "max_requests", "min_duration", "max_duration"] | None = Query(default=None, description="Return requests belonging to bursts with the selected period minimum or maximum"),
     without_burst: bool = Query(default=False, description="Return only requests that are not assigned to a burst"),
-    sort_by: Literal["start_utc", "request_method", "request_path", "user_agent", "downstream_status", "actor_ip", "host", "duration", "downstream_content_size", "burst_id"] = Query(default="start_utc"),
+    sort_by: Literal["start_utc", "request_method", "request_path", "user_agent", "downstream_status", "actor_ip", "host", "duration", "downstream_content_size", "request_content_size", "burst_id"] = Query(default="start_utc"),
     sort_order: Literal["asc", "desc"] = Query(default="asc"),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
@@ -155,8 +155,8 @@ def get_requests(
         if not term:
             conditions.append("0")
         elif field is None:
-            conditions.append("(a.ip LIKE ? OR h.name LIKE ? OR a.country LIKE ? OR a.city LIKE ? OR a.provider LIKE ? OR a.asn LIKE ? OR r.request_path LIKE ? OR r.request_method LIKE ? OR r.request_scheme LIKE ? OR CAST(r.downstream_status AS TEXT) LIKE ? OR COALESCE(r.user_agent, '') LIKE ? OR r.start_utc LIKE ? OR CAST(r.duration AS TEXT) LIKE ? OR CAST(r.downstream_content_size AS TEXT) LIKE ? OR CAST((SELECT br.burst_id FROM burst_request AS br WHERE br.request_id = r.request_id LIMIT 1) AS TEXT) LIKE ? OR EXISTS (SELECT 1 FROM request_category AS src JOIN category AS sc ON sc.category_id = src.category_id WHERE src.request_id = r.request_id AND sc.category_name LIKE ?))")
-            parameters.extend([f"%{term}%"] * 16)
+            conditions.append("(a.ip LIKE ? OR h.name LIKE ? OR a.country LIKE ? OR a.city LIKE ? OR a.provider LIKE ? OR a.asn LIKE ? OR r.request_path LIKE ? OR r.request_method LIKE ? OR r.request_scheme LIKE ? OR CAST(r.downstream_status AS TEXT) LIKE ? OR COALESCE(r.user_agent, '') LIKE ? OR r.start_utc LIKE ? OR CAST(r.duration AS TEXT) LIKE ? OR CAST(r.downstream_content_size AS TEXT) LIKE ? OR CAST(r.request_content_size AS TEXT) LIKE ? OR CAST((SELECT br.burst_id FROM burst_request AS br WHERE br.request_id = r.request_id LIMIT 1) AS TEXT) LIKE ? OR EXISTS (SELECT 1 FROM request_category AS src JOIN category AS sc ON sc.category_id = src.category_id WHERE src.request_id = r.request_id AND sc.category_name LIKE ?))")
+            parameters.extend([f"%{term}%"] * 17)
         elif field == "burst_id":
             conditions.append("CAST((SELECT br.burst_id FROM burst_request AS br WHERE br.request_id = r.request_id LIMIT 1) AS TEXT) LIKE ?")
             parameters.append(f"%{term}%")
@@ -177,6 +177,9 @@ def get_requests(
             parameters.append(f"%{term}%")
         elif field == "response_size":
             conditions.append("CAST(r.downstream_content_size AS TEXT) LIKE ?")
+            parameters.append(f"%{term}%")
+        elif field == "request_body_size":
+            conditions.append("CAST(r.request_content_size AS TEXT) LIKE ?")
             parameters.append(f"%{term}%")
         elif field == "category":
             conditions.append("EXISTS (SELECT 1 FROM request_category AS src JOIN category AS sc ON sc.category_id = src.category_id WHERE src.request_id = r.request_id AND sc.category_name LIKE ?)")
@@ -200,7 +203,7 @@ def get_requests(
     joins = """FROM request AS r
                JOIN actor AS a ON a.actor_id = r.actor_id
                LEFT JOIN host AS h ON h.host_id = r.host_id"""
-    sort_expressions = {"start_utc": "r.start_utc", "request_method": "r.request_method", "request_path": "r.request_path", "user_agent": "r.user_agent", "downstream_status": "r.downstream_status", "actor_ip": "a.ip", "host": "h.name", "duration": "r.duration", "downstream_content_size": "r.downstream_content_size", "burst_id": "(SELECT br.burst_id FROM burst_request AS br WHERE br.request_id = r.request_id LIMIT 1)"}
+    sort_expressions = {"start_utc": "r.start_utc", "request_method": "r.request_method", "request_path": "r.request_path", "user_agent": "r.user_agent", "downstream_status": "r.downstream_status", "actor_ip": "a.ip", "host": "h.name", "duration": "r.duration", "downstream_content_size": "r.downstream_content_size", "request_content_size": "r.request_content_size", "burst_id": "(SELECT br.burst_id FROM burst_request AS br WHERE br.request_id = r.request_id LIMIT 1)"}
     order_by = f"{sort_expressions[sort_by]} {sort_order.upper()}, r.start_utc DESC, r.request_id DESC"
     total_rows = database.query(
         f"SELECT COUNT(*) AS total {joins} WHERE {where_clause}", parameters
@@ -229,7 +232,7 @@ def get_requests(
                        FROM request_category AS rc
                        JOIN category AS c ON c.category_id = rc.category_id
                        WHERE rc.request_id = r.request_id) AS categories,
-                      r.downstream_status, r.downstream_content_size,
+                      r.downstream_status, r.downstream_content_size, r.request_content_size,
                       r.duration, r.user_agent
                {joins}
                WHERE {where_clause}

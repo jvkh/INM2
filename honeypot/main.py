@@ -1477,6 +1477,55 @@ def decoy(path: str, method: str) -> tuple[str, int, str, str]:
     return "unmatched", 404, "text/html; charset=utf-8", "<!doctype html><title>Not Found</title><h1>404 Not Found</h1>"
 
 
+def response_page(rule: str) -> str:
+    """Describe the page returned for an event in a human-readable way."""
+    pages = {
+        "portal-login": "Login-Seite",
+        "portal-login-failed": "Login-Seite",
+        "portal-login-required": "Login-Seite",
+        "wordpress-login": "WordPress-Loginseite",
+        "phpmyadmin-login": "phpMyAdmin-Loginseite",
+        "admin-login": "Administrations-Loginseite",
+        "contact-form": "Kontaktseite",
+        "contact-form-submitted": "Kontaktseite",
+        "portal-dashboard": "Mitgliederbereich",
+        "portal-login-success": "Mitgliederbereich",
+        "club-imprint": "Impressum",
+        "club-training-schedule": "Trainings- und Terminseite",
+        "club-training-login-required": "Login-Seite",
+        "club-notice-board": "Schwarzes Brett",
+        "club-notice-board-login-required": "Login-Seite",
+        "club-members": "Mitgliederliste",
+        "club-members-login-required": "Login-Seite",
+        "club-event-admin": "Terminverwaltung",
+        "club-event-admin-login-required": "Login-Seite",
+        "useradmin-dashboard": "Mitgliederverwaltung",
+        "useradmin-login-required": "Login-Seite",
+        "useradmin-access-denied": "Zugriff-verweigert-Seite",
+        "file-manager": "Dateiverwaltung",
+        "file-manager-login-required": "Login-Seite",
+        "public-file-upload-form": "Uploadformular",
+        "file-upload-captured": "Upload-Bestätigung",
+        "club-terminal": "Webmaster-Terminal",
+        "club-terminal-login-required": "Login-Seite",
+        "uploaded-file-request": "Hochgeladene Datei",
+        "uploaded-php-request": "Hochgeladene PHP-Datei",
+        "portal-password-reset": "Passwort-zurücksetzen-Seite",
+        "portal-logout": "Abmeldung",
+        "phpinfo-probe": "PHP-Info-Seite",
+        "server-status-probe": "Serverstatus-Seite",
+        "api-probe": "API-Antwort",
+        "unmatched": "404-Fehlerseite",
+        "well-known-probe": "404-Fehlerseite",
+        "options": "OPTIONS-Antwort",
+        "environment-file-probe": "Konfigurationsdatei",
+        "git-config-probe": "Git-Konfiguration",
+        "portal-stylesheet": "Stylesheet",
+        "portal-favicon": "Favicon",
+    }
+    return pages.get(rule, "Antwort")
+
+
 class HoneypotHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = ""
@@ -1552,6 +1601,7 @@ class HoneypotHandler(BaseHTTPRequestHandler):
             "body_clipped": clipped,
             "body_sha256": hashlib.sha256(body).hexdigest() if body else "",
             "rule": rule,
+            "response_page": response_page(rule),
             "status": status,
             "duration": time.perf_counter_ns() - request_started_ns,
             "session_id": session_id,

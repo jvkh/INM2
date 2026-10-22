@@ -27,7 +27,7 @@ class CollectorStatus:
         )
 
     def begin_import(self) -> None:
-        self._write_values({"activity": "Import", "import_file": "", "import_count": "0"})
+        self._write_values({"activity": "Import", "import_file": "", "import_count": "0", "import_files": "[]"})
 
     def set_import_file(self, path: str) -> None:
         self._write_values({"import_file": path, "last_import_file": path})
@@ -40,10 +40,37 @@ class CollectorStatus:
         count = int(rows[0]["value"]) if rows and rows[0]["value"] else 0
         self._write_values({"import_count": str(count + 1)})
 
+    def record_import_file(self, path: str, count: int) -> None:
+        rows = self.database.query(
+            "SELECT value FROM settings WHERE group_name = ? AND name = 'import_files'",
+            (self.GROUP,),
+        )
+        try:
+            files = json.loads(rows[0]["value"]) if rows and rows[0]["value"] else []
+        except (json.JSONDecodeError, TypeError):
+            files = []
+        if not isinstance(files, list):
+            files = []
+        for item in files:
+            if isinstance(item, dict) and item.get("file") == path:
+                item["count"] = int(item.get("count", 0)) + count
+                break
+        else:
+            files.append({"file": path, "count": count})
+        self._write_values({"import_files": json.dumps(files, ensure_ascii=False)})
+
+    def set_cowrie_log_available(self, available: bool) -> None:
+        self._write_values({"cowrie_log_available": "true" if available else "false"})
+
     def complete_import(self) -> None:
         now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
         self._write_values(
-            {"last_import": now, "activity": "Idle", "import_file": ""}
+            {
+                "last_import": now,
+                "activity": "Idle",
+                "import_file": "",
+                "last_import_files": self._setting_value("import_files", "[]"),
+            }
         )
 
     def begin_maintenance(self) -> None:
@@ -68,14 +95,29 @@ class CollectorStatus:
             environment = json.loads(values.get("environment") or "{}")
         except json.JSONDecodeError:
             environment = {}
+        try:
+            last_import_files = json.loads(values.get("last_import_files") or "[]")
+        except json.JSONDecodeError:
+            last_import_files = []
+        if not isinstance(last_import_files, list):
+            last_import_files = []
         return {
             "last_import": values.get("last_import"),
             "activity": values.get("activity", "Idle"),
             "import_file": values.get("import_file", ""),
             "last_import_file": values.get("last_import_file", ""),
             "import_count": int(values.get("import_count") or 0),
+            "last_import_files": last_import_files,
+            "cowrie_log_available": values.get("cowrie_log_available", "false").lower() == "true",
             "environment": environment,
         }
+
+    def _setting_value(self, name: str, default: str) -> str:
+        rows = self.database.query(
+            "SELECT value FROM settings WHERE group_name = ? AND name = ?",
+            (self.GROUP, name),
+        )
+        return str(rows[0]["value"]) if rows and rows[0]["value"] is not None else default
 
     def _write_values(self, values: dict[str, str]) -> None:
         self.database.execute_many(

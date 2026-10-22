@@ -144,8 +144,8 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
             if not term:
                 request_conditions.append("0")
             elif field is None:
-                request_conditions.append("(a.ip LIKE ? OR COALESCE(h.name,'') LIKE ? OR COALESCE(a.country,'') LIKE ? OR COALESCE(a.city,'') LIKE ? OR COALESCE(a.provider,'') LIKE ? OR COALESCE(a.asn,'') LIKE ? OR COALESCE(r.request_path,'') LIKE ? OR COALESCE(r.request_method,'') LIKE ? OR COALESCE(r.request_scheme,'') LIKE ? OR CAST(r.downstream_status AS TEXT) LIKE ? OR COALESCE(r.user_agent,'') LIKE ? OR r.start_utc LIKE ? OR CAST(r.duration AS TEXT) LIKE ? OR CAST(r.downstream_content_size AS TEXT) LIKE ? OR CAST((SELECT br.burst_id FROM burst_request AS br WHERE br.request_id=r.request_id LIMIT 1) AS TEXT) LIKE ? OR EXISTS (SELECT 1 FROM request_category AS src JOIN category AS sc ON sc.category_id=src.category_id WHERE src.request_id=r.request_id AND sc.category_name LIKE ?))")
-                request_params.extend([f"%{term}%"] * 16)
+                request_conditions.append("(a.ip LIKE ? OR COALESCE(h.name,'') LIKE ? OR COALESCE(a.country,'') LIKE ? OR COALESCE(a.city,'') LIKE ? OR COALESCE(a.provider,'') LIKE ? OR COALESCE(a.asn,'') LIKE ? OR COALESCE(r.request_path,'') LIKE ? OR COALESCE(r.request_method,'') LIKE ? OR COALESCE(r.request_scheme,'') LIKE ? OR CAST(r.downstream_status AS TEXT) LIKE ? OR COALESCE(r.user_agent,'') LIKE ? OR r.start_utc LIKE ? OR CAST(r.duration AS TEXT) LIKE ? OR CAST(r.downstream_content_size AS TEXT) LIKE ? OR CAST(r.request_content_size AS TEXT) LIKE ? OR CAST((SELECT br.burst_id FROM burst_request AS br WHERE br.request_id=r.request_id LIMIT 1) AS TEXT) LIKE ? OR EXISTS (SELECT 1 FROM request_category AS src JOIN category AS sc ON sc.category_id=src.category_id WHERE src.request_id=r.request_id AND sc.category_name LIKE ?))")
+                request_params.extend([f"%{term}%"] * 17)
             elif field == "burst_id":
                 request_conditions.append("CAST((SELECT br.burst_id FROM burst_request AS br WHERE br.request_id=r.request_id LIMIT 1) AS TEXT) LIKE ?")
                 request_params.append(f"%{term}%")
@@ -163,6 +163,9 @@ def _period_metrics(database: Any, start: str, end: str, page: str, search: str 
                 request_params.append(f"%{term}%")
             elif field == "response_size":
                 request_conditions.append("CAST(r.downstream_content_size AS TEXT) LIKE ?")
+                request_params.append(f"%{term}%")
+            elif field == "request_body_size":
+                request_conditions.append("CAST(r.request_content_size AS TEXT) LIKE ?")
                 request_params.append(f"%{term}%")
             elif field == "category":
                 request_conditions.append("EXISTS (SELECT 1 FROM request_category AS src JOIN category AS sc ON sc.category_id=src.category_id WHERE src.request_id=r.request_id AND sc.category_name LIKE ?)")

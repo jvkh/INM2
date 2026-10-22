@@ -67,6 +67,56 @@ def get_honeypot_statistics(
         "SELECT COUNT(*) AS count FROM honeypot_event WHERE time >= ? AND time < ?", (start, end)
     )[0]["count"]
 
+    country_groups = database.query(
+        """WITH filtered AS (
+               SELECT e.event_id, e.time, e.client_ip,
+                      COALESCE(NULLIF(TRIM(e.country), ''), NULLIF(TRIM(a.country), '')) AS country
+               FROM honeypot_event AS e LEFT JOIN actor AS a ON a.ip = e.client_ip
+               WHERE e.time >= ? AND e.time < ?
+           ), lagged AS (
+               SELECT *, LAG(time) OVER (PARTITION BY COALESCE(client_ip, '') ORDER BY time, event_id) AS previous_time
+               FROM filtered
+           ), marked AS (
+               SELECT *, CASE WHEN previous_time IS NULL OR (julianday(time) - julianday(previous_time)) * 86400.0 > 300
+                              THEN 1 ELSE 0 END AS new_session
+               FROM lagged
+           ), numbered AS (
+               SELECT *, SUM(new_session) OVER (
+                   PARTITION BY COALESCE(client_ip, '') ORDER BY time, event_id
+                   ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+               ) AS session_number
+               FROM marked
+           ), grouped AS (
+               SELECT COALESCE(MAX(NULLIF(TRIM(country), '')), 'Unbekannt') AS name
+               FROM numbered
+               GROUP BY COALESCE(client_ip, ''), session_number
+           )
+           SELECT name, COUNT(*) AS request_count FROM grouped
+           GROUP BY name ORDER BY request_count DESC, name""",
+        (start, end),
+    )
+    country_event_rows = database.query(
+        """SELECT COALESCE(NULLIF(TRIM(e.country), ''), NULLIF(TRIM(a.country), ''), 'Unbekannt') AS name,
+                  COUNT(*) AS event_count
+           FROM honeypot_event AS e LEFT JOIN actor AS a ON a.ip = e.client_ip
+           WHERE e.time >= ? AND e.time < ?
+           GROUP BY COALESCE(NULLIF(TRIM(e.country), ''), NULLIF(TRIM(a.country), ''), 'Unbekannt')""",
+        (start, end),
+    )
+    country_event_counts = {row["name"]: row["event_count"] for row in country_event_rows}
+    country_group_counts = {row["name"]: row["request_count"] for row in country_groups}
+    country_group_total = sum(country_group_counts.values())
+    countries = [
+        {
+            "name": name,
+            "event_count": event_count,
+            "group_count": country_group_counts.get(name, 0),
+            "event_share_percent": round(event_count * 100 / total, 2) if total else 0,
+            "group_share_percent": round(country_group_counts.get(name, 0) * 100 / country_group_total, 2) if country_group_total else 0,
+        }
+        for name, event_count in country_event_counts.items()
+    ]
+
     def distributions(column: str) -> list[dict[str, Any]]:
         rows = database.query(
             f"""SELECT COALESCE(NULLIF({column}, ''), 'Unbekannt') AS name, COUNT(*) AS request_count
@@ -126,6 +176,7 @@ def get_honeypot_statistics(
         "matched_incident_count": matches["matched_incident_count"],
         "by_method": distributions("method"),
         "by_rule": distributions("rule"),
+        "countries": countries,
         "timeline": timeline_rows,
     }
 
@@ -183,7 +234,7 @@ def list_honeypot_events(
                    COALESCE(e.country, a.country) AS country,
                    COALESCE(e.city, a.city) AS city,
                    e.method, e.path, e.user_agent, e.content_type, e.host, e.scheme, e.session_id, e.session_phase,
-                   e.body_bytes, e.body_clipped, e.body_sha256, e.rule, e.status, e.duration,
+                   e.body_bytes, e.body_clipped, e.body_sha256, e.rule, e.status, e.duration, e.response_page,
                    CASE WHEN e.body_text IS NOT NULL OR e.body_base64 IS NOT NULL OR e.body_file IS NOT NULL
                         THEN 1 ELSE 0 END AS has_body
             FROM honeypot_event AS e LEFT JOIN actor AS a ON a.ip = e.client_ip {where}
@@ -333,7 +384,7 @@ def list_honeypot_group_events(
                   COALESCE(e.country, a.country) AS country,
                   COALESCE(e.city, a.city) AS city,
                   e.method, e.path, e.user_agent, e.content_type, e.host, e.scheme, e.session_id, e.session_phase,
-                  e.body_bytes, e.body_clipped, e.body_sha256, e.rule, e.status, e.duration,
+                  e.body_bytes, e.body_clipped, e.body_sha256, e.rule, e.status, e.duration, e.response_page,
                   CASE WHEN e.body_text IS NOT NULL OR e.body_base64 IS NOT NULL OR e.body_file IS NOT NULL
                        THEN 1 ELSE 0 END AS has_body
            FROM honeypot_event AS e LEFT JOIN actor AS a ON a.ip = e.client_ip

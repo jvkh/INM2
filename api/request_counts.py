@@ -136,9 +136,9 @@ def get_request_counts(
             filter_conditions.append("0")
         elif field is None:
             filter_conditions.append(
-                "EXISTS (SELECT 1 FROM actor AS sa WHERE sa.actor_id = r.actor_id AND (sa.ip LIKE ? OR sa.country LIKE ? OR sa.city LIKE ? OR sa.provider LIKE ? OR sa.asn LIKE ?)) OR r.request_path LIKE ? OR EXISTS (SELECT 1 FROM host AS sh WHERE sh.host_id = r.host_id AND sh.name LIKE ?) OR r.request_method LIKE ? OR r.request_scheme LIKE ? OR CAST(r.downstream_status AS TEXT) LIKE ? OR COALESCE(r.user_agent, '') LIKE ? OR r.start_utc LIKE ? OR CAST(r.duration AS TEXT) LIKE ? OR CAST(r.downstream_content_size AS TEXT) LIKE ? OR CAST((SELECT br.burst_id FROM burst_request AS br WHERE br.request_id = r.request_id LIMIT 1) AS TEXT) LIKE ? OR EXISTS (SELECT 1 FROM request_category AS src JOIN category AS sc ON sc.category_id = src.category_id WHERE src.request_id = r.request_id AND sc.category_name LIKE ?)"
+                "EXISTS (SELECT 1 FROM actor AS sa WHERE sa.actor_id = r.actor_id AND (sa.ip LIKE ? OR sa.country LIKE ? OR sa.city LIKE ? OR sa.provider LIKE ? OR sa.asn LIKE ?)) OR r.request_path LIKE ? OR EXISTS (SELECT 1 FROM host AS sh WHERE sh.host_id = r.host_id AND sh.name LIKE ?) OR r.request_method LIKE ? OR r.request_scheme LIKE ? OR CAST(r.downstream_status AS TEXT) LIKE ? OR COALESCE(r.user_agent, '') LIKE ? OR r.start_utc LIKE ? OR CAST(r.duration AS TEXT) LIKE ? OR CAST(r.downstream_content_size AS TEXT) LIKE ? OR CAST(r.request_content_size AS TEXT) LIKE ? OR CAST((SELECT br.burst_id FROM burst_request AS br WHERE br.request_id = r.request_id LIMIT 1) AS TEXT) LIKE ? OR EXISTS (SELECT 1 FROM request_category AS src JOIN category AS sc ON sc.category_id = src.category_id WHERE src.request_id = r.request_id AND sc.category_name LIKE ?)"
             )
-            filter_parameters.extend([f"%{term}%"] * 16)
+            filter_parameters.extend([f"%{term}%"] * 17)
         elif field == "burst_id":
             filter_conditions.append("CAST((SELECT br.burst_id FROM burst_request AS br WHERE br.request_id = r.request_id LIMIT 1) AS TEXT) LIKE ?")
             filter_parameters.append(f"%{term}%")
@@ -159,6 +159,9 @@ def get_request_counts(
             filter_parameters.append(f"%{term}%")
         elif field == "response_size":
             filter_conditions.append("CAST(r.downstream_content_size AS TEXT) LIKE ?")
+            filter_parameters.append(f"%{term}%")
+        elif field == "request_body_size":
+            filter_conditions.append("CAST(r.request_content_size AS TEXT) LIKE ?")
             filter_parameters.append(f"%{term}%")
         elif field == "category":
             filter_conditions.append("EXISTS (SELECT 1 FROM request_category AS src JOIN category AS sc ON sc.category_id = src.category_id WHERE src.request_id = r.request_id AND sc.category_name LIKE ?)")

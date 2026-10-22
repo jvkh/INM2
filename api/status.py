@@ -75,6 +75,7 @@ def get_status(request: Request) -> dict[str, Any]:
             "import_file": "",
             "last_import_file": "",
             "import_count": 0,
+            "last_import_files": [],
         },
         "environment": {
             "COWRIE_ENABLED": os.environ.get("COWRIE_ENABLED", "false"),
@@ -83,6 +84,7 @@ def get_status(request: Request) -> dict[str, Any]:
         "honeypot_available": False,
         "honeypot_configured": _honeypot_is_configured(),
         "cowrie_configured": os.environ.get("COWRIE_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"},
+        "cowrie_available": False,
     }
     try:
         database = request.app.state.database
@@ -130,6 +132,7 @@ def get_status(request: Request) -> dict[str, Any]:
             "honeypot_available": _honeypot_is_running(),
             "honeypot_configured": _honeypot_is_configured(),
             "cowrie_configured": cowrie_configured,
+            "cowrie_available": cowrie_configured and collector_status.get("cowrie_log_available", False),
         }
     except Exception:
         logger.exception("Could not read API status")

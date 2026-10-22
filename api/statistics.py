@@ -173,19 +173,30 @@ def get_statistics(
         """WITH burst_values AS (
                SELECT read_count + write_count + other_count AS request_count
                FROM burst WHERE start_time >= ? AND start_time < ?
+           ), buckets(name, lower_bound, upper_bound, sort_order) AS (VALUES
+               ('1', 1, 1, 1),
+               ('2-5', 2, 5, 2),
+               ('6-10', 6, 10, 3),
+               ('11-25', 11, 25, 4),
+               ('26-50', 26, 50, 5),
+               ('51-100', 51, 100, 6),
+               ('101-200', 101, 200, 7),
+               ('201-300', 201, 300, 8),
+               ('301-400', 301, 400, 9),
+               ('401-500', 401, 500, 10),
+               ('501-600', 501, 600, 11),
+               ('601-700', 601, 700, 12),
+               ('701-800', 701, 800, 13),
+               ('801-900', 801, 900, 14),
+               ('901-999', 901, 999, 15),
+               ('1000+', 1000, NULL, 16)
            )
-           SELECT CASE
-                    WHEN request_count = 1 THEN '1'
-                    WHEN request_count BETWEEN 2 AND 5 THEN '2-5'
-                    WHEN request_count BETWEEN 6 AND 10 THEN '6-10'
-                    WHEN request_count BETWEEN 11 AND 25 THEN '11-25'
-                    WHEN request_count BETWEEN 26 AND 50 THEN '26-50'
-                    ELSE '51+'
-                  END AS name,
-                  COUNT(*) AS request_count
-           FROM burst_values
-           GROUP BY name
-           ORDER BY MIN(request_count)""",
+           SELECT buckets.name, COUNT(burst_values.request_count) AS request_count
+           FROM buckets LEFT JOIN burst_values
+             ON burst_values.request_count >= buckets.lower_bound
+            AND (buckets.upper_bound IS NULL OR burst_values.request_count <= buckets.upper_bound)
+           GROUP BY buckets.name, buckets.sort_order
+           ORDER BY buckets.sort_order""",
         (start, end),
     )
     result["burst_sizes"] = [

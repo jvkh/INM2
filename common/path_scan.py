@@ -1,7 +1,7 @@
 """Request categories that participate in path-scan detection."""
 
 PATH_SCAN_CATEGORIES = (
-    "sensible Dateien",
+    "Sensible Dateien",
     "Webshell",
     "Datenbank-Dienste",
     "CMS-Aufrufe",

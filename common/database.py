@@ -62,10 +62,107 @@ class Database:
             self._migrate_incident_summary()
             self._migrate_honeypot_event()
             self._migrate_cowrie_event()
+            self._migrate_request_content_size()
+            self._migrate_other_services_category()
+            self._migrate_sensitive_files_category()
             self.connection.execute(
                 "INSERT OR IGNORE INTO incident_criterion (incident_id, incident_type) SELECT incident_id, incident_type FROM incident"
             )
             self.connection.commit()
+
+    def _migrate_request_content_size(self) -> None:
+        """Add Traefik's request-body size to existing request tables."""
+        columns = {row[1] for row in self.connection.execute("PRAGMA table_info(request)")}
+        if "request_content_size" not in columns:
+            self.connection.execute("ALTER TABLE request ADD COLUMN request_content_size INTEGER")
+
+    def _migrate_other_services_category(self) -> None:
+        """Merge case-only variants of the fallback category into its canonical name."""
+        rows = self.connection.execute(
+            "SELECT category_id, category_name FROM category WHERE category_name COLLATE NOCASE = ? ORDER BY category_id",
+            ("Andere Dienste",),
+        ).fetchall()
+        if not rows:
+            return
+        canonical = next((row for row in rows if row["category_name"] == "Andere Dienste"), rows[0])
+        canonical_id = canonical["category_id"]
+        self.connection.execute(
+            "UPDATE category SET category_name = ? WHERE category_id = ?",
+            ("Andere Dienste", canonical_id),
+        )
+        category_ids = [row["category_id"] for row in rows]
+        aliases = [category_id for category_id in category_ids if category_id != canonical_id]
+        if not aliases:
+            return
+        placeholders = ",".join("?" for _ in category_ids)
+        self.connection.execute(
+            f"""INSERT OR IGNORE INTO request_category (request_id, category_id)
+                SELECT request_id, ? FROM request_category WHERE category_id IN ({placeholders})""",
+            [canonical_id, *category_ids],
+        )
+        self.connection.execute(
+            f"""INSERT INTO burst_category (burst_id, category_id, request_count)
+                SELECT br.burst_id, ?, COUNT(DISTINCT br.request_id)
+                FROM burst_request AS br
+                JOIN request_category AS rc ON rc.request_id = br.request_id
+                WHERE rc.category_id IN ({placeholders})
+                GROUP BY br.burst_id
+                ON CONFLICT (burst_id, category_id) DO UPDATE SET request_count = excluded.request_count""",
+            [canonical_id, *category_ids],
+        )
+        self.connection.execute(
+            f"DELETE FROM burst_category WHERE category_id IN ({','.join('?' for _ in aliases)})", aliases
+        )
+        self.connection.execute(
+            f"DELETE FROM request_category WHERE category_id IN ({','.join('?' for _ in aliases)})", aliases
+        )
+        self.connection.execute(
+            f"DELETE FROM category WHERE category_id IN ({','.join('?' for _ in aliases)})", aliases
+        )
+
+    def _migrate_sensitive_files_category(self) -> None:
+        """Normalize the sensitive-files category to its title-cased name."""
+        rows = self.connection.execute(
+            "SELECT category_id, category_name FROM category WHERE category_name COLLATE NOCASE = ? ORDER BY category_id",
+            ("Sensible Dateien",),
+        ).fetchall()
+        if not rows:
+            return
+        canonical = next((row for row in rows if row["category_name"] == "Sensible Dateien"), rows[0])
+        canonical_id = canonical["category_id"]
+        self.connection.execute(
+            "UPDATE category SET category_name = ? WHERE category_id = ?",
+            ("Sensible Dateien", canonical_id),
+        )
+        category_ids = [row["category_id"] for row in rows]
+        aliases = [category_id for category_id in category_ids if category_id != canonical_id]
+        if not aliases:
+            return
+        placeholders = ",".join("?" for _ in category_ids)
+        self.connection.execute(
+            f"""INSERT OR IGNORE INTO request_category (request_id, category_id)
+                SELECT request_id, ? FROM request_category WHERE category_id IN ({placeholders})""",
+            [canonical_id, *category_ids],
+        )
+        self.connection.execute(
+            f"""INSERT INTO burst_category (burst_id, category_id, request_count)
+                SELECT br.burst_id, ?, COUNT(DISTINCT br.request_id)
+                FROM burst_request AS br
+                JOIN request_category AS rc ON rc.request_id = br.request_id
+                WHERE rc.category_id IN ({placeholders})
+                GROUP BY br.burst_id
+                ON CONFLICT (burst_id, category_id) DO UPDATE SET request_count = excluded.request_count""",
+            [canonical_id, *category_ids],
+        )
+        self.connection.execute(
+            f"DELETE FROM burst_category WHERE category_id IN ({','.join('?' for _ in aliases)})", aliases
+        )
+        self.connection.execute(
+            f"DELETE FROM request_category WHERE category_id IN ({','.join('?' for _ in aliases)})", aliases
+        )
+        self.connection.execute(
+            f"DELETE FROM category WHERE category_id IN ({','.join('?' for _ in aliases)})", aliases
+        )
 
     def _migrate_honeypot_event(self) -> None:
         """Add cached IP metadata to existing honeypot event tables."""
@@ -73,7 +170,7 @@ class Database:
             row[1]
             for row in self.connection.execute("PRAGMA table_info(honeypot_event)")
         }
-        for name in ("provider", "asn", "country", "city", "scheme", "session_id", "session_phase"):
+        for name in ("provider", "asn", "country", "city", "scheme", "session_id", "session_phase", "response_page"):
             if name not in columns:
                 self.connection.execute(f"ALTER TABLE honeypot_event ADD COLUMN {name} TEXT")
         if "duration" not in columns:
@@ -114,7 +211,7 @@ class Database:
                        SELECT 1 FROM request_category AS rc
                        JOIN category AS c ON c.category_id = rc.category_id
                        WHERE rc.request_id = r.request_id AND c.category_name IN (
-                           'sensible Dateien', 'Webshell', 'Datenbank-Dienste', 'CMS-Aufrufe',
+                           'sensible Dateien', 'Sensible Dateien', 'Webshell', 'Datenbank-Dienste', 'CMS-Aufrufe',
                            'Admin-Zugriffe', 'Informationslecks', 'Schwachstellensuche', 'Container-Dienste'
                        )
                    )"""

@@ -70,6 +70,8 @@ class CollectorApplication:
             self.importer.import_logs(
                 on_file_start=self.status.set_import_file,
                 on_record_imported=self.status.increment_import_count,
+                on_source_imported=self.status.record_import_file,
+                on_cowrie_log_status=self.status.set_cowrie_log_available,
             )
         else:
             self._import_callback()

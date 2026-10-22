@@ -1,14 +1,14 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, useTransition, type CSSProperties, type FormEvent, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from 'react'
 import {
   Activity, ArrowDown, ArrowDownRight, ArrowRight, ArrowUp, ArrowUpRight, BarChart3, Bell, Blocks, BookOpenText, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsLeft, ChevronsRight, CircleHelp,
-  Clock3, Command, Database, FileText, Filter, Globe2, LayoutDashboard, List, LockKeyhole, LockOpen, Menu,
+  Clock3, Command, Copy, Database, FileText, Filter, Globe2, LayoutDashboard, List, LockKeyhole, LockOpen, Menu,
   Network, Search, Settings, Settings2, ShieldAlert, SkipBack, SkipForward, Sun, Trash2, Users, X, LogOut, Bug, Shield,
 } from 'lucide-react'
 import { messages, type Language, type MessageKey } from './i18n'
 
 type Theme = 'auto' | 'cloud' | 'midnight' | 'moss'
-type PageKey = 'dashboard' | 'bursts' | 'incidents' | 'actors' | 'hosts' | 'categories' | 'requests' | 'statistics' | 'administration' | 'categoryGuide' | 'burstGuide' | 'countGuide' | 'hostGuide' | 'pathsGuide' | 'incidentGuide' | 'logging' | 'honeypot' | 'cowrie' | 'honeypotGuide'
-const pageKeys: PageKey[] = ['dashboard', 'bursts', 'incidents', 'actors', 'hosts', 'categories', 'requests', 'statistics', 'administration', 'categoryGuide', 'burstGuide', 'countGuide', 'hostGuide', 'pathsGuide', 'incidentGuide', 'logging', 'honeypot', 'cowrie', 'honeypotGuide']
+type PageKey = 'dashboard' | 'bursts' | 'incidents' | 'actors' | 'hosts' | 'categories' | 'requests' | 'statistics' | 'administration' | 'categoryGuide' | 'burstGuide' | 'countGuide' | 'hostGuide' | 'pathsGuide' | 'incidentGuide' | 'logging' | 'honeypot' | 'cowrie' | 'honeypotGuide' | 'cowrieGuide'
+const pageKeys: PageKey[] = ['dashboard', 'bursts', 'incidents', 'actors', 'hosts', 'categories', 'requests', 'statistics', 'administration', 'categoryGuide', 'burstGuide', 'countGuide', 'hostGuide', 'pathsGuide', 'incidentGuide', 'logging', 'honeypot', 'cowrie', 'honeypotGuide', 'cowrieGuide']
 function pageFromUrl(): PageKey | null {
   const value = new URLSearchParams(window.location.search).get('page')
   return value && pageKeys.includes(value as PageKey) ? value as PageKey : null
@@ -35,12 +35,14 @@ type HostFilters = { search: string; known: '' | 'own' | 'foreign' }
 type CategorySortColumn = 'category_name' | 'total_count' | 'read_count' | 'write_count' | 'other_count' | 'traffic_share' | 'https_share'
 type CategorySort = { column: CategorySortColumn; direction: 'asc' | 'desc' }
 type CategoryFilters = { search: string }
-type RequestSortColumn = 'start_utc' | 'request_method' | 'request_path' | 'user_agent' | 'downstream_status' | 'actor_ip' | 'host' | 'duration' | 'downstream_content_size' | 'burst_id'
+type RequestSortColumn = 'start_utc' | 'request_method' | 'request_path' | 'user_agent' | 'downstream_status' | 'actor_ip' | 'host' | 'duration' | 'downstream_content_size' | 'request_content_size'
 type RequestSort = { column: RequestSortColumn; direction: 'asc' | 'desc' }
 type RequestFilters = { search: string; status: '' | '2xx' | '3xx' | '4xx' | '5xx'; withoutBurst: boolean }
 type HoneypotSortColumn = 'time' | 'client_ip' | 'request_count' | 'post_count' | 'path_count' | 'body_bytes'
 type HoneypotSort = { column: HoneypotSortColumn; direction: 'asc' | 'desc' }
 type HoneypotFilters = { search: string; postsOnly: boolean; protectedOnly: boolean }
+type IncidentFilters = { search: string; state: '' | 'open' | 'acknowledged' | 'resolved'; incidentType: '' | IncidentType; protectedOnly: boolean }
+type CowrieFilters = { search: string; eventType: string; protectedOnly: boolean; detailSearch: string }
 const defaultBurstSort: BurstSort = { column: 'start_time', direction: 'asc' }
 const defaultBurstFilters: BurstFilters = { search: '', host: '', known: '', country: '', protectedOnly: false }
 const defaultActorSort: ActorSort = { column: 'first_time', direction: 'asc' }
@@ -53,6 +55,8 @@ const defaultRequestSort: RequestSort = { column: 'start_utc', direction: 'desc'
 const defaultRequestFilters: RequestFilters = { search: '', status: '', withoutBurst: false }
 const defaultHoneypotSort: HoneypotSort = { column: 'time', direction: 'desc' }
 const defaultHoneypotFilters: HoneypotFilters = { search: '', postsOnly: false, protectedOnly: false }
+const defaultIncidentFilters: IncidentFilters = { search: '', state: '', incidentType: '', protectedOnly: false }
+const defaultCowrieFilters: CowrieFilters = { search: '', eventType: '', protectedOnly: false, detailSearch: '' }
 
 type SearchField = 'ip' | 'host' | 'country' | 'city' | 'provider' | 'asn' | 'path' | 'category' | 'method' | 'status' | 'scheme' | 'user_agent'
 // Keep localized aliases in sync with common/search.py. English canonical names
@@ -85,16 +89,17 @@ type DashboardChartMode = 'requests' | 'bursts' | 'incidents'
 type TimeRange = { from: Date; to: Date; preset: RangePreset; query: string }
 type TrafficBucket = { from: string; to: string; source?: 'honeypot-group' }
 type StatisticsSection = 'overview' | 'traffic' | 'patterns' | 'hostsActors' | 'insights' | 'incidents' | 'honeypot' | 'ssh'
-type HoneypotStatistics = { access_count: number; matched_access_count: number; unmatched_access_count: number; matched_incident_count: number; by_method: StatisticsItem[]; by_rule: StatisticsItem[]; timeline: { from: string; to: string; request_count: number }[] }
+type CountryStatisticsItem = { name: string | null; event_count: number; group_count: number; event_share_percent: number; group_share_percent: number }
+type HoneypotStatistics = { access_count: number; matched_access_count: number; unmatched_access_count: number; matched_incident_count: number; by_method: StatisticsItem[]; by_rule: StatisticsItem[]; countries: CountryStatisticsItem[]; timeline: { from: string; to: string; request_count: number }[] }
 type HoneypotSummary = { request_count: number; actor_count: number; post_with_data_count: number; uploaded_execution_attempt_count: number }
 type IncidentStatistics = { incident_count: number; actor_count: number; host_count: number; linked_request_count: number; by_type: StatisticsItem[]; timeline: { from: string; to: string; incident_count: number; incidents?: NotificationIncident[] }[]; top_actors: StatisticsItem[]; top_hosts: StatisticsItem[]; error_metrics: { incident_count: number; error_count: number; non_error_count: number; non_error_share_percent: number }; request_spike_metrics: { incident_count: number; average_rps: number | null; min_rps: number | null; max_rps: number | null } }
-type UiPreferences = { language?: Language; theme?: Theme; lastPage?: PageKey; sidebarCollapsed?: boolean; systemNavOpen?: boolean; helpNavOpen?: boolean; dashboardChartMode?: DashboardChartMode; dashboardOverviewMode?: 'bursts' | 'incidents'; dashboardTableMode?: 'bursts' | 'incidents'; statisticsSection?: StatisticsSection; timeRange?: { preset: RangePreset; from?: string; to?: string }; tablePageSizes?: Partial<Record<TableKey, PageSize>>; burstSort?: BurstSort; burstFilters?: BurstFilters; actorSort?: ActorSort; actorFilters?: ActorFilters; hostSort?: HostSort; hostFilters?: HostFilters; categorySort?: CategorySort; categoryFilters?: CategoryFilters; requestSort?: RequestSort; requestFilters?: RequestFilters; honeypotSort?: HoneypotSort; honeypotFilters?: HoneypotFilters }
+type UiPreferences = { language?: Language; theme?: Theme; lastPage?: PageKey; sidebarCollapsed?: boolean; systemNavOpen?: boolean; helpNavOpen?: boolean; dashboardChartMode?: DashboardChartMode; dashboardOverviewMode?: 'bursts' | 'incidents'; dashboardTableMode?: 'bursts' | 'incidents'; statisticsSection?: StatisticsSection; statisticsCountryMode?: 'events' | 'groups'; cowrieGroupPanel?: CowrieGroupPanel; timeRange?: { preset: RangePreset; from?: string; to?: string }; tablePageSizes?: Partial<Record<TableKey, PageSize>>; burstSort?: BurstSort; burstFilters?: BurstFilters; actorSort?: ActorSort; actorFilters?: ActorFilters; hostSort?: HostSort; hostFilters?: HostFilters; categorySort?: CategorySort; categoryFilters?: CategoryFilters; requestSort?: RequestSort; requestFilters?: RequestFilters; honeypotSort?: HoneypotSort; honeypotFilters?: HoneypotFilters; incidentFilters?: IncidentFilters; cowrieFilters?: CowrieFilters }
 type ApiResult<T> = { items: T[]; total?: number; total_count?: number; known_count?: number; summary?: Record<string, number | null> }
 type ActorItem = { actor_id: number; ip: string; first_time: string; last_time: string; provider: string | null; asn: string | null; city: string | null; country: string | null; request_count: number; total_request_count: number; burst_count: number }
 type BurstItem = { burst_id: number; actor_ip: string; country: string | null; provider: string | null; asn: string | null; city: string | null; host: string | null; known: number; start_time: string; end_time: string; avg_count: number; read_count: number; write_count: number; other_count: number }
 type HostItem = { host_id: number; host: string; known: number; total_count: number; read_count: number; write_count: number; other_count: number; http_count: number; https_count: number; other_scheme_count: number }
 type CategoryItem = { category_id: number; category_name: string; total_count: number; read_count: number; write_count: number; other_count: number; http_count: number; https_count: number; other_scheme_count: number }
-type RequestItem = { request_id: number; start_utc: string; actor_ip: string; provider: string | null; asn: string | null; city: string | null; country: string | null; host: string | null; host_known: number; burst_id: number | null; request_method: string; request_path: string; request_scheme: string; user_agent: string | null; categories: string | null; downstream_status: number; downstream_content_size: number; duration: number }
+type RequestItem = { request_id: number; start_utc: string; actor_ip: string; provider: string | null; asn: string | null; city: string | null; country: string | null; host: string | null; host_known: number; request_method: string; request_path: string; request_scheme: string; user_agent: string | null; categories: string | null; downstream_status: number; downstream_content_size: number; request_content_size: number | null; duration: number }
 type GlobalSearchActor = Pick<ActorItem, 'actor_id' | 'ip' | 'provider' | 'asn' | 'city' | 'country' | 'request_count'>
 type GlobalSearchHost = Pick<HostItem, 'host_id' | 'host' | 'total_count'>
 type GlobalSearchCategory = Pick<CategoryItem, 'category_id' | 'category_name' | 'total_count'>
@@ -106,10 +111,10 @@ type IncidentType = 'path_scan' | 'failed_login' | 'sensitive_file_access' | 'ex
 type NotificationIncident = { incident_id: number; incident_type: IncidentType; incident_types?: IncidentType[]; first_seen: string; last_seen: string; request_count: number; indicator_count: number; indicators: string[]; summary: Record<string, number>; actor_ip: string; country: string | null; city: string | null; provider: string | null; asn: string | null; host: string | null }
 type Incident = NotificationIncident & { actor_id: number; state: 'open' | 'acknowledged' | 'resolved' }
 type NotificationData = { request_count: number; request_since_utc: string | null; burst_count: number; incident_count: number; requests: NotificationRequest[]; bursts: NotificationBurst[]; incidents: NotificationIncident[]; request_cursor: number; burst_cursor: number; incident_cursor: number }
-type StatusData = { status: string; database: string; honeypot_available: boolean; honeypot_configured: boolean; cowrie_configured: boolean; collector_status: { available: boolean; last_import: string | null; activity: string; import_file: string; last_import_file: string; import_count: number }; environment: Record<string, string> }
+type StatusData = { status: string; database: string; honeypot_available: boolean; honeypot_configured: boolean; cowrie_configured: boolean; cowrie_available: boolean; collector_status: { available: boolean; last_import: string | null; activity: string; import_file: string; last_import_file: string; import_count: number; last_import_files: { file: string; count: number }[] }; environment: Record<string, string> }
 type LogService = 'collector' | 'api' | 'ui_access' | 'ui_error'
 type LogResponse = { service: LogService; content: string; truncated: boolean }
-type HoneypotEvent = { event_id: string; time: string; client_ip: string | null; provider: string | null; asn: string | null; country: string | null; city: string | null; host: string | null; scheme: string | null; session_id: string | null; session_phase: string | null; method: string; path: string; user_agent: string | null; content_type: string | null; body_bytes: number; body_clipped: number; body_sha256: string | null; rule: string | null; status: number | null; duration: number; has_body: number }
+type HoneypotEvent = { event_id: string; time: string; client_ip: string | null; provider: string | null; asn: string | null; country: string | null; city: string | null; host: string | null; scheme: string | null; session_id: string | null; session_phase: string | null; method: string; path: string; user_agent: string | null; content_type: string | null; body_bytes: number; body_clipped: number; body_sha256: string | null; rule: string | null; response_page: string | null; status: number | null; duration: number; has_body: number }
 type HoneypotGroup = { first_time: string; last_time: string; client_ip: string | null; provider: string | null; asn: string | null; country: string | null; city: string | null; request_count: number; post_count: number; body_count: number; body_bytes: number; path_count: number }
 type HoneypotGroupsResponse = { items: HoneypotGroup[]; total: number; total_events: number; limit: number; offset: number; session_gap_seconds: number }
 type HoneypotEventsResponse = { items: HoneypotEvent[]; total: number }
@@ -120,7 +125,7 @@ type CowrieCommandAnalysis = { normalized_command: string; command: string; occu
 type CowrieCommandSequence = { commands: string[]; session_count: number; first_time: string; last_time: string }
 type CowrieGroupAnalysis = { src_ip: string; from: string; to: string; commands: CowrieCommandAnalysis[]; command_total: number; command_sequences: CowrieCommandSequence[]; command_sequence_total: number; command_sequences_truncated: boolean }
 type CowrieSummary = { event_count: number; actor_count: number; session_count: number; failed_login_count: number; command_count: number }
-type CowrieStatistics = CowrieSummary & { by_type: { name: string; event_count: number; share_percent: number }[] }
+type CowrieStatistics = CowrieSummary & { by_type: { name: string; event_count: number; share_percent: number }[]; countries: CountryStatisticsItem[]; timeline: { from: string; to: string; event_count: number }[] }
 type BurstResponse = { summary: Record<string, number | null>; items: BurstItem[]; total?: number; limit: number; offset: number }
 type CountItem = { read_count: number; write_count: number; other_count: number; total_count?: number; from?: string; to?: string }
 type StatisticsItem = { name: string | null; request_count: number; share_percent: number; known?: number; status_class?: string; total_count?: number; provider?: string | null; asn?: string | null; country?: string | null; city?: string | null }
@@ -423,6 +428,8 @@ function parsePreferences(items: { name: string; value: string | null }[]): UiPr
   if (values.dashboard_overview_mode === 'bursts' || values.dashboard_overview_mode === 'incidents') preferences.dashboardOverviewMode = values.dashboard_overview_mode
   if (values.dashboard_table_mode === 'bursts' || values.dashboard_table_mode === 'incidents') preferences.dashboardTableMode = values.dashboard_table_mode
   if (values.statistics_section === 'overview' || values.statistics_section === 'traffic' || values.statistics_section === 'patterns' || values.statistics_section === 'hostsActors' || values.statistics_section === 'insights' || values.statistics_section === 'incidents' || values.statistics_section === 'honeypot' || values.statistics_section === 'ssh') preferences.statisticsSection = values.statistics_section
+  if (values.statistics_country_mode === 'events' || values.statistics_country_mode === 'groups') preferences.statisticsCountryMode = values.statistics_country_mode
+  if (values.cowrie_group_panel === 'commands' || values.cowrie_group_panel === 'ssh') preferences.cowrieGroupPanel = values.cowrie_group_panel
   if (values.table_page_sizes) {
     try {
       const parsed = JSON.parse(values.table_page_sizes) as Partial<Record<TableKey, number>>
@@ -496,7 +503,7 @@ function parsePreferences(items: { name: string; value: string | null }[]): UiPr
   if (values.request_sort) {
     try {
       const parsed = JSON.parse(values.request_sort) as RequestSort
-      const columns: RequestSortColumn[] = ['start_utc', 'request_method', 'request_path', 'user_agent', 'downstream_status', 'actor_ip', 'host', 'duration', 'downstream_content_size', 'burst_id']
+      const columns: RequestSortColumn[] = ['start_utc', 'request_method', 'request_path', 'user_agent', 'downstream_status', 'actor_ip', 'host', 'duration', 'downstream_content_size', 'request_content_size']
       if (parsed && columns.includes(parsed.column) && (parsed.direction === 'asc' || parsed.direction === 'desc')) preferences.requestSort = parsed
     } catch { /* Ignore malformed request sorting preferences. */ }
   }
@@ -519,6 +526,18 @@ function parsePreferences(items: { name: string; value: string | null }[]): UiPr
       if (parsed && typeof parsed.search === 'string' && typeof parsed.postsOnly === 'boolean') preferences.honeypotFilters = { ...parsed, protectedOnly: parsed.protectedOnly === true }
     } catch { /* Ignore malformed honeypot filter preferences. */ }
   }
+  if (values.incident_filters) {
+    try {
+      const parsed = JSON.parse(values.incident_filters) as IncidentFilters
+      if (parsed && typeof parsed.search === 'string' && ['', 'open', 'acknowledged', 'resolved'].includes(parsed.state) && (parsed.incidentType === '' || typeof parsed.incidentType === 'string')) preferences.incidentFilters = { ...defaultIncidentFilters, ...parsed, protectedOnly: parsed.protectedOnly === true }
+    } catch { /* Ignore malformed incident filter preferences. */ }
+  }
+  if (values.cowrie_filters) {
+    try {
+      const parsed = JSON.parse(values.cowrie_filters) as CowrieFilters
+      if (parsed && typeof parsed.search === 'string' && typeof parsed.eventType === 'string') preferences.cowrieFilters = { ...defaultCowrieFilters, ...parsed, protectedOnly: parsed.protectedOnly === true, detailSearch: typeof parsed.detailSearch === 'string' ? parsed.detailSearch : '' }
+    } catch { /* Ignore malformed Cowrie filter preferences. */ }
+  }
   return preferences
 }
 
@@ -528,6 +547,10 @@ function numberText(value: number | null | undefined, language: Language) {
 
 function decimalText(value: number | null | undefined, language: Language) {
   return new Intl.NumberFormat(language === 'de' ? 'de-DE' : 'en-US', { maximumFractionDigits: 1 }).format(value ?? 0)
+}
+
+function shareText(value: number, total: number, language: Language) {
+  return `${decimalText(total ? value / total * 100 : 0, language)}%`
 }
 
 function dateText(value: string | null | undefined, language: Language) {
@@ -608,6 +631,269 @@ function honeypotPhaseText(phase: string | null | undefined, t: (key: MessageKey
   return attempt ? `${t('honeypotPhaseLoginAttempt')} ${attempt[1]}` : phase
 }
 
+type HoneypotMultipartPart = { name: string; headers: string[]; body: string }
+
+function parseHoneypotMultipart(body: string, contentType: string | null | undefined): HoneypotMultipartPart[] {
+  const declaredBoundary = contentType?.match(/boundary=(?:"([^"]+)"|([^;\s]+))/i)
+  const firstLine = body.split(/\r?\n/, 1)[0]
+  const boundary = declaredBoundary?.[1] ?? declaredBoundary?.[2] ?? (firstLine.startsWith('--') ? firstLine.slice(2) : '')
+  if (!boundary) return []
+
+  return body.split(`--${boundary}`).slice(1).flatMap((rawPart) => {
+    const part = rawPart.replace(/^\r?\n/, '').replace(/\r?\n$/, '')
+    if (!part || part === '--') return []
+    const separator = part.search(/\r?\n\r?\n/)
+    if (separator < 0) return []
+    const rawHeaders = part.slice(0, separator)
+    const headers = rawHeaders.split(/\r?\n/).filter(Boolean)
+    const disposition = rawHeaders.match(/(?:^|\r?\n)Content-Disposition:[^\r\n]*\bname="([^"]*)"/i)
+    const partBody = part.slice(separator).replace(/^\r?\n\r?\n/, '')
+    return [{ name: disposition?.[1] || '', headers, body: partBody }]
+  })
+}
+
+function formatHoneypotBody(body: string, hideEmbeddedCode = false, embeddedCodePlaceholder = 'embedded code') {
+  const decodeRestPath = (value: string): string => {
+    if (!value.startsWith('/') || !/[?&][^=]+=[^&]*%[\da-f]{2}/i.test(value)) return value
+    const queryStart = value.indexOf('?')
+    if (queryStart < 0) return value
+    const hashStart = value.indexOf('#', queryStart)
+    const queryEnd = hashStart < 0 ? value.length : hashStart
+    try {
+      const query = decodeURIComponent(value.slice(queryStart + 1, queryEnd).replace(/\+/g, ' '))
+      return `${value.slice(0, queryStart + 1)}${query}${value.slice(queryEnd)}`
+    } catch {
+      return value
+    }
+  }
+  const decodePaths = (value: unknown): unknown => {
+    if (typeof value === 'string') return hideEmbeddedCode && looksLikeCode(value) ? `[${embeddedCodePlaceholder}]` : decodeRestPath(value)
+    if (Array.isArray(value)) return value.map(decodePaths)
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, decodePaths(item)]))
+    return value
+  }
+  try {
+    return JSON.stringify(decodePaths(JSON.parse(body)), null, 2)
+  } catch {
+    return body
+  }
+}
+
+type PayloadView = 'formatted' | 'raw'
+
+function looksLikeCode(value: string) {
+  return /(?:\b(?:async\s+)?function\b|\b(?:const|let|var)\s+[\w$]+\s*=|=>|\bprocess\.env\b|\bimport\s*\(|\brequire\s*\()/i.test(value)
+}
+
+function formatEmbeddedCode(source: string) {
+  let output = ''
+  let indent = 0
+  let parens = 0
+  let quote = ''
+  let escaped = false
+  let lineComment = false
+  let blockComment = false
+  let pendingSpace = false
+  const write = (value: string) => {
+    if (!output || output.endsWith('\n')) output += '  '.repeat(Math.max(0, indent))
+    else if (pendingSpace && ![' ', '\n', '\t', '(', '[', '{', '.'].includes(output[output.length - 1] ?? '')) output += ' '
+    output += value
+    pendingSpace = false
+  }
+  const newline = () => {
+    output = output.replace(/[ \t]+$/, '')
+    if (output && !output.endsWith('\n')) output += '\n'
+    pendingSpace = false
+  }
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index]
+    const next = source[index + 1]
+    if (quote) {
+      output += char
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === quote) quote = ''
+      continue
+    }
+    if (lineComment) {
+      write(char)
+      if (char === '\n') { lineComment = false; newline() }
+      continue
+    }
+    if (blockComment) {
+      output += char
+      if (char === '*' && next === '/') { output += '/'; index += 1; blockComment = false }
+      continue
+    }
+    if (char === '/' && next === '/') { pendingSpace = true; write('//'); index += 1; lineComment = true; continue }
+    if (char === '/' && next === '*') { pendingSpace = true; write('/*'); index += 1; blockComment = true; continue }
+    if (char === '"' || char === "'" || char === '`') { pendingSpace = true; write(char); quote = char; continue }
+    if (/\s/.test(char)) { pendingSpace = true; continue }
+    if (char === '(' || char === '[') { write(char); parens += 1; continue }
+    if (char === ')' || char === ']') { write(char); parens = Math.max(0, parens - 1); continue }
+    if (char === '{') { pendingSpace = true; write('{'); indent += 1; newline(); continue }
+    if (char === '}') { newline(); indent = Math.max(0, indent - 1); write('}'); if (!/[;,)]/.test(next ?? '')) newline(); continue }
+    if (char === ';') { write(';'); if (parens === 0) newline(); else pendingSpace = true; continue }
+    if (char === ',') { write(','); pendingSpace = true; continue }
+    write(char)
+  }
+  return output.trim()
+}
+
+function extractEmbeddedCode(body: string) {
+  const sources: string[] = []
+  let visitedValues = 0
+  const visit = (value: unknown) => {
+    visitedValues += 1
+    if (visitedValues > 5000 || sources.length >= 12) return
+    if (typeof value === 'string') {
+      if (value.length <= 200_000 && looksLikeCode(value)) sources.push(value)
+      return
+    }
+    if (Array.isArray(value)) value.forEach(visit)
+    else if (value && typeof value === 'object') Object.values(value).forEach(visit)
+  }
+  try { visit(JSON.parse(body)) } catch { if (looksLikeCode(body)) sources.push(body) }
+
+  const decoded: { text: string; depth: number }[] = []
+  const roots = [...new Set(sources)].map((text) => ({ text, depth: 0 }))
+  const nodes = [...roots]
+  const parentsWithChildren = new Set<string>()
+  const seen = new Set(sources)
+  const pending = sources.map((text) => ({ text, depth: 0 }))
+  let decodedCharacters = 0
+  while (pending.length && decoded.length < 12 && decodedCharacters < 500_000) {
+    const { text: source, depth } = pending.shift()!
+    if (depth >= 5) continue
+    const hexLiteral = /(?:\.from|from)\(\s*(['"])([\da-f]{80,200000})\1\s*,\s*(['"])hex\3\s*\)/gi
+    let literals = 0
+    for (const match of source.matchAll(hexLiteral)) {
+      literals += 1
+      if (literals > 4 || decoded.length >= 12 || decodedCharacters >= 500_000) break
+      const hex = match[2].slice(0, match[2].length - (match[2].length % 2))
+      try {
+        const bytes = Uint8Array.from(hex.match(/.{2}/g) ?? [], (pair) => Number.parseInt(pair, 16))
+        const decodedText = new TextDecoder().decode(bytes)
+        if (looksLikeCode(decodedText)) {
+          parentsWithChildren.add(source)
+          if (!seen.has(decodedText)) {
+            seen.add(decodedText)
+            decoded.push({ text: decodedText, depth: depth + 1 })
+            const child = { text: decodedText, depth: depth + 1 }
+            nodes.push(child)
+            pending.push(child)
+            decodedCharacters += decodedText.length
+          }
+        }
+      } catch { /* Keep undecodable payloads in the original code block. */ }
+    }
+  }
+  const finalCode = nodes.filter(({ text }) => !parentsWithChildren.has(text))
+  return { sources: [...new Set(sources)], decoded, finalCode }
+}
+
+function PayloadViewTabs({ view, onChange, t }: { view: PayloadView; onChange: (view: PayloadView) => void; t: (key: MessageKey) => string }) {
+  return <div className="payload-view-tabs" role="tablist" aria-label={t('payloadView')}><button type="button" role="tab" aria-selected={view === 'formatted'} className={view === 'formatted' ? 'active' : ''} onClick={() => onChange('formatted')}>{t('formattedView')}</button><button type="button" role="tab" aria-selected={view === 'raw'} className={view === 'raw' ? 'active' : ''} onClick={() => onChange('raw')}>{t('rawView')}</button></div>
+}
+
+function formatPayloadText(body: string, t: (key: MessageKey) => string) {
+  const embedded = extractEmbeddedCode(body)
+  const finalCode = embedded.finalCode.filter(({ text }) => text !== body)
+  let formattedBody = formatHoneypotBody(body, finalCode.length > 0, t('embeddedCode'))
+  let directCode = false
+  let isJson = false
+  try { JSON.parse(body); isJson = true } catch { if (looksLikeCode(body)) { formattedBody = ''; directCode = true } }
+  const code = directCode ? body : finalCode.map(({ text }) => text).join('\n\n')
+  const decoded = embedded.decoded.length > 0
+  const codeLabel = directCode ? t('embeddedCode') : decoded ? t('decodedHex') : t('embeddedCode')
+  const copyText = `${formattedBody}${code ? `${formattedBody ? '\n\n' : ''}${codeLabel}:\n${formatEmbeddedCode(code)}` : ''}`
+  return { formattedBody, code, decoded, directCode, isJson, copyText }
+}
+
+function formatMultipartPayloadText(body: string, contentType: string | null | undefined, t: (key: MessageKey) => string) {
+  const parts = parseHoneypotMultipart(body, contentType)
+  return parts.length ? parts.map((part, index) => `${part.name || `${t('honeypotFields')} ${index + 1}`}\n${part.headers.join('\n')}\n\n${formatPayloadText(part.body, t).copyText}`).join('\n\n────────────────────────────────────────\n\n') : formatPayloadText(body, t).copyText
+}
+
+function HighlightedCode({ code }: { code: string }) {
+  const tokenPattern = /(\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:async|await|break|case|catch|class|const|continue|debugger|default|delete|do|else|export|extends|false|finally|for|from|function|if|import|in|instanceof|let|new|null|of|return|static|super|switch|this|throw|true|try|typeof|undefined|var|void|while|yield)\b|\b\d+(?:\.\d+)?\b)/g
+  const output: ReactNode[] = []
+  let cursor = 0
+  for (const match of code.matchAll(tokenPattern)) {
+    const token = match[0]
+    const start = match.index ?? 0
+    if (start > cursor) output.push(code.slice(cursor, start))
+    let className = 'code-token-keyword'
+    if (token.startsWith('//') || token.startsWith('/*')) className = 'code-token-comment'
+    else if (/^["'`]/.test(token)) className = 'code-token-string'
+    else if (/^\d/.test(token)) className = 'code-token-number'
+    output.push(<span className={className} key={`${start}-${token.length}`}>{token}</span>)
+    cursor = start + token.length
+  }
+  if (cursor < code.length) output.push(code.slice(cursor))
+  return <>{output}</>
+}
+
+function HighlightedJson({ text }: { text: string }) {
+  const tokenPattern = /("(?:\\.|[^"\\])*")(?=\s*:)|("(?:\\.|[^"\\])*")|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|\b(true|false|null)\b|([{}\[\],:])/g
+  const output: ReactNode[] = []
+  let cursor = 0
+  for (const match of text.matchAll(tokenPattern)) {
+    const token = match[0]
+    const start = match.index ?? 0
+    if (start > cursor) output.push(text.slice(cursor, start))
+    const className = match[1] ? 'json-token-key' : match[2] ? 'json-token-string' : match[3] ? 'json-token-number' : match[4] ? 'json-token-literal' : 'json-token-punctuation'
+    output.push(<span className={className} key={`${start}-${token.length}`}>{token}</span>)
+    cursor = start + token.length
+  }
+  if (cursor < text.length) output.push(text.slice(cursor))
+  return <>{output}</>
+}
+
+function FormattedPayloadContent({ formatted, t }: { formatted: ReturnType<typeof formatPayloadText>; t: (key: MessageKey) => string }) {
+  return <><span>{formatted.isJson ? <HighlightedJson text={formatted.formattedBody} /> : formatted.formattedBody}</span>{formatted.code && <><span className="payload-decoded-label">{formatted.formattedBody ? '\n\n' : ''}{formatted.directCode ? t('embeddedCode') : formatted.decoded ? t('decodedHex') : t('embeddedCode')}:{'\n'}</span><span className="payload-decoded-area"><HighlightedCode code={formatEmbeddedCode(formatted.code)} /></span></>}</>
+}
+
+function CopyPayloadButton({ text, t }: { text: string; t: (key: MessageKey) => string }) {
+  const [copied, setCopied] = useState(false)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    if (!copied) return
+    const timeout = window.setTimeout(() => setCopied(false), 1600)
+    return () => window.clearTimeout(timeout)
+  }, [copied])
+  const copy = async () => {
+    setFailed(false)
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text)
+      else {
+        const input = document.createElement('textarea')
+        input.value = text
+        input.style.position = 'fixed'
+        input.style.opacity = '0'
+        document.body.appendChild(input)
+        input.select()
+        const succeeded = document.execCommand('copy')
+        input.remove()
+        if (!succeeded) throw new Error('Clipboard copy failed')
+      }
+      setCopied(true)
+    } catch { setFailed(true) }
+  }
+  const label = failed ? t('copyPayloadFailed') : copied ? t('payloadCopied') : t('copyPayload')
+  return <button type="button" className="payload-copy-button" onClick={() => void copy()} aria-label={label} title={label}>{copied ? <Check size={13} /> : <Copy size={13} />}</button>
+}
+
+function PayloadFrame({ children, className = '', height }: { children: ReactNode; className?: string; height?: number }) {
+  return <div className="payload-frame"><pre style={height ? { height } : undefined} className={`honeypot-body honeypot-body-modal ${className}`}>{children}</pre></div>
+}
+
+function PayloadText({ body, view, t, className = '', rawContent, height }: { body: string; view: PayloadView; t: (key: MessageKey) => string; className?: string; rawContent?: ReactNode; height?: number }) {
+  const formatted = view === 'formatted' ? formatPayloadText(body, t) : null
+  return <PayloadFrame className={`${className}${view === 'formatted' ? ' payload-format-view' : ''}`} height={height}>{view === 'raw' ? rawContent ?? body : <FormattedPayloadContent formatted={formatted!} t={t} />}</PayloadFrame>
+}
+
 function requestDateTimeText(value: string | null | undefined, language: Language) {
   if (!value) return '—'
   const date = new Date(value)
@@ -649,7 +935,7 @@ function ApiActivityToast({ t }: { t: (key: MessageKey) => string }) {
   return <div className="api-activity-toast" role="status" aria-live="polite"><span className="loading-spinner" /><span>{t('apiCallInProgress')}</span></div>
 }
 
-function AppHints({ suppress, notificationOpen }: { suppress: boolean; notificationOpen: boolean }) {
+function AppHints({ suppress, notificationOpen, pageKey }: { suppress: boolean; notificationOpen: boolean; pageKey: string }) {
   const [hint, setHint] = useState<{ text: string; left: number; top: number } | null>(null)
   useEffect(() => {
     let active: Element | null = null
@@ -696,24 +982,31 @@ function AppHints({ suppress, notificationOpen }: { suppress: boolean; notificat
       const target = findTarget(event)
       if (target && target === active) hide()
     }
-    const onNotificationOpen = (event: Event) => {
+    const onDocumentClick = (event: Event) => {
       const source = event.target
-      if (source instanceof Element && source.closest('.notification-button')) hide()
+      if (!(source instanceof Element)) return
+      if (active && (active === source || active.contains(source))) hide()
+      if (source.closest('.notification-button')) hide()
     }
+    const observer = new MutationObserver(() => {
+      if (active && !active.isConnected) hide()
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
     document.addEventListener('pointerover', onPointerOver)
     document.addEventListener('pointerout', onPointerOut)
     document.addEventListener('focusin', onFocusIn)
     document.addEventListener('focusout', onFocusOut)
-    document.addEventListener('click', onNotificationOpen)
+    document.addEventListener('click', onDocumentClick)
     return () => {
       hide()
+      observer.disconnect()
       document.removeEventListener('pointerover', onPointerOver)
       document.removeEventListener('pointerout', onPointerOut)
       document.removeEventListener('focusin', onFocusIn)
       document.removeEventListener('focusout', onFocusOut)
-      document.removeEventListener('click', onNotificationOpen)
+      document.removeEventListener('click', onDocumentClick)
     }
-  }, [suppress, notificationOpen])
+  }, [suppress, notificationOpen, pageKey])
   return hint ? <div className="app-hint" role="tooltip" style={{ left: hint.left, top: hint.top }}>{hint.text}</div> : null
 }
 
@@ -757,6 +1050,8 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
   const [dashboardOverviewMode, setDashboardOverviewMode] = useState<'bursts' | 'incidents'>('bursts')
   const [dashboardTableMode, setDashboardTableMode] = useState<'bursts' | 'incidents'>('bursts')
   const [statisticsSection, setStatisticsSection] = useState<StatisticsSection>('overview')
+  const [statisticsCountryMode, setStatisticsCountryMode] = useState<'events' | 'groups'>('events')
+  const [cowrieGroupPanel, setCowrieGroupPanel] = useState<CowrieGroupPanel>('commands')
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchClosing, setSearchClosing] = useState(false)
   const [searchText, setSearchText] = useState('')
@@ -784,6 +1079,8 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
   const [requestFilters, setRequestFilters] = useState<RequestFilters>(defaultRequestFilters)
   const [honeypotSort, setHoneypotSort] = useState<HoneypotSort>(defaultHoneypotSort)
   const [honeypotFilters, setHoneypotFilters] = useState<HoneypotFilters>(defaultHoneypotFilters)
+  const [incidentFilters, setIncidentFilters] = useState<IncidentFilters>(defaultIncidentFilters)
+  const [cowrieFilters, setCowrieFilters] = useState<CowrieFilters>(defaultCowrieFilters)
   const [tablePageSizes, setTablePageSizes] = useState<Partial<Record<TableKey, PageSize>>>({})
   const [selectedBurstId, setSelectedBurstId] = useState<number | null>(null)
   const [selectedBurstExtreme, setSelectedBurstExtreme] = useState<BurstExtreme | null>(null)
@@ -918,6 +1215,8 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
         if (saved.dashboardOverviewMode) setDashboardOverviewMode(saved.dashboardOverviewMode)
         if (saved.dashboardTableMode) setDashboardTableMode(saved.dashboardTableMode)
         if (saved.statisticsSection) setStatisticsSection(saved.statisticsSection)
+        if (saved.statisticsCountryMode) setStatisticsCountryMode(saved.statisticsCountryMode)
+        if (saved.cowrieGroupPanel) setCowrieGroupPanel(saved.cowrieGroupPanel)
         const initialPage = pageFromUrl() ?? saved.lastPage ?? 'dashboard'
         setActivePage(initialPage)
         writePageToUrl(initialPage, true)
@@ -934,6 +1233,8 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
         if (saved.requestFilters) setRequestFilters(saved.requestFilters)
         if (saved.honeypotSort) setHoneypotSort(saved.honeypotSort)
         if (saved.honeypotFilters) setHoneypotFilters(saved.honeypotFilters)
+        if (saved.incidentFilters) setIncidentFilters(saved.incidentFilters)
+        if (saved.cowrieFilters) setCowrieFilters(saved.cowrieFilters)
         if (saved.timeRange) {
           const stored = saved.timeRange
           if (stored.preset === 'custom' && stored.from && stored.to && new Date(stored.from) < new Date(stored.to)) {
@@ -982,7 +1283,7 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
     savePreference('last_page', page)
   }
   useEffect(() => {
-    if (liveStatus.data && (((activePage === 'honeypot' || activePage === 'honeypotGuide') && !liveStatus.data.honeypot_configured) || (activePage === 'cowrie' && !liveStatus.data.cowrie_configured))) {
+    if (liveStatus.data && (((activePage === 'honeypot' || activePage === 'honeypotGuide') && !liveStatus.data.honeypot_configured) || ((activePage === 'cowrie' || activePage === 'cowrieGuide') && !liveStatus.data.cowrie_configured))) {
       navigateToPage('dashboard')
     }
   }, [liveStatus.data?.honeypot_configured, liveStatus.data?.cowrie_configured, activePage])
@@ -998,6 +1299,8 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
   const updateDashboardOverviewMode = (value: 'bursts' | 'incidents') => { setDashboardOverviewMode(value); savePreference('dashboard_overview_mode', value) }
   const updateDashboardTableMode = (value: 'bursts' | 'incidents') => { setDashboardTableMode(value); savePreference('dashboard_table_mode', value) }
   const updateStatisticsSection = (value: StatisticsSection) => { setStatisticsSection(value); savePreference('statistics_section', value) }
+  const updateStatisticsCountryMode = (value: 'events' | 'groups') => { setStatisticsCountryMode(value); savePreference('statistics_country_mode', value) }
+  const updateCowrieGroupPanel = (value: CowrieGroupPanel) => { setCowrieGroupPanel(value); savePreference('cowrie_group_panel', value) }
   useEffect(() => {
     const onPopState = () => {
       const page = pageFromUrl() ?? 'dashboard'
@@ -1042,6 +1345,20 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
   const updateRequestFilters = (value: RequestFilters) => { setRequestFilters(value); savePreference('request_filters', JSON.stringify(value)) }
   const updateHoneypotSort = (value: HoneypotSort) => { setHoneypotSort(value); savePreference('honeypot_sort', JSON.stringify(value)) }
   const updateHoneypotFilters = (value: HoneypotFilters) => { setHoneypotFilters(value); savePreference('honeypot_filters', JSON.stringify(value)) }
+  const updateIncidentFilters = (value: IncidentFilters) => { setIncidentFilters(value); savePreference('incident_filters', JSON.stringify(value)) }
+  const updateCowrieFilters = (value: CowrieFilters) => { setCowrieFilters(value); savePreference('cowrie_filters', JSON.stringify(value)) }
+  const clearRequestJumpFilters = () => {
+    setSelectedBurstId(null)
+    setSelectedIncidentId(null)
+    setSelectedIncident(null)
+    setSelectedBurstExtreme(null)
+    setSelectedStatisticFilter(null)
+    setSelectedTrafficBucket(null)
+    setSelectedActorIp(null)
+    setSelectedHost(null)
+    setSelectedCategory(null)
+    setSelectedPath(null)
+  }
   const selectIncidentRequests = (incident: NotificationIncident) => {
     setSelectedTrafficBucket({ from: incident.first_seen, to: new Date(new Date(incident.last_seen).getTime() + 1000).toISOString() })
     setSelectedIncidentId(incident.incident_id)
@@ -1053,7 +1370,7 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
     setSelectedHost(null)
     setSelectedCategory(null)
     setSelectedPath(null)
-    updateRequestFilters({ ...defaultRequestFilters })
+    setRequestFilters({ ...defaultRequestFilters })
     navigateToPage('requests')
   }
   const selectTrafficBucketRequests = (bucket: TrafficBucket) => {
@@ -1067,7 +1384,7 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
     setSelectedHost(null)
     setSelectedCategory(null)
     setSelectedPath(null)
-    updateRequestFilters({ ...defaultRequestFilters })
+    setRequestFilters({ ...defaultRequestFilters })
     navigateToPage('requests')
   }
   const selectHoneypotGroupRequests = (group: HoneypotGroup) => {
@@ -1088,7 +1405,7 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
     setSelectedHost(null)
     setSelectedCategory(null)
     setSelectedPath(null)
-    updateRequestFilters({ ...defaultRequestFilters })
+    setRequestFilters({ ...defaultRequestFilters })
     navigateToPage('requests')
   }
   const selectBurstRequests = (id: number) => {
@@ -1102,7 +1419,7 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
     setSelectedHost(null)
     setSelectedCategory(null)
     setSelectedPath(null)
-    updateRequestFilters({ ...defaultRequestFilters })
+    setRequestFilters({ ...defaultRequestFilters })
     navigateToPage('requests')
   }
   const updateTablePageSize = (table: TableKey, value: PageSize) => {
@@ -1199,7 +1516,7 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
         <div className="nav-caption">{t('navigation')}</div>
         <nav className="main-nav" aria-label={t('navigation')}>
           {navigation.map(({ key, icon: Icon }) => (
-            <a key={key} href="#" title={sidebarCollapsed ? t(key) : undefined} className={`nav-link ${activePage === key ? 'active' : ''}`} aria-current={activePage === key ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage(key); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedPath(null); setMenuOpen(false) }}>
+            <a key={key} href="#" title={sidebarCollapsed ? t(key) : undefined} className={`nav-link ${activePage === key ? 'active' : ''}`} aria-current={activePage === key ? 'page' : undefined} onClick={(event) => { event.preventDefault(); if (key === 'requests') clearRequestJumpFilters(); navigateToPage(key); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedPath(null); setMenuOpen(false) }}>
               <Icon size={18} strokeWidth={1.9} /><span>{t(key)}</span>
             </a>
           ))}
@@ -1229,6 +1546,7 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
             <a href="#" title={sidebarCollapsed ? t('incidentGuide') : undefined} className={`nav-link ${activePage === 'incidentGuide' ? 'active' : ''}`} aria-current={activePage === 'incidentGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('incidentGuide'); setMenuOpen(false) }}><ShieldAlert size={18} /><span>{t('incidentGuide')}</span></a>
             <a href="#" title={sidebarCollapsed ? t('pathsGuide') : undefined} className={`nav-link ${activePage === 'pathsGuide' ? 'active' : ''}`} aria-current={activePage === 'pathsGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('pathsGuide'); setMenuOpen(false) }}><List size={18} /><span>{t('pathsGuide')}</span></a>
             {liveStatus.data?.honeypot_configured && <a href="#" title={sidebarCollapsed ? t('honeypotGuide') : undefined} className={`nav-link ${activePage === 'honeypotGuide' ? 'active' : ''}`} aria-current={activePage === 'honeypotGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('honeypotGuide'); setMenuOpen(false) }}><Bug size={18} /><span>{t('honeypotGuide')}</span></a>}
+            {liveStatus.data?.cowrie_configured && <a href="#" title={sidebarCollapsed ? t('cowrieGuide') : undefined} className={`nav-link ${activePage === 'cowrieGuide' ? 'active' : ''}`} aria-current={activePage === 'cowrieGuide' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateToPage('cowrieGuide'); setMenuOpen(false) }}><Network size={18} /><span>{t('cowrieGuide')}</span></a>}
           </div>}
         </div>
         <div className="sidebar-spacer" />
@@ -1247,18 +1565,18 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
             <label className="search-trigger"><Search size={16} /><input ref={searchInputRef} value={searchText} placeholder={t('search')} aria-label={t('search')} onChange={(event) => { const value = event.target.value; setSearchText(value); if (value.trim()) openSearch(); else closeSearch() }} onKeyDown={(event) => { if (event.key === 'Enter' && searchText.trim()) { event.preventDefault(); openSearch() } }} /><kbd><Command size={11} /> K</kbd></label>
             <span className="topbar-divider" />
             <button className="icon-button auth-logout" type="button" onClick={onLogout} aria-label={language === 'de' ? 'Abmelden' : 'Sign out'} title={language === 'de' ? 'Abmelden' : 'Sign out'}><LogOut size={17} /></button>
-            <div ref={notificationWrapRef} className="notification-wrap"><button className="icon-button notification-button" aria-label={t('notifications')} data-hint={notificationData ? `${t('notifications')} · ${numberText(notificationData.incident_count, language)} ${t('newIncidents')} · ${t('newRequestsSince')}: ${dateText(notificationData.request_since_utc, language)}` : t('notifications')} aria-expanded={notificationsOpen && !notificationsClosing} onClick={toggleNotifications}><Bell size={18} />{notificationData && notificationData.request_count + notificationData.burst_count + notificationData.incident_count > 0 && <span className="notification-badge">{numberText(notificationData.request_count + notificationData.burst_count + notificationData.incident_count, language)}</span>}</button>{notificationsOpen && <NotificationPopover data={notificationSnapshot ?? notificationData} t={t} language={language} marking={notificationsMarking} closing={notificationsClosing} onMarkRead={markNotificationsRead} onClose={closeNotifications} onSelect={(item) => { const isIncident = item.type === 'incident'; setSelectedTrafficBucket(isIncident && item.firstSeen && item.lastSeen ? { from: item.firstSeen, to: new Date(new Date(item.lastSeen).getTime() + 1000).toISOString() } : null); setSelectedIncidentId(isIncident ? item.id : null); setSelectedIncident(isIncident ? item.incident ?? null : null); setSelectedBurstId(item.type === 'burst' ? item.id : null); setSelectedBurstExtreme(null); setSelectedStatisticFilter(null); setSelectedActorIp(item.type === 'request' ? item.actorIp : null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); updateRequestFilters({ ...defaultRequestFilters }); navigateToPage('requests'); closeNotifications() }} />}</div>
+            <div ref={notificationWrapRef} className="notification-wrap"><button className="icon-button notification-button" aria-label={t('notifications')} data-hint={notificationData ? `${t('notifications')} · ${numberText(notificationData.incident_count, language)} ${t('newIncidents')} · ${t('newRequestsSince')}: ${dateText(notificationData.request_since_utc, language)}` : t('notifications')} aria-expanded={notificationsOpen && !notificationsClosing} onClick={toggleNotifications}><Bell size={18} />{notificationData && notificationData.request_count + notificationData.burst_count + notificationData.incident_count > 0 && <span className="notification-badge">{numberText(notificationData.request_count + notificationData.burst_count + notificationData.incident_count, language)}</span>}</button>{notificationsOpen && <NotificationPopover data={notificationSnapshot ?? notificationData} t={t} language={language} marking={notificationsMarking} closing={notificationsClosing} onMarkRead={markNotificationsRead} onClose={closeNotifications} onSelect={(item) => { const isIncident = item.type === 'incident'; setSelectedTrafficBucket(isIncident && item.firstSeen && item.lastSeen ? { from: item.firstSeen, to: new Date(new Date(item.lastSeen).getTime() + 1000).toISOString() } : null); setSelectedIncidentId(isIncident ? item.id : null); setSelectedIncident(isIncident ? item.incident ?? null : null); setSelectedBurstId(item.type === 'burst' ? item.id : null); setSelectedBurstExtreme(null); setSelectedStatisticFilter(null); setSelectedActorIp(item.type === 'request' ? item.actorIp : null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); setRequestFilters({ ...defaultRequestFilters }); navigateToPage('requests'); closeNotifications() }} />}</div>
           </div>
         </header>
 
         <div className="content-wrap">
-          {activePage === 'bursts' ? <BurstsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.bursts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('bursts', size)} sort={burstSort} onSortChange={updateBurstSort} filters={burstFilters} onFiltersChange={updateBurstFilters} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'actors' ? <ActorsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.actors ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('actors', size)} sort={actorSort} onSortChange={updateActorSort} filters={actorFilters} onFiltersChange={updateActorFilters} onActorSelect={(ip) => { setSelectedTrafficBucket(null); setSelectedActorIp(ip); setSelectedBurstId(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'hosts' ? <HostsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.hosts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('hosts', size)} sort={hostSort} onSortChange={updateHostSort} filters={hostFilters} onFiltersChange={updateHostFilters} onHostSelect={(host) => { setSelectedTrafficBucket(null); setSelectedHost(host); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'categories' ? <CategoriesPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.categories ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('categories', size)} sort={categorySort} onSortChange={updateCategorySort} filters={categoryFilters} onFiltersChange={updateCategoryFilters} onCategorySelect={(category) => { setSelectedTrafficBucket(null); setSelectedCategory(category); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'requests' ? <RequestsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.requests ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('requests', size)} burstId={selectedBurstId} incidentId={selectedIncidentId} incidentContext={selectedIncidentId === selectedIncident?.incident_id ? selectedIncident : null} burstExtreme={selectedBurstExtreme} statisticFilter={selectedStatisticFilter} actorIp={selectedActorIp} host={selectedHost} category={selectedCategory} path={selectedPath} trafficBucket={selectedTrafficBucket} onTrafficBucketClear={() => setSelectedTrafficBucket(null)} onIncidentClear={() => { setSelectedIncidentId(null); setSelectedTrafficBucket(null) }} filters={requestFilters} onFiltersChange={updateRequestFilters} sort={requestSort} onSortChange={updateRequestSort} onBurstClear={() => setSelectedBurstId(null)} onBurstExtremeClear={() => setSelectedBurstExtreme(null)} onStatisticFilterClear={() => setSelectedStatisticFilter(null)} onActorClear={() => setSelectedActorIp(null)} onHostClear={() => setSelectedHost(null)} onCategoryClear={() => setSelectedCategory(null)} onPathClear={() => setSelectedPath(null)} /> : activePage === 'statistics' ? <StatisticsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} section={statisticsSection} onSectionChange={updateStatisticsSection} honeypotConfigured={liveStatus.data?.honeypot_configured === true} cowrieConfigured={liveStatus.data?.cowrie_configured === true} onBucketSelect={selectTrafficBucketRequests} onBurstSelect={selectBurstRequests} onIncidentSelect={selectIncidentRequests} onBurstExtremeSelect={(extreme) => { setSelectedStatisticFilter(null); setSelectedTrafficBucket(null); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); setSelectedBurstExtreme(extreme); updateRequestFilters({ ...defaultRequestFilters }); navigateToPage('requests') }} onDistributionSelect={(kind, value) => { setSelectedTrafficBucket(null); setSelectedBurstExtreme(null); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedPath(null); updateRequestFilters({ ...defaultRequestFilters }); if (kind === 'actor') { setSelectedStatisticFilter(null); setSelectedActorIp(value); setSelectedHost(null); setSelectedCategory(null) } else if (kind === 'path') { setSelectedStatisticFilter(null); setSelectedPath(value); setSelectedHost(null); setSelectedCategory(null) } else if (kind === 'host') { setSelectedStatisticFilter(null); setSelectedHost(value); setSelectedCategory(null) } else if (kind === 'category') { setSelectedStatisticFilter(null); setSelectedCategory(value); setSelectedHost(null) } else { setSelectedStatisticFilter({ field: kind, value }); setSelectedHost(null); setSelectedCategory(null) } navigateToPage('requests') }} /> : activePage === 'administration' ? <AdministrationPage t={t} language={language} /> : activePage === 'categoryGuide' ? <CategoryGuidePage t={t} /> : activePage === 'burstGuide' ? <BurstGuidePage t={t} /> : activePage === 'countGuide' ? <CountGuidePage t={t} /> : activePage === 'hostGuide' ? <HostGuidePage t={t} /> : activePage === 'pathsGuide' ? <PathsGuidePage t={t} /> : activePage === 'incidentGuide' ? <IncidentGuidePage t={t} /> : activePage === 'honeypotGuide' && liveStatus.data?.honeypot_configured ? <HoneypotGuidePage t={t} /> : activePage === 'honeypot' ? <HoneypotPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.honeypot ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('honeypot', size)} sort={honeypotSort} onSortChange={updateHoneypotSort} filters={honeypotFilters} onFiltersChange={updateHoneypotFilters} onGroupRequestsSelect={selectHoneypotGroupRequests} /> : activePage === 'cowrie' && liveStatus.data?.cowrie_configured ? <CowriePage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} /> : activePage === 'logging' ? <LoggingPage t={t} /> : activePage === 'incidents' ? <IncidentsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} onIncidentSelect={selectIncidentRequests} /> : <DashboardPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} chartMode={dashboardChartMode} onChartModeChange={updateDashboardChartMode} overviewMode={dashboardOverviewMode} onOverviewModeChange={updateDashboardOverviewMode} tableMode={dashboardTableMode} onTableModeChange={updateDashboardTableMode} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} onBucketSelect={(bucket) => { setSelectedTrafficBucket(bucket); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} onIncidentSelect={selectIncidentRequests} />}
+          {activePage === 'bursts' ? <BurstsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.bursts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('bursts', size)} sort={burstSort} onSortChange={updateBurstSort} filters={burstFilters} onFiltersChange={updateBurstFilters} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'actors' ? <ActorsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.actors ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('actors', size)} sort={actorSort} onSortChange={updateActorSort} filters={actorFilters} onFiltersChange={updateActorFilters} onActorSelect={(ip) => { setSelectedTrafficBucket(null); setSelectedActorIp(ip); setSelectedBurstId(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'hosts' ? <HostsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.hosts ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('hosts', size)} sort={hostSort} onSortChange={updateHostSort} filters={hostFilters} onFiltersChange={updateHostFilters} onHostSelect={(host) => { setSelectedTrafficBucket(null); setSelectedHost(host); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'categories' ? <CategoriesPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.categories ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('categories', size)} sort={categorySort} onSortChange={updateCategorySort} filters={categoryFilters} onFiltersChange={updateCategoryFilters} onCategorySelect={(category) => { setSelectedTrafficBucket(null); setSelectedCategory(category); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedPath(null); navigateToPage('requests') }} /> : activePage === 'requests' ? <RequestsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.requests ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('requests', size)} burstId={selectedBurstId} incidentId={selectedIncidentId} incidentContext={selectedIncidentId === selectedIncident?.incident_id ? selectedIncident : null} burstExtreme={selectedBurstExtreme} statisticFilter={selectedStatisticFilter} actorIp={selectedActorIp} host={selectedHost} category={selectedCategory} path={selectedPath} trafficBucket={selectedTrafficBucket} onTrafficBucketClear={() => setSelectedTrafficBucket(null)} onIncidentClear={() => { setSelectedIncidentId(null); setSelectedTrafficBucket(null) }} filters={requestFilters} onFiltersChange={updateRequestFilters} sort={requestSort} onSortChange={updateRequestSort} onBurstClear={() => setSelectedBurstId(null)} onBurstExtremeClear={() => setSelectedBurstExtreme(null)} onStatisticFilterClear={() => setSelectedStatisticFilter(null)} onActorClear={() => setSelectedActorIp(null)} onHostClear={() => setSelectedHost(null)} onCategoryClear={() => setSelectedCategory(null)} onPathClear={() => setSelectedPath(null)} /> : activePage === 'statistics' ? <StatisticsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} section={statisticsSection} onSectionChange={updateStatisticsSection} countryMode={statisticsCountryMode} onCountryModeChange={updateStatisticsCountryMode} honeypotConfigured={liveStatus.data?.honeypot_configured === true} cowrieConfigured={liveStatus.data?.cowrie_configured === true} onBucketSelect={selectTrafficBucketRequests} onBurstSelect={selectBurstRequests} onIncidentSelect={selectIncidentRequests} onBurstExtremeSelect={(extreme) => { setSelectedStatisticFilter(null); setSelectedTrafficBucket(null); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); setSelectedBurstExtreme(extreme); setRequestFilters({ ...defaultRequestFilters }); navigateToPage('requests') }} onDistributionSelect={(kind, value) => { setSelectedTrafficBucket(null); setSelectedBurstExtreme(null); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedPath(null); setRequestFilters({ ...defaultRequestFilters }); if (kind === 'actor') { setSelectedStatisticFilter(null); setSelectedActorIp(value); setSelectedHost(null); setSelectedCategory(null) } else if (kind === 'path') { setSelectedStatisticFilter(null); setSelectedPath(value); setSelectedHost(null); setSelectedCategory(null) } else if (kind === 'host') { setSelectedStatisticFilter(null); setSelectedHost(value); setSelectedCategory(null) } else if (kind === 'category') { setSelectedStatisticFilter(null); setSelectedCategory(value); setSelectedHost(null) } else { setSelectedStatisticFilter({ field: kind, value }); setSelectedHost(null); setSelectedCategory(null) } navigateToPage('requests') }} /> : activePage === 'administration' ? <AdministrationPage t={t} language={language} /> : activePage === 'categoryGuide' ? <CategoryGuidePage t={t} /> : activePage === 'burstGuide' ? <BurstGuidePage t={t} /> : activePage === 'countGuide' ? <CountGuidePage t={t} /> : activePage === 'hostGuide' ? <HostGuidePage t={t} /> : activePage === 'pathsGuide' ? <PathsGuidePage t={t} /> : activePage === 'incidentGuide' ? <IncidentGuidePage t={t} /> : activePage === 'honeypotGuide' && liveStatus.data?.honeypot_configured ? <HoneypotGuidePage t={t} /> : activePage === 'cowrieGuide' && liveStatus.data?.cowrie_configured ? <CowrieGuidePage t={t} /> : activePage === 'honeypot' ? <HoneypotPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} pageSize={tablePageSizes.honeypot ?? defaultTablePageSize} onPageSizeChange={(size) => updateTablePageSize('honeypot', size)} sort={honeypotSort} onSortChange={updateHoneypotSort} filters={honeypotFilters} onFiltersChange={updateHoneypotFilters} onGroupRequestsSelect={selectHoneypotGroupRequests} /> : activePage === 'cowrie' && liveStatus.data?.cowrie_configured ? <CowriePage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} openGroupPanel={cowrieGroupPanel} onGroupPanelChange={updateCowrieGroupPanel} filters={cowrieFilters} onFiltersChange={updateCowrieFilters} /> : activePage === 'logging' ? <LoggingPage t={t} /> : activePage === 'incidents' ? <IncidentsPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} onIncidentSelect={selectIncidentRequests} filters={incidentFilters} onFiltersChange={updateIncidentFilters} /> : <DashboardPage t={t} language={language} range={range} onRangeChange={updateRange} lastImport={liveStatus.data?.collector_status.last_import} chartMode={dashboardChartMode} onChartModeChange={updateDashboardChartMode} overviewMode={dashboardOverviewMode} onOverviewModeChange={updateDashboardOverviewMode} tableMode={dashboardTableMode} onTableModeChange={updateDashboardTableMode} onBurstSelect={(id) => { setSelectedTrafficBucket(null); setSelectedBurstId(id); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} onBucketSelect={(bucket) => { setSelectedTrafficBucket(bucket); setSelectedBurstId(null); setSelectedActorIp(null); setSelectedHost(null); setSelectedCategory(null); setSelectedPath(null); navigateToPage('requests') }} onIncidentSelect={selectIncidentRequests} />}
 
           <footer className="page-footer"><span>INM2 <b>·</b> Internet Noise Monitor</span><div className="footer-controls">{preferencesError && <span className="preferences-error">{t('preferencesError')}</span>}<label><span>{t('theme')}</span><select value={theme} onChange={(event) => updateTheme(event.target.value as Theme)} aria-label={t('theme')}><option value="auto">{t('themeAuto')}</option><option value="cloud">{t('themeCloud')}</option><option value="midnight">{t('themeMidnight')}</option><option value="moss">{t('themeMoss')}</option></select><Sun size={14} /></label><label><span>{t('language')}</span><select value={language} onChange={(event) => updateLanguage(event.target.value as Language)} aria-label={t('language')}><option value="de">DE</option><option value="en">EN</option></select></label><span className="version-label">v{__APP_VERSION__}</span></div></footer>
         </div>
       </main>
       <ApiActivityToast t={t} />
-      <AppHints suppress={notificationsClosing} notificationOpen={notificationsOpen} />
+      <AppHints suppress={notificationsClosing} notificationOpen={notificationsOpen} pageKey={activePage} />
       {searchOpen && <GlobalSearchDialog query={searchText} queryRange={range.query} language={language} t={t} closing={searchClosing} onClose={closeSearch} onSelect={(kind, value) => { setSelectedTrafficBucket(null); setSelectedIncidentId(null); setSelectedBurstId(null); setSelectedActorIp(kind === 'actor' ? value : null); setSelectedHost(kind === 'host' ? value : null); setSelectedCategory(kind === 'category' ? value : null); setSelectedPath(kind === 'path' ? value : null); navigateToPage('requests'); closeSearch(); setSearchText('') }} />}
     </div>
   )
@@ -1355,11 +1673,9 @@ function SearchResultRow({ primary, secondary, detail, country, language, path =
 type RangePageProps = { t: (key: MessageKey) => string; language: Language; range: TimeRange; onRangeChange: (range: TimeRange) => void; lastImport: string | null | undefined }
 type PaginatedPageProps = RangePageProps & { pageSize: PageSize; onPageSizeChange: (size: PageSize) => void }
 
-type IncidentFilters = { search: string; state: '' | 'open' | 'acknowledged' | 'resolved'; incidentType: '' | IncidentType; protectedOnly: boolean }
 type IncidentSortColumn = 'incident_id' | 'incident_type' | 'last_seen' | 'actor_ip' | 'host' | 'indicator_count' | 'request_count' | 'state'
 type IncidentSort = { column: IncidentSortColumn; direction: 'asc' | 'desc' }
 const defaultIncidentSort: IncidentSort = { column: 'last_seen', direction: 'desc' }
-const emptyIncidentFilters: IncidentFilters = { search: '', state: '', incidentType: '', protectedOnly: false }
 const incidentTypeLabels: Record<IncidentType, MessageKey> = {
   path_scan: 'incidentTypePathScan', failed_login: 'incidentTypeFailedLogin', sensitive_file_access: 'incidentTypeSensitiveFile',
   exploit_response: 'incidentTypeExploitResponse', write_activity: 'incidentTypeWriteActivity',
@@ -1394,11 +1710,10 @@ function incidentMetricLabels(incident: NotificationIncident, t: (key: MessageKe
   return incident.indicators.slice(0, 4)
 }
 
-function IncidentsPage({ t, language, range, onRangeChange, lastImport, onIncidentSelect }: RangePageProps & { onIncidentSelect: (incident: Incident) => void }) {
+function IncidentsPage({ t, language, range, onRangeChange, lastImport, onIncidentSelect, filters, onFiltersChange }: RangePageProps & { onIncidentSelect: (incident: Incident) => void; filters: IncidentFilters; onFiltersChange: (filters: IncidentFilters) => void }) {
   const [pageIndex, setPageIndex] = useState(0)
   const [pageSize, setPageSize] = useState<PageSize>(defaultTablePageSize)
-  const [filters, setFilters] = useState<IncidentFilters>(emptyIncidentFilters)
-  const [draftFilters, setDraftFilters] = useState<IncidentFilters>(emptyIncidentFilters)
+  const [draftFilters, setDraftFilters] = useState<IncidentFilters>(filters)
   const [sort, setSort] = useState<IncidentSort>(defaultIncidentSort)
   const [updatingIncident, setUpdatingIncident] = useState<number | null>(null)
   const [deletingIncident, setDeletingIncident] = useState<number | null>(null)
@@ -1415,8 +1730,8 @@ function IncidentsPage({ t, language, range, onRangeChange, lastImport, onIncide
   const items = result.data?.items ?? []
   useEffect(() => setPageIndex(0), [range.query, filters, sort])
   useEffect(() => setDraftFilters(filters), [filters])
-  const applyFilters = () => { setPageIndex(0); setFilters({ ...draftFilters }) }
-  const resetFilters = () => { setPageIndex(0); setDraftFilters(emptyIncidentFilters); setFilters(emptyIncidentFilters) }
+  const applyFilters = () => { setPageIndex(0); onFiltersChange({ ...draftFilters }) }
+  const resetFilters = () => { setPageIndex(0); setDraftFilters(defaultIncidentFilters); onFiltersChange(defaultIncidentFilters) }
   const changeSort = (column: IncidentSortColumn) => setSort((current) => ({ column, direction: current.column === column && current.direction === 'asc' ? 'desc' : 'asc' }))
   const deleteIncident = async (incidentId: number) => {
     setDeletingIncident(incidentId)
@@ -1465,7 +1780,7 @@ function IncidentsPage({ t, language, range, onRangeChange, lastImport, onIncide
     {!result.loading && !result.error && <div className="panel data-list-panel incident-list-panel">
       <div className="burst-list-heading"><div><h2>{t('incidents')}</h2></div></div>
       <Paginator total={result.data?.total ?? 0} pageIndex={pageIndex} pageSize={pageSize} onPageChange={setPageIndex} onPageSizeChange={setPageSize} t={t} language={language} />
-      <TableScroller t={t}><table className="incident-table"><thead><tr><SortableHeader column="incident_id" label={t('incidentId')} sort={sort} onSort={changeSort} /><SortableHeader column="actor_ip" label={t('actor')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim())} filterLabel={t('filteredColumn')} /><SortableHeader column="incident_type" label={t('incidentType')} sort={sort} onSort={changeSort} filtered={Boolean(filters.incidentType)} filterLabel={t('filteredColumn')} /><SortableHeader column="last_seen" label={t('incidentStart')} sort={sort} onSort={changeSort} filtered filterLabel={t('filteredColumn')} /><SortableHeader column="host" label={t('host')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim())} filterLabel={t('filteredColumn')} /><SortableHeader column="indicator_count" label={t('incidentIndicators')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim())} filterLabel={t('filteredColumn')} /><SortableHeader column="request_count" label={t('requestsLabel')} sort={sort} onSort={changeSort} /><SortableHeader column="state" label={t('incidentState')} sort={sort} onSort={changeSort} filtered={Boolean(filters.state)} filterLabel={t('filteredColumn')} /><th /></tr></thead><tbody>{items.length ? items.map((incident) => <tr key={incident.incident_id}><td><button type="button" className="table-link incident-id-link" title={t('viewIncidentRequests')} onClick={() => onIncidentSelect(incident)}>#{incident.incident_id}</button></td><td><span className="actor-detail"><span className="actor-ip-line"><MaintenanceExclusionToggle ip={incident.actor_ip} t={t} /><strong className="primary-cell">{incident.actor_ip}</strong></span><ActorMetadata {...incident} /></span></td><td>{incidentTypeText(incident, t)}</td><td><span className="incident-time-cell"><strong>{requestDateTimeText(incident.first_seen, language)}</strong><small>{incidentDurationText(incident.first_seen, incident.last_seen, language)}</small></span></td><td className="host-cell">{incident.summary?.host_count > 1 ? t('multipleHosts') : incident.host || '—'}</td><td><span className="incident-indicators">{incidentMetricLabels(incident, t, language).map((indicator) => <code key={indicator}>{indicator}</code>)}</span></td><td><span className="request-count">{numberText(incident.request_count, language)}</span></td><td><label className="incident-state-control"><span className={`incident-state incident-state-${incident.state}`}>{t(incident.state === 'open' ? 'incidentOpen' : incident.state === 'acknowledged' ? 'incidentAcknowledged' : 'incidentResolved')}</span><select aria-label={`${t('incidentState')} · ${incident.actor_ip}`} value={incident.state} disabled={updatingIncident === incident.incident_id} onChange={(event) => updateIncidentState(incident.incident_id, event.target.value as Incident['state'])}><option value="open">{t('incidentOpen')}</option><option value="acknowledged">{t('incidentAcknowledged')}</option><option value="resolved">{t('incidentResolved')}</option></select><ChevronDown size={12} /></label></td><td><span className="actor-row-actions"><button type="button" className="icon-button row-more" aria-label={t('viewIncidentRequests')} title={t('viewIncidentRequests')} onClick={() => onIncidentSelect(incident)}><ArrowUpRight size={15} /></button><button type="button" className="icon-button row-more actor-delete-button" aria-label={t('deleteIncident')} title={t('deleteIncident')} disabled={deletingIncident === incident.incident_id} onClick={() => void deleteIncident(incident.incident_id)}><Trash2 size={15} /></button></span></td></tr>) : <EmptyRows t={t} columns={9} />}</tbody></table></TableScroller>
+      <TableScroller t={t}><table className="incident-table"><thead><tr><SortableHeader column="incident_id" label={t('incidentId')} sort={sort} onSort={changeSort} /><SortableHeader column="actor_ip" label={t('actor')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim())} filterLabel={t('filteredColumn')} /><SortableHeader column="incident_type" label={t('incidentType')} sort={sort} onSort={changeSort} filtered={Boolean(filters.incidentType)} filterLabel={t('filteredColumn')} /><SortableHeader column="last_seen" label={t('incidentStart')} sort={sort} onSort={changeSort} filtered filterLabel={t('filteredColumn')} /><SortableHeader column="host" label={t('host')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim())} filterLabel={t('filteredColumn')} /><SortableHeader column="indicator_count" label={t('incidentIndicators')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim())} filterLabel={t('filteredColumn')} /><SortableHeader column="request_count" label={t('requestsLabel')} sort={sort} onSort={changeSort} /><SortableHeader column="state" label={t('incidentState')} sort={sort} onSort={changeSort} filtered={Boolean(filters.state)} filterLabel={t('filteredColumn')} /><th /></tr></thead><tbody>{items.length ? items.map((incident) => <tr key={incident.incident_id}><td><button type="button" className="table-link incident-id-link" title={t('viewIncidentRequests')} onClick={() => onIncidentSelect(incident)}>#{incident.incident_id}</button></td><td><span className="actor-detail"><span className="actor-ip-line"><MaintenanceExclusionToggle ip={incident.actor_ip} t={t} /><strong className="primary-cell">{incident.actor_ip}</strong></span><ActorMetadata {...incident} /></span></td><td className="incident-type-cell">{incidentTypeText(incident, t)}</td><td><span className="incident-time-cell"><strong>{requestDateTimeText(incident.first_seen, language)}</strong><small>{incidentDurationText(incident.first_seen, incident.last_seen, language)}</small></span></td><td className="host-cell">{incident.summary?.host_count > 1 ? t('multipleHosts') : incident.host || '—'}</td><td><span className="incident-indicators">{incidentMetricLabels(incident, t, language).map((indicator) => <code key={indicator}>{indicator}</code>)}</span></td><td><span className="request-count">{numberText(incident.request_count, language)}</span></td><td><label className="incident-state-control"><span className={`incident-state incident-state-${incident.state}`}>{t(incident.state === 'open' ? 'incidentOpen' : incident.state === 'acknowledged' ? 'incidentAcknowledged' : 'incidentResolved')}</span><select aria-label={`${t('incidentState')} · ${incident.actor_ip}`} value={incident.state} disabled={updatingIncident === incident.incident_id} onChange={(event) => updateIncidentState(incident.incident_id, event.target.value as Incident['state'])}><option value="open">{t('incidentOpen')}</option><option value="acknowledged">{t('incidentAcknowledged')}</option><option value="resolved">{t('incidentResolved')}</option></select><ChevronDown size={12} /></label></td><td><span className="actor-row-actions"><button type="button" className="icon-button row-more" aria-label={t('viewIncidentRequests')} title={t('viewIncidentRequests')} onClick={() => onIncidentSelect(incident)}><ArrowUpRight size={15} /></button><button type="button" className="icon-button row-more actor-delete-button" aria-label={t('deleteIncident')} title={t('deleteIncident')} disabled={deletingIncident === incident.incident_id} onClick={() => void deleteIncident(incident.incident_id)}><Trash2 size={15} /></button></span></td></tr>) : <EmptyRows t={t} columns={9} />}</tbody></table></TableScroller>
       <Paginator total={result.data?.total ?? 0} pageIndex={pageIndex} pageSize={pageSize} onPageChange={setPageIndex} onPageSizeChange={setPageSize} t={t} language={language} />
     </div>}
   </>
@@ -1599,7 +1914,7 @@ function DashboardPage({ t, language, range, onRangeChange, lastImport, onBurstS
     ? requestRows.map((item, index) => {
       const total = item.read_count + item.write_count + item.other_count
       const height = total === 0 ? 1 : Math.max(2, total / maxBucket * 100)
-      const hint = `${t('startDate')}: ${dateText(item.from, language)}\n${t('endDate')}: ${dateText(item.to, language)}\n${t('read')}: ${numberText(item.read_count, language)}\n${t('write')}: ${numberText(item.write_count, language)}\n${t('other')}: ${numberText(item.other_count, language)}`
+      const hint = `${t('startDate')}: ${dateText(item.from, language)}\n${t('endDate')}: ${dateText(item.to, language)}\n${t('totalRequests')}: ${numberText(total, language)}\n${t('read')}: ${numberText(item.read_count, language)} (${shareText(item.read_count, total, language)})\n${t('write')}: ${numberText(item.write_count, language)} (${shareText(item.write_count, total, language)})\n${t('other')}: ${numberText(item.other_count, language)} (${shareText(item.other_count, total, language)})`
       const currentBucket = range.preset === 'today' && index === requestRows.length - 1
       return <div className={`bar-slot${currentBucket ? ' current-bucket' : ''}`} key={item.from ?? index} data-tooltip={hint} style={{ '--bar-height': `${height}%` } as CSSProperties}>
         <button type="button" className="chart-bar-hit" aria-label={hint} onClick={() => item.from && item.to && onBucketSelect({ from: item.from, to: item.to })}>
@@ -1666,7 +1981,7 @@ function DashboardPage({ t, language, range, onRangeChange, lastImport, onBurstS
         </div>
         <div className="panel burst-panel">
           <div className="panel-header"><div><h2>{t(overviewMode === 'bursts' ? 'burstOverview' : 'incidentOverview')}</h2><p>{t(overviewMode === 'bursts' ? 'burstDescription' : 'incidentOverviewDescription')}</p></div><div className="chart-mode-switch" role="group" aria-label={t('burstsAndIncidents')}><button type="button" aria-pressed={overviewMode === 'bursts'} className={overviewMode === 'bursts' ? 'active' : ''} onClick={() => onOverviewModeChange('bursts')}>{t('bursts')}</button><button type="button" aria-pressed={overviewMode === 'incidents'} className={overviewMode === 'incidents' ? 'active' : ''} onClick={() => onOverviewModeChange('incidents')}>{t('incidents')}</button></div></div>
-          {overviewMode === 'bursts' ? <><div className="burst-highlight"><div className="burst-ring" style={burstRingStyle}><div><strong>{numberText(bursts.data?.summary.burst_count, language)}</strong><span>{t('bursts').toLocaleUpperCase(language === 'de' ? 'de-DE' : 'en-US')}</span></div></div><div className="burst-stats"><div><span><i className="legend-dot read-dot" />{t('read')}</span><strong>{numberText(burstRead, language)}</strong></div><div><span><i className="legend-dot write-dot" />{t('write')}</span><strong>{numberText(burstWrite, language)}</strong></div><div><span><i className="legend-dot other-dot" />{t('other')}</span><strong>{numberText(burstOther, language)}</strong></div></div></div><div className="burst-footer"><span>{numberText(bursts.data?.summary.avg_requests_per_second, language)} {t('avgPerSecond')}</span><span>{rangeLabel(range, t, language)}</span></div></> : <><div className="burst-highlight"><div className="burst-ring" style={incidentRingStyle}><div><strong>{numberText(incidentTotal, language)}</strong><span>{t('incidents').toLocaleUpperCase(language === 'de' ? 'de-DE' : 'en-US')}</span></div></div><div className="burst-stats"><div><span><i className="legend-dot other-dot" />{t('incidentOpen')}</span><strong>{numberText(incidentOpen, language)}</strong></div><div><span><i className="legend-dot read-dot" />{t('incidentAcknowledged')}</span><strong>{numberText(incidentAcknowledged, language)}</strong></div><div><span><i className="legend-dot write-dot" />{t('incidentResolved')}</span><strong>{numberText(incidentResolved, language)}</strong></div></div></div><div className="burst-footer"><span>{numberText(incidentSummary?.request_count, language)} {t('requestsLabel')}</span><span>{rangeLabel(range, t, language)}</span></div></>}
+          {overviewMode === 'bursts' ? <><div className="burst-highlight"><div className="burst-ring" style={burstRingStyle}><div><strong>{numberText(bursts.data?.summary.burst_count, language)}</strong><span>{t('bursts').toLocaleUpperCase(language === 'de' ? 'de-DE' : 'en-US')}</span></div></div><div className="burst-stats"><div className="burst-stats-total"><span>{t('totalRequests')}</span><strong>{numberText(burstTotal, language)}</strong></div><div><span><i className="legend-dot read-dot" />{t('read')} · {shareText(burstRead, burstTotal, language)}</span><strong className="burst-stats-count">{numberText(burstRead, language)}</strong></div><div><span><i className="legend-dot write-dot" />{t('write')} · {shareText(burstWrite, burstTotal, language)}</span><strong className="burst-stats-count">{numberText(burstWrite, language)}</strong></div><div><span><i className="legend-dot other-dot" />{t('other')} · {shareText(burstOther, burstTotal, language)}</span><strong className="burst-stats-count">{numberText(burstOther, language)}</strong></div></div></div><div className="burst-footer"><span>{numberText(bursts.data?.summary.avg_requests_per_second, language)} {t('avgPerSecond')}</span><span>{rangeLabel(range, t, language)}</span></div></> : <><div className="burst-highlight"><div className="burst-ring" style={incidentRingStyle}><div><strong>{numberText(incidentTotal, language)}</strong><span>{t('incidents').toLocaleUpperCase(language === 'de' ? 'de-DE' : 'en-US')}</span></div></div><div className="burst-stats"><div><span><i className="legend-dot other-dot" />{t('incidentOpen')}</span><strong>{numberText(incidentOpen, language)}</strong></div><div><span><i className="legend-dot read-dot" />{t('incidentAcknowledged')}</span><strong>{numberText(incidentAcknowledged, language)}</strong></div><div><span><i className="legend-dot write-dot" />{t('incidentResolved')}</span><strong>{numberText(incidentResolved, language)}</strong></div></div></div><div className="burst-footer"><span>{numberText(incidentSummary?.request_count, language)} {t('requestsLabel')}</span><span>{rangeLabel(range, t, language)}</span></div></>}
         </div>
       </section>
       <section className="lower-grid">
@@ -1674,7 +1989,7 @@ function DashboardPage({ t, language, range, onRangeChange, lastImport, onBurstS
           {tableMode === 'bursts' ? <TableScroller t={t} className="dashboard-burst-scroll"><table><thead><tr><SortableHeader column="start_time" label={t('startTime')} sort={burstSort} onSort={changeBurstSort} filtered={true} filterLabel={t('filteredColumn')} /><SortableHeader column="actor_ip" label={t('actor')} sort={burstSort} onSort={changeBurstSort} /><SortableHeader column="host" label={t('host')} sort={burstSort} onSort={changeBurstSort} /><SortableHeader column="country" label={t('country')} sort={burstSort} onSort={changeBurstSort} /><SortableHeader column="duration" label={t('duration')} sort={burstSort} onSort={changeBurstSort} /><SortableHeader column="requests" label={t('requestsLabel')} sort={burstSort} onSort={changeBurstSort} /><th /></tr></thead><tbody>{bursts.data?.items.length ? bursts.data.items.map((burst) => <tr key={burst.burst_id}><td>{dateText(burst.start_time, language)}</td><td><span className="actor-detail"><span className="actor-ip-line"><MaintenanceExclusionToggle ip={burst.actor_ip} t={t} /><button type="button" className="table-link primary-cell" onClick={() => onBurstSelect(burst.burst_id)}>{burst.actor_ip}</button></span><small>{burst.provider || '—'} · {burst.asn || '—'}</small></span></td><td className={`host-cell${burst.known ? ' known-host-name' : ''}`}>{burst.host || '—'}</td><td><span className="country-cell"><span className="country-flag" title={burst.country || ''}>{countryFlag(burst.country)}</span>{burst.country || '—'} · {burst.city || '—'}</span></td><td>{secondsText((new Date(burst.end_time).getTime() - new Date(burst.start_time).getTime()) / 1000, language)}</td><td><span className="request-count">{numberText(burst.read_count + burst.write_count + burst.other_count, language)}</span></td><td><button className="icon-button row-more" aria-label={t('viewBurstRequests')} title={t('viewBurstRequests')} onClick={() => onBurstSelect(burst.burst_id)}><ArrowUpRight size={15} /></button></td></tr>) : <EmptyRows t={t} columns={8} />}</tbody></table></TableScroller> : <TableScroller t={t} className="dashboard-incident-scroll"><table className="incident-dashboard-table"><thead><tr><th>{t('id')}</th><th>{t('incidentType')}</th><th>{t('incidentStart')}</th><th>{t('actor')}</th><th /></tr></thead><tbody>{dashboardIncidents.data?.items.length ? dashboardIncidents.data.items.map((incident) => <tr key={incident.incident_id} data-hint={`${t('host')}: ${incident.summary?.host_count > 1 ? t('multipleHosts') : incident.host || '—'}\n${t('requestsLabel')}: ${numberText(incident.request_count, language)}`}><td><button type="button" className="table-link" onClick={() => onIncidentSelect(incident)}>#{incident.incident_id}</button></td><td className="incident-type-cell">{incidentTypeText(incident, t)}</td><td><span className="incident-time-cell"><strong>{requestDateTimeText(incident.first_seen, language)}</strong><small>{incidentDurationText(incident.first_seen, incident.last_seen, language)}</small></span></td><td><span className="actor-detail"><span className="actor-ip-line"><MaintenanceExclusionToggle ip={incident.actor_ip} t={t} /><strong>{incident.actor_ip}</strong></span><ActorMetadata {...incident} /></span></td><td><button className="icon-button row-more" aria-label={t('viewIncidentRequests')} title={t('viewIncidentRequests')} onClick={() => onIncidentSelect(incident)}><ArrowUpRight size={15} /></button></td></tr>) : <EmptyRows t={t} columns={5} />}</tbody></table></TableScroller>}
         </div>
         <div className="panel system-panel"><div className="panel-header"><div><h2>{t('status')}</h2><p>{t('infrastructure')}</p></div><span className={`health-pill ${status.data?.status === 'ok' ? '' : 'health-degraded'}`}><i />{status.data?.status === 'ok' ? t('allSystems') : t('degraded')}</span></div>
-          <div className="system-list"><SystemRow icon={Activity} label={t('collector')} detail={activityText(status.data?.collector_status.activity, t)} healthy={status.data?.collector_status.available === true} /><SystemRow icon={Globe2} label={t('api')} detail={status.data?.status === 'ok' ? t('connected') : t('degraded')} healthy={status.data?.status === 'ok'} /><SystemRow icon={Database} label={t('database')} detail={status.data?.database === 'ok' ? t('operational') : t('degraded')} healthy={status.data?.database === 'ok'} />{status.data?.honeypot_configured && <SystemRow icon={Bug} label={t('honeypot')} detail={status.data.honeypot_available ? t('connected') : t('honeypotNotRunning')} healthy={status.data.honeypot_available === true} />}</div>
+          <div className="system-list"><SystemRow icon={Activity} label={t('collector')} detail={activityText(status.data?.collector_status.activity, t)} healthy={status.data?.collector_status.available === true} /><SystemRow icon={Globe2} label={t('api')} detail={status.data?.status === 'ok' ? t('connected') : t('degraded')} healthy={status.data?.status === 'ok'} /><SystemRow icon={Database} label={t('database')} detail={status.data?.database === 'ok' ? t('operational') : t('degraded')} healthy={status.data?.database === 'ok'} />{status.data?.honeypot_configured && <SystemRow icon={Bug} label={t('honeypot')} detail={status.data.honeypot_available ? t('connected') : t('honeypotNotRunning')} healthy={status.data.honeypot_available === true} />}{status.data?.cowrie_configured && <SystemRow icon={Network} label={t('cowrie')} detail={status.data.cowrie_available ? t('cowrieLogAvailable') : t('cowrieLogUnavailable')} healthy={status.data.cowrie_available} />}</div>
           <div className="system-updated"><span className="status-pulse" />{t('lastImport')}: {dateText(status.data?.collector_status.last_import, language)}</div>
         </div>
       </section>
@@ -1682,7 +1997,7 @@ function DashboardPage({ t, language, range, onRangeChange, lastImport, onBurstS
   </>
 }
 
-function StatisticsPage({ t, language, range, onRangeChange, lastImport, section, onSectionChange, honeypotConfigured, cowrieConfigured, onBurstExtremeSelect, onBucketSelect, onBurstSelect, onIncidentSelect, onDistributionSelect }: RangePageProps & { section: StatisticsSection; onSectionChange: (section: StatisticsSection) => void; honeypotConfigured: boolean; cowrieConfigured: boolean; onBurstExtremeSelect: (extreme: BurstExtreme) => void; onBucketSelect: (bucket: TrafficBucket) => void; onBurstSelect: (id: number) => void; onIncidentSelect: (incident: NotificationIncident) => void; onDistributionSelect: (kind: 'provider' | 'country' | 'host' | 'category' | 'actor' | 'path', value: string) => void }) {
+function StatisticsPage({ t, language, range, onRangeChange, lastImport, section, onSectionChange, countryMode, onCountryModeChange, honeypotConfigured, cowrieConfigured, onBurstExtremeSelect, onBucketSelect, onBurstSelect, onIncidentSelect, onDistributionSelect }: RangePageProps & { section: StatisticsSection; onSectionChange: (section: StatisticsSection) => void; countryMode: 'events' | 'groups'; onCountryModeChange: (mode: 'events' | 'groups') => void; honeypotConfigured: boolean; cowrieConfigured: boolean; onBurstExtremeSelect: (extreme: BurstExtreme) => void; onBucketSelect: (bucket: TrafficBucket) => void; onBurstSelect: (id: number) => void; onIncidentSelect: (incident: NotificationIncident) => void; onDistributionSelect: (kind: 'provider' | 'country' | 'host' | 'category' | 'actor' | 'path', value: string) => void }) {
   useEffect(() => { if (!honeypotConfigured && section === 'honeypot') onSectionChange('overview') }, [honeypotConfigured, section, onSectionChange])
   useEffect(() => { if (!cowrieConfigured && section === 'ssh') onSectionChange('overview') }, [cowrieConfigured, section, onSectionChange])
   const result = useApiData<StatisticsResponse>(apiUrl('statistics', range.query))
@@ -1692,8 +2007,8 @@ function StatisticsPage({ t, language, range, onRangeChange, lastImport, section
   const insights = useApiData<StatisticsInsights>(insightQuery)
   const incidentStats = useApiData<IncidentStatistics>(section === 'incidents' || section === 'traffic' ? apiUrl('incident_statistics', range.query, { include_incidents: 'true' }) : null)
   const honeypotStats = useApiData<HoneypotStatistics>(honeypotConfigured && (section === 'traffic' || section === 'honeypot') ? apiUrl('honeypot/statistics', range.query) : null)
-  const cowrieStats = useApiData<CowrieStatistics>(cowrieConfigured && section === 'ssh' ? apiUrl('cowrie/statistics', range.query) : null)
-  const retry = () => { result.reload(); if (section === 'traffic') { traffic.reload(); burstTraffic.reload(); incidentStats.reload(); if (honeypotConfigured) honeypotStats.reload() } if (insightQuery) insights.reload(); if (section === 'incidents') incidentStats.reload(); if (section === 'honeypot') honeypotStats.reload(); if (section === 'ssh') cowrieStats.reload() }
+  const cowrieStats = useApiData<CowrieStatistics>(cowrieConfigured && (section === 'traffic' || section === 'ssh') ? apiUrl('cowrie/statistics', range.query) : null)
+  const retry = () => { result.reload(); if (section === 'traffic') { traffic.reload(); burstTraffic.reload(); incidentStats.reload(); if (honeypotConfigured) honeypotStats.reload(); if (cowrieConfigured) cowrieStats.reload() } if (insightQuery) insights.reload(); if (section === 'incidents') incidentStats.reload(); if (section === 'honeypot') honeypotStats.reload(); if (section === 'ssh') cowrieStats.reload() }
   const requestsText = (count: number | null) => `${numberText(count, language)} ${count === 1 ? t('requestSingular') : t('requestsLabel')}`
   const optionalRequestsText = (count: number | null) => count == null ? '—' : requestsText(count)
   const optionalSecondsText = (seconds: number | null) => seconds == null ? '—' : preciseSecondsText(seconds, language)
@@ -1709,6 +2024,7 @@ function StatisticsPage({ t, language, range, onRangeChange, lastImport, section
       <BurstTimeline items={burstTraffic.data?.items ?? []} loading={burstTraffic.loading} language={language} range={range} t={t} onBurstSelect={onBurstSelect} />
       <IncidentTimeline items={incidentStats.data?.timeline ?? []} loading={incidentStats.loading} error={Boolean(incidentStats.error)} language={language} range={range} t={t} onIncidentSelect={onIncidentSelect} />
       {honeypotConfigured && <HoneypotTimeline items={honeypotStats.data?.timeline ?? []} loading={honeypotStats.loading} language={language} range={range} t={t} />}
+      {cowrieConfigured && <CowrieTimeline items={cowrieStats.data?.timeline ?? []} loading={cowrieStats.loading} error={Boolean(cowrieStats.error)} language={language} range={range} t={t} />}
     </section>}
     {section === 'honeypot' && honeypotConfigured && <>
       <p className="incident-statistics-subtitle">{honeypotStats.error ? t('apiUnavailable') : honeypotStats.loading && !honeypotStats.data ? t('statisticsLoading') : t('honeypotIncidentMatchNote')}</p>
@@ -1721,6 +2037,7 @@ function StatisticsPage({ t, language, range, onRangeChange, lastImport, section
         <HoneypotTimeline items={honeypotStats.data?.timeline ?? []} loading={honeypotStats.loading} language={language} range={range} t={t} />
         <StatisticsBarsPanel title={t('honeypotAccessTypes')} description={t('honeypotAccessTypesNote')} items={honeypotStats.data?.by_method ?? null} loading={honeypotStats.loading && !honeypotStats.data} error={Boolean(honeypotStats.error)} t={t} language={language} />
         <StatisticsBarsPanel title={t('honeypotAccessRules')} description={t('honeypotAccessRulesNote')} items={honeypotStats.data?.by_rule ?? null} loading={honeypotStats.loading && !honeypotStats.data} error={Boolean(honeypotStats.error)} t={t} language={language} />
+        <CountryStatisticsPanel mode={countryMode} onModeChange={onCountryModeChange} items={honeypotStats.data?.countries ?? null} loading={honeypotStats.loading && !honeypotStats.data} error={Boolean(honeypotStats.error)} t={t} language={language} />
       </section>
     </>}
     {section === 'ssh' && cowrieConfigured && <>
@@ -1730,7 +2047,10 @@ function StatisticsPage({ t, language, range, onRangeChange, lastImport, section
         <MetricCard t={t} language={language} label={t('cowrieFailedLogins')} value={numberText(cowrieStats.data?.failed_login_count ?? 0, language)} icon={ShieldAlert} iconClass="amber" />
         <MetricCard t={t} language={language} label={t('cowrieCommands')} value={numberText(cowrieStats.data?.command_count ?? 0, language)} icon={FileText} iconClass="blue" />
       </section>
-      <StatisticsBarsPanel title={t('cowrieEventTypes')} description={t('cowrieEventTypesNote')} items={cowrieStats.data?.by_type.map((item) => ({ name: cowrieEventLabel(item.name), request_count: item.event_count, share_percent: item.share_percent })) ?? null} loading={cowrieStats.loading && !cowrieStats.data} error={Boolean(cowrieStats.error)} t={t} language={language} />
+      <section className="statistics-grid">
+        <StatisticsBarsPanel title={t('cowrieEventTypes')} description={t('cowrieEventTypesNote')} items={cowrieStats.data?.by_type.map((item) => ({ name: cowrieEventLabel(item.name), request_count: item.event_count, share_percent: item.share_percent })) ?? null} loading={cowrieStats.loading && !cowrieStats.data} error={Boolean(cowrieStats.error)} t={t} language={language} />
+        <CountryStatisticsPanel mode={countryMode} onModeChange={onCountryModeChange} items={cowrieStats.data?.countries ?? null} loading={cowrieStats.loading && !cowrieStats.data} error={Boolean(cowrieStats.error)} t={t} language={language} />
+      </section>
     </>}
     {section === 'patterns' && <section className="statistics-grid statistics-patterns-grid">
       <StatisticsBarsPanel title={t('statisticsStatusCodes')} description={t('statisticsStatusCodesNote')} items={result.data?.status_codes ?? null} loading={result.loading && !result.data} error={Boolean(result.error)} t={t} language={language} />
@@ -1758,7 +2078,7 @@ function StatisticsPage({ t, language, range, onRangeChange, lastImport, section
     </section>
     <section className="statistics-grid">
       <DistributionPanel title={t('statisticsProviders')} items={result.data?.providers ?? null} loading={result.loading && !result.data} error={Boolean(result.error)} t={t} language={language} onItemSelect={(value) => onDistributionSelect('provider', value)} />
-      <DistributionPanel title={t('statisticsCountries')} items={result.data?.countries ?? null} loading={result.loading && !result.data} error={Boolean(result.error)} t={t} language={language} country onItemSelect={(value) => onDistributionSelect('country', value)} />
+      <DistributionPanel title={t('statisticsCountries')} description={t('statisticsCountriesNote')} items={result.data?.countries ?? null} loading={result.loading && !result.data} error={Boolean(result.error)} t={t} language={language} country onItemSelect={(value) => onDistributionSelect('country', value)} />
       <DistributionPanel title={t('statisticsHosts')} items={result.data?.hosts ?? null} loading={result.loading && !result.data} error={Boolean(result.error)} t={t} language={language} onItemSelect={(value) => onDistributionSelect('host', value)} />
       <DistributionPanel title={t('statisticsCategories')} items={result.data?.categories ?? null} loading={result.loading && !result.data} error={Boolean(result.error)} t={t} language={language} note={t('statisticsCategoryNote')} onItemSelect={(value) => onDistributionSelect('category', value)} />
     </section>
@@ -1871,6 +2191,29 @@ function HoneypotTimeline({ items, loading, language, range, t }: { items: Honey
           const height = item.request_count ? Math.max(2, item.request_count / max * 100) : 1
           return <div className="statistics-time-slot" key={item.from} role="img" aria-label={`${label}–${formatter.format(new Date(item.to))} · ${numberText(item.request_count, language)} ${t('honeypotAccesses')}`} title={`${label} – ${formatter.format(new Date(item.to))}: ${numberText(item.request_count, language)} ${t('honeypotAccesses')}`}>
             <div className="statistics-time-bar"><i className={item.request_count ? 'honeypot' : 'request-zero'} style={{ height: `${height}%` }} /></div>
+          </div>
+        })}
+      </div><TimelineAxis labels={axisLabels} /></TimelineChartFrame>
+    </> : <p className="statistics-empty">{loading ? t('statisticsLoading') : t('statisticsNoData')}</p>}
+  </section>
+}
+
+function CowrieTimeline({ items, loading, error, language, range, t }: { items: CowrieStatistics['timeline']; loading: boolean; error: boolean; language: Language; range: TimeRange; t: (key: MessageKey) => string }) {
+  const max = Math.max(1, ...items.map((item) => item.event_count))
+  const total = items.reduce((sum, item) => sum + item.event_count, 0)
+  const formatter = new Intl.DateTimeFormat(language === 'de' ? 'de-DE' : 'en-US', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })
+  const axisLabels = timelineAxisLabels(range, items[0]?.from, items[items.length - 1]?.to, language)
+  return <section className="panel statistics-timeline-panel">
+    <div className="panel-header"><div><h2>{t('cowrieAccessFrequency')}</h2><p>{t('cowrieAccessFrequencyNote')}</p></div>{loading && <span className="statistics-loading-inline"><span className="loading-spinner" />{t('statisticsLoading')}</span>}</div>
+    {error ? <p className="statistics-empty">{t('apiUnavailable')}</p> : items.length ? <>
+      <div className="statistics-chart-total"><span>{t('statisticsGroupTotal')}</span><strong>{numberText(total, language)}</strong></div>
+      <div className="statistics-legend statistics-request-legend"><span><i className="cowrie" />{t('cowrieEvents')}</span></div>
+      <TimelineChartFrame max={max} language={language}><div className="statistics-timeline statistics-request-timeline" aria-label={t('cowrieAccessFrequency')}>
+        {items.map((item) => {
+          const label = formatter.format(new Date(item.from))
+          const height = item.event_count ? Math.max(2, item.event_count / max * 100) : 1
+          return <div className="statistics-time-slot" key={item.from} role="img" aria-label={`${label}–${formatter.format(new Date(item.to))} · ${numberText(item.event_count, language)} ${t('cowrieEvents')}`} title={`${label} – ${formatter.format(new Date(item.to))}: ${numberText(item.event_count, language)} ${t('cowrieEvents')}`}>
+            <div className="statistics-time-bar"><i className={item.event_count ? 'cowrie' : 'request-zero'} style={{ height: `${height}%` }} /></div>
           </div>
         })}
       </div><TimelineAxis labels={axisLabels} /></TimelineChartFrame>
@@ -2019,7 +2362,21 @@ function StatisticsBarsPanel({ title, description, items, loading, error, t, lan
   </section>
 }
 
-function DistributionPanel({ title, description, countLabel, items, loading, error, t, language, country = false, actorDetails = false, note, onItemSelect }: { title: string; description?: string; countLabel?: string; items: StatisticsItem[] | null; loading: boolean; error: boolean; t: (key: MessageKey) => string; language: Language; country?: boolean; actorDetails?: boolean; note?: string; onItemSelect: (value: string) => void }) {
+function CountryStatisticsPanel({ items, loading, error, t, language, mode, onModeChange }: { items: CountryStatisticsItem[] | null; loading: boolean; error: boolean; t: (key: MessageKey) => string; language: Language; mode: 'events' | 'groups'; onModeChange: (mode: 'events' | 'groups') => void }) {
+  const showingGroups = mode === 'groups'
+  const displayItems: StatisticsItem[] | null = items?.map((item) => ({
+    name: item.name,
+    request_count: showingGroups ? item.group_count : item.event_count,
+    share_percent: showingGroups ? item.group_share_percent : item.event_share_percent,
+  })).sort((left, right) => right.request_count - left.request_count || (left.name ?? '').localeCompare(right.name ?? '', language === 'de' ? 'de-DE' : 'en-US')) ?? null
+  const toggle = <div className="statistics-mode-toggle" role="group" aria-label={t('statisticsCountryCountMode')}>
+    <button type="button" className={!showingGroups ? 'active' : ''} aria-pressed={!showingGroups} onClick={() => onModeChange('events')}>{t('statisticsEvents')}</button>
+    <button type="button" className={showingGroups ? 'active' : ''} aria-pressed={showingGroups} onClick={() => onModeChange('groups')}>{t('statisticsGroups')}</button>
+  </div>
+  return <DistributionPanel title={t('statisticsCountries')} description={t(showingGroups ? 'statisticsCountriesGroupsNote' : 'statisticsCountriesEventsNote')} countLabel={t(showingGroups ? 'statisticsGroups' : 'statisticsEvents')} items={displayItems} loading={loading} error={error} t={t} language={language} country headerControl={toggle} />
+}
+
+function DistributionPanel({ title, description, countLabel, items, loading, error, t, language, country = false, actorDetails = false, note, onItemSelect, headerControl }: { title: string; description?: string; countLabel?: string; items: StatisticsItem[] | null; loading: boolean; error: boolean; t: (key: MessageKey) => string; language: Language; country?: boolean; actorDetails?: boolean; note?: string; onItemSelect?: (value: string) => void; headerControl?: ReactNode }) {
   const [page, setPage] = useState(0)
   const [search, setSearch] = useState('')
   const pageSize = 10
@@ -2030,13 +2387,13 @@ function DistributionPanel({ title, description, countLabel, items, loading, err
   const visibleRows = filteredRows.slice(Math.min(page, pageCount - 1) * pageSize, (Math.min(page, pageCount - 1) + 1) * pageSize)
   useEffect(() => setPage(0), [normalizedSearch])
   return <section className="panel statistics-panel">
-    <div className="panel-header"><div><h2>{title}</h2><p>{description ?? (items ? `${numberText(filteredRows.length, language)} ${t('statisticsEntries')}` : t('statisticsAllEntries'))}</p></div></div>
+    <div className="panel-header"><div><h2>{title}</h2><p>{description ?? (items ? `${numberText(filteredRows.length, language)} ${t('statisticsEntries')}` : t('statisticsAllEntries'))}</p></div>{headerControl}</div>
     <label className="statistics-search"><Search size={14} /><input type="search" value={search} placeholder={t('statisticsSearch')} aria-label={`${t('statisticsSearch')} · ${title}`} onChange={(event) => setSearch(event.target.value)} /></label>
     {loading ? <div className="statistics-panel-state"><span className="loading-spinner" />{t('statisticsLoading')}</div> : error ? <p className="statistics-empty">{t('apiUnavailable')}</p> : rows.length ? <div className="statistics-list">
       <div className="statistics-label-row"><span /><span /><span>{countLabel ?? t('statisticsRequests')}</span><span>{t('statisticsShare')}</span></div>
       {visibleRows.map((item, index) => <div className="statistics-row" key={`${item.name ?? 'unknown'}-${index + page * pageSize}`}>
         <span className="statistics-rank">{page * pageSize + index + 1}</span>
-        <div className="statistics-name-cell">{item.name ? <button type="button" className={`statistics-name table-link${item.known ? ' known-host-name' : ''}`} onClick={() => onItemSelect(item.name!)}>{country && <span className="country-flag" title={item.name}>{countryFlag(item.name)}</span>}{item.name}</button> : <span className="statistics-name">{t('unknown')}</span>}{actorDetails && <ActorMetadata {...(item as StatisticsInsights['active_actors'][number])} className="statistics-actor-details" />}<span className="statistics-share-track"><i style={{ width: `${Math.min(item.share_percent, 100)}%` }} /></span></div>
+        <div className="statistics-name-cell">{item.name ? onItemSelect ? <button type="button" className={`statistics-name table-link${item.known ? ' known-host-name' : ''}`} onClick={() => onItemSelect(item.name!)}>{country && <span className="country-flag" title={item.name}>{countryFlag(item.name)}</span>}{item.name}</button> : <span className="statistics-name">{country && <span className="country-flag" title={item.name}>{countryFlag(item.name)}</span>}{item.name}</span> : <span className="statistics-name">{t('unknown')}</span>}{actorDetails && <ActorMetadata {...(item as StatisticsInsights['active_actors'][number])} className="statistics-actor-details" />}<span className="statistics-share-track"><i style={{ width: `${Math.min(item.share_percent, 100)}%` }} /></span></div>
         <strong>{numberText(item.request_count, language)}</strong>
         <span className="statistics-percent">{decimalText(item.share_percent, language)}%</span>
       </div>)}
@@ -2294,7 +2651,7 @@ function RequestsPage({ t, language, range, onRangeChange, lastImport, burstId, 
       <div className={`metric-grid request-metrics${burstId != null ? ' has-burst' : ''}`}><MetricCard t={t} language={language} label={t('totalRequests')} value={numberText(result.data?.total ?? total, language)} icon={Activity} iconClass="blue" trend={trends.data?.metrics.request_count} trendLoading={trends.loading} trendAbsoluteUnit={t('requestsLabel')} /><MetricCard t={t} language={language} label={t('errorResponses')} value={numberText(trends.data?.metrics.error_request_count?.current ?? errorCount, language)} icon={ShieldAlert} iconClass="amber" trend={trends.data?.metrics.error_request_count} trendLoading={trends.loading} trendAbsoluteUnit={t('errorResponses')} /><MetricCard t={t} language={language} label={t('writeRequests')} value={numberText(countRow?.write_count, language)} icon={ArrowUpRight} iconClass="violet" trend={trends.data?.metrics.write_request_count} trendLoading={trends.loading} trendAbsoluteUnit={t('writeRequests')} />{burstId != null && <div className="panel metric-card burst-context-card"><div className="metric-top"><span>{t('burstDetails')} · #{burstId}</span><span className="metric-icon amber"><Activity size={17} /></span></div><div className="metric-bottom"><strong className="metric-value-compact">{activeBurst ? dateText(activeBurst.start_time, language) : '…'}</strong></div><div className="metric-foot"><div className="metric-caption">{t('duration')}: {activeBurst ? preciseSecondsText((new Date(activeBurst.end_time).getTime() - new Date(activeBurst.start_time).getTime()) / 1000, language) : '…'}</div><div className="metric-trend steady"><Activity size={13} /><span>{activeBurst ? `${decimalText(activeBurst.avg_count, language)} ${t('requestsPerSecond')}` : '…'}</span></div></div></div>}</div>
       <div className="panel data-list-panel requests-list-panel"><ListHeading title={t('requests')} />
         <Paginator total={result.data?.total ?? 0} pageIndex={pageIndex} pageSize={pageSize} onPageChange={setPageIndex} onPageSizeChange={onPageSizeChange} t={t} language={language} />
-        <TableScroller t={t}><table className={requestTableClass}><thead><tr><SortableHeader column="start_utc" label={t('startTime')} sort={sort} onSort={changeSort} filtered={true} filterLabel={t('filteredColumn')} /><SortableHeader column="request_method" label={t('method')} sort={sort} onSort={changeSort} /><SortableHeader column="request_path" label={t('requestPath')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || category != null || path != null)} filterLabel={t('filteredColumn')} /><SortableHeader column="host" label={t('host')} sort={sort} onSort={changeSort} className="request-host-col" filtered={Boolean(filters.search.trim() || host != null)} filterLabel={t('filteredColumn')} hidden={hideHostColumn} /><SortableHeader column="downstream_status" label={t('responseStatus')} sort={sort} onSort={changeSort} className="request-status-col" filtered={Boolean(filters.status)} filterLabel={t('filteredColumn')} />{!hideActorColumn && <SortableHeader column="actor_ip" label={t('actor')} sort={sort} onSort={changeSort} className="request-actor-col" filtered={Boolean(filters.search.trim() || actorIp != null)} filterLabel={t('filteredColumn')} />}<SortableHeader column="user_agent" label={t('userAgent')} sort={sort} onSort={changeSort} className="request-user-agent-col" /><SortableHeader column="duration" label={t('durationShort')} sort={sort} onSort={changeSort} /><SortableHeader column="downstream_content_size" label={t('responseSize')} sort={sort} onSort={changeSort} />{burstId == null && <SortableHeader column="burst_id" label={t('burstIdLabel')} sort={sort} onSort={changeSort} className="request-burst-id-col" />}</tr></thead><tbody>{requests.length ? requests.map((request) => <tr key={request.request_id}><td><span className="incident-time-cell"><strong>{requestDateTimeText(request.start_utc, language)} . {timestampMillisText(request.start_utc, language)}</strong><small>{elapsedDurationText(request.duration / 1_000_000, language)}</small></span></td><td><span className="method-cell">{request.request_scheme.toLowerCase() === 'https' && <span className="https-lock" title="HTTPS" aria-label="HTTPS"><LockKeyhole size={13} /></span>}{request.request_scheme.toLowerCase() === 'http' && <span className="http-lock" title="HTTP" aria-label="HTTP"><LockOpen size={13} /></span>}<span className={`method-badge ${request.request_method.toLowerCase()}`}>{request.request_method}</span></span></td><td><span className="request-path-detail"><code className="path-cell">{request.request_path}</code>{category == null && request.categories && <small>{request.categories}</small>}</span></td>{!hideHostColumn && <td className={`host-cell request-host-col${request.host_known ? ' known-host-name' : ''}`}>{request.host || '—'}</td>}<td className="request-status-col"><span className={`response-code ${request.downstream_status < 400 ? 'response-success' : ''}`}>{request.downstream_status}</span></td>{!hideActorColumn && <td className="request-actor-col"><span className="actor-detail"><strong className="primary-cell">{request.actor_ip}</strong><ActorMetadata {...request} /></span></td>}<td className="request-user-agent-col"><span className="user-agent-cell">{request.user_agent || '—'}</span></td><td>{numberText(request.duration / 1_000_000, language)} ms</td><td>{numberText(request.downstream_content_size, language)} B</td>{burstId == null && <td className="request-burst-id-col">{request.burst_id == null ? '—' : numberText(request.burst_id, language)}</td>}</tr>) : <EmptyRows t={t} columns={10 - Number(hideActorColumn) - Number(hideHostColumn) - Number(burstId != null)} />}</tbody></table></TableScroller>
+        <TableScroller t={t}><table className={requestTableClass}><thead><tr><SortableHeader column="start_utc" label={t('startTime')} sort={sort} onSort={changeSort} filtered={true} filterLabel={t('filteredColumn')} /><SortableHeader column="request_method" label={t('method')} sort={sort} onSort={changeSort} /><SortableHeader column="request_path" label={t('requestPath')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || category != null || path != null)} filterLabel={t('filteredColumn')} /><SortableHeader column="host" label={t('host')} sort={sort} onSort={changeSort} className="request-host-col" filtered={Boolean(filters.search.trim() || host != null)} filterLabel={t('filteredColumn')} hidden={hideHostColumn} /><SortableHeader column="downstream_status" label={t('responseStatus')} sort={sort} onSort={changeSort} className="request-status-col" filtered={Boolean(filters.status)} filterLabel={t('filteredColumn')} />{!hideActorColumn && <SortableHeader column="actor_ip" label={t('actor')} sort={sort} onSort={changeSort} className="request-actor-col" filtered={Boolean(filters.search.trim() || actorIp != null)} filterLabel={t('filteredColumn')} />}<SortableHeader column="user_agent" label={t('userAgent')} sort={sort} onSort={changeSort} className="request-user-agent-col" /><SortableHeader column="duration" label={t('durationShort')} sort={sort} onSort={changeSort} /><SortableHeader column="downstream_content_size" label={t('responseSize')} sort={sort} onSort={changeSort} /><SortableHeader column="request_content_size" label={t('requestBodySize')} sort={sort} onSort={changeSort} /></tr></thead><tbody>{requests.length ? requests.map((request) => <tr key={request.request_id}><td><span className="incident-time-cell"><strong>{requestDateTimeText(request.start_utc, language)} . {timestampMillisText(request.start_utc, language)}</strong><small>{elapsedDurationText(request.duration / 1_000_000, language)}</small></span></td><td><span className="method-cell">{request.request_scheme.toLowerCase() === 'https' && <span className="https-lock" title="HTTPS" aria-label="HTTPS"><LockKeyhole size={13} /></span>}{request.request_scheme.toLowerCase() === 'http' && <span className="http-lock" title="HTTP" aria-label="HTTP"><LockOpen size={13} /></span>}<span className={`method-badge ${request.request_method.toLowerCase()}`}>{request.request_method}</span></span></td><td><span className="request-path-detail"><code className="path-cell">{request.request_path}</code>{category == null && request.categories && <small>{request.categories}</small>}</span></td>{!hideHostColumn && <td className={`host-cell request-host-col${request.host_known ? ' known-host-name' : ''}`}>{request.host || '—'}</td>}<td className="request-status-col"><span className={`response-code ${request.downstream_status < 400 ? 'response-success' : ''}`}>{request.downstream_status}</span></td>{!hideActorColumn && <td className="request-actor-col"><span className="actor-detail"><strong className="primary-cell">{request.actor_ip}</strong><ActorMetadata {...request} /></span></td>}<td className="request-user-agent-col"><span className="user-agent-cell">{request.user_agent || '—'}</span></td><td>{numberText(request.duration / 1_000_000, language)} ms</td><td>{numberText(request.downstream_content_size, language)} B</td><td>{request.request_content_size == null ? '—' : `${numberText(request.request_content_size, language)} B`}</td></tr>) : <EmptyRows t={t} columns={10 - Number(hideActorColumn) - Number(hideHostColumn)} />}</tbody></table></TableScroller>
         <Paginator total={result.data?.total ?? 0} pageIndex={pageIndex} pageSize={pageSize} onPageChange={setPageIndex} onPageSizeChange={onPageSizeChange} t={t} language={language} />
       </div>
     </>}
@@ -2423,10 +2780,10 @@ function TableScroller({ children, className = '', t }: { children: ReactNode; c
   </div>
 }
 
-function SortableHeader<T extends string>({ column, label, sort, onSort, filtered = false, filterLabel, className, hidden = false }: { column: T; label: string; sort: { column: T; direction: 'asc' | 'desc' }; onSort: (column: T) => void; filtered?: boolean; filterLabel?: string; className?: string; hidden?: boolean }) {
+function SortableHeader<T extends string>({ column, label, sort, onSort, filtered = false, filterLabel, className, hidden = false, busy = false }: { column: T; label: string; sort: { column: T; direction: 'asc' | 'desc' }; onSort: (column: T, event?: MouseEvent<HTMLButtonElement>) => void; filtered?: boolean; filterLabel?: string; className?: string; hidden?: boolean; busy?: boolean }) {
   const active = sort.column === column
   if (hidden) return null
-  return <th className={className} aria-sort={active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}><button type="button" className="sort-header" title={filtered ? `${label} · ${filterLabel ?? ''}` : undefined} aria-label={filtered ? `${label} · ${filterLabel ?? ''}` : label} onClick={() => onSort(column)}>{label}{active && (sort.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}{filtered && <Filter size={11} className="column-filter-marker" aria-hidden="true" />}</button></th>
+  return <th className={className} aria-sort={active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}><button type="button" className={`sort-header${busy ? ' is-sort-pending' : ''}`} aria-busy={busy || undefined} title={filtered ? `${label} · ${filterLabel ?? ''}` : undefined} aria-label={filtered ? `${label} · ${filterLabel ?? ''}` : label} onClick={(event) => onSort(column, event)}><span>{label}</span>{active && (sort.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}{filtered && <Filter size={11} className="column-filter-marker" aria-hidden="true" />}</button></th>
 }
 
 function Paginator({ total, pageIndex, pageSize, onPageChange, onPageSizeChange, pageSizes = allowedPageSizes, t, language }: { total: number; pageIndex: number; pageSize: PageSize; onPageChange: (page: number) => void; onPageSizeChange: (size: PageSize) => void; pageSizes?: PageSize[]; t: (key: MessageKey) => string; language: Language }) {
@@ -2550,6 +2907,17 @@ function HoneypotGuidePage({ t }: { t: (key: MessageKey) => string }) {
   return <InfoGuidePage t={t} title="honeypotGuideTitle" subtitle="honeypotGuideSubtitle" entries={entries} note="honeypotGuideCaveat" />
 }
 
+function CowrieGuidePage({ t }: { t: (key: MessageKey) => string }) {
+  const entries: GuideEntry[] = [
+    { title: 'cowrieGuidePurposeTitle', description: 'cowrieGuidePurposeBody' },
+    { title: 'cowrieGuideGroupsTitle', description: 'cowrieGuideGroupsBody' },
+    { title: 'cowrieGuideIndicatorsTitle', description: 'cowrieGuideIndicatorsBody' },
+    { title: 'cowrieGuideSessionsTitle', description: 'cowrieGuideSessionsBody' },
+    { title: 'cowrieGuideLimitsTitle', description: 'cowrieGuideLimitsBody' },
+  ]
+  return <InfoGuidePage t={t} title="cowrieGuideTitle" subtitle="cowrieGuideSubtitle" entries={entries} note="cowrieGuideCaveat" />
+}
+
 function cowrieEventLabel(eventType: string): string {
   return eventType.replace(/^cowrie\./, '')
 }
@@ -2615,23 +2983,25 @@ function CowrieGroupAnalysisView({ analysis, loading, error, retry, t, language 
   </div>
 }
 
-function CowriePage({ t, language, range, onRangeChange, lastImport }: RangePageProps) {
+function CowriePage({ t, language, range, onRangeChange, lastImport, openGroupPanel, onGroupPanelChange, filters, onFiltersChange }: RangePageProps & { openGroupPanel: CowrieGroupPanel; onGroupPanelChange: (panel: CowrieGroupPanel) => void; filters: CowrieFilters; onFiltersChange: (filters: CowrieFilters) => void }) {
   const [isGroupPanelRendering, startGroupPanelRender] = useTransition()
   const [pendingGroupPanel, setPendingGroupPanel] = useState<CowrieGroupPanel | null>(null)
-  const [searchDraft, setSearchDraft] = useState('')
-  const [search, setSearch] = useState('')
-  const [eventType, setEventType] = useState('')
-  const [draftEventType, setDraftEventType] = useState('')
-  const [protectedOnly, setProtectedOnly] = useState(false)
-  const [draftProtectedOnly, setDraftProtectedOnly] = useState(false)
+  const [searchDraft, setSearchDraft] = useState(filters.search)
+  const [search, setSearch] = useState(filters.search)
+  const [eventType, setEventType] = useState(filters.eventType)
+  const [draftEventType, setDraftEventType] = useState(filters.eventType)
+  const [protectedOnly, setProtectedOnly] = useState(filters.protectedOnly)
+  const [draftProtectedOnly, setDraftProtectedOnly] = useState(filters.protectedOnly)
   const [pageIndex, setPageIndex] = useState(0)
   const [pageSize, setPageSize] = useState<PageSize>(25)
   const [groupSort, setGroupSort] = useState<{ column: CowrieGroupSortColumn; direction: 'asc' | 'desc' }>({ column: 'last_time', direction: 'desc' })
   const [expandedGroup, setExpandedGroup] = useState<CowrieGroup | null>(null)
-  const [openGroupPanel, setOpenGroupPanel] = useState<CowrieGroupPanel>('commands')
-  const [detailSearchDraft, setDetailSearchDraft] = useState('')
-  const [detailSearch, setDetailSearch] = useState('')
+  const [detailSearchDraft, setDetailSearchDraft] = useState(filters.detailSearch)
+  const [detailSearch, setDetailSearch] = useState(filters.detailSearch)
+  const [payloadView, setPayloadView] = useState<PayloadView>('formatted')
   const [detailSort, setDetailSort] = useState<{ column: CowrieDetailSortColumn; direction: 'asc' | 'desc' }>({ column: 'time', direction: 'desc' })
+  const detailTableRef = useRef<HTMLDivElement>(null)
+  const detailSortFrames = useRef<number[]>([])
   const [selectedEvent, setSelectedEvent] = useState<CowrieEvent | null>(null)
   const [selectedTtyGroup, setSelectedTtyGroup] = useState<CowrieGroup | null>(null)
   const [ttyPage, setTtyPage] = useState(0)
@@ -2659,27 +3029,52 @@ function CowriePage({ t, language, range, onRangeChange, lastImport }: RangePage
   const groupPanelBusy = selectedGroupTabLoading || isGroupPanelRendering
   const cowrieDetailItems = groupEvents.data?.items ?? []
   const normalizedDetailSearch = detailSearch.trim().toLocaleLowerCase(language === 'de' ? 'de-DE' : 'en-GB')
-  const filteredCowrieDetailItems = cowrieDetailItems.filter((item) => !normalizedDetailSearch || [item.src_ip, item.session, item.event_type, item.username, item.password, item.input, item.message, item.sensor, item.extra_json].some((value) => value?.toLocaleLowerCase(language === 'de' ? 'de-DE' : 'en-GB').includes(normalizedDetailSearch))).sort((left, right) => {
+  const filteredCowrieDetailItems = useMemo(() => cowrieDetailItems.filter((item) => !normalizedDetailSearch || [item.src_ip, item.session, item.event_type, item.username, item.password, item.input, item.message, item.sensor, item.extra_json].some((value) => value?.toLocaleLowerCase(language === 'de' ? 'de-DE' : 'en-GB').includes(normalizedDetailSearch))).sort((left, right) => {
     let order = 0
     if (detailSort.column === 'time') order = Date.parse(left.time) - Date.parse(right.time)
     else order = cowrieEventLabel(left.event_type).localeCompare(cowrieEventLabel(right.event_type), language === 'de' ? 'de-DE' : 'en-GB')
     return detailSort.direction === 'asc' ? order : -order
-  })
+  }), [cowrieDetailItems, detailSort, language, normalizedDetailSearch])
   const cowrieDetailIndex = selectedEvent ? cowrieDetailItems.findIndex((item) => item.event_id === selectedEvent.event_id) : -1
   const moveCowrieDetail = (offset: number) => { const item = cowrieDetailItems[cowrieDetailIndex + offset]; if (item) setSelectedEvent(item) }
-  const sortCowrieDetails = (column: CowrieDetailSortColumn) => setDetailSort((current) => ({ column, direction: current.column === column && current.direction === 'asc' ? 'desc' : 'asc' }))
-  const applyDetailSearch = () => setDetailSearch(detailSearchDraft.trim())
+  const sortCowrieDetails = (column: CowrieDetailSortColumn, event?: MouseEvent<HTMLButtonElement>) => {
+    detailSortFrames.current.forEach((frame) => window.cancelAnimationFrame(frame))
+    detailSortFrames.current = []
+    const table = detailTableRef.current
+    table?.querySelectorAll('.sort-header.is-sort-pending').forEach((button) => button.classList.remove('is-sort-pending'))
+    const button = event?.currentTarget
+    button?.classList.add('is-sort-pending')
+    table?.setAttribute('aria-busy', 'true')
+    const firstFrame = window.requestAnimationFrame(() => {
+      const secondFrame = window.requestAnimationFrame(() => {
+        detailSortFrames.current = []
+        setDetailSort((current) => ({ column, direction: current.column === column && current.direction === 'asc' ? 'desc' : 'asc' }))
+      })
+      detailSortFrames.current = [secondFrame]
+    })
+    detailSortFrames.current = [firstFrame]
+  }
+  useEffect(() => {
+    const table = detailTableRef.current
+    table?.querySelectorAll('.sort-header.is-sort-pending').forEach((button) => button.classList.remove('is-sort-pending'))
+    table?.removeAttribute('aria-busy')
+    detailSortFrames.current.forEach((frame) => window.cancelAnimationFrame(frame))
+    detailSortFrames.current = []
+  }, [detailSort])
+  useEffect(() => () => detailSortFrames.current.forEach((frame) => window.cancelAnimationFrame(frame)), [])
+  const applyDetailSearch = () => { const value = detailSearchDraft.trim(); setDetailSearch(value); onFiltersChange({ ...filters, detailSearch: value }) }
   const showGroupPanel = (panel: CowrieGroupPanel) => {
     if (panel === openGroupPanel) return
     setPendingGroupPanel(panel)
-    startGroupPanelRender(() => setOpenGroupPanel(panel))
+    startGroupPanelRender(() => onGroupPanelChange(panel))
   }
   useEffect(() => {
     if (!isGroupPanelRendering && pendingGroupPanel && openGroupPanel === pendingGroupPanel) setPendingGroupPanel(null)
   }, [isGroupPanelRendering, openGroupPanel, pendingGroupPanel])
-  const applySearch = () => { setPageIndex(0); setSearch(searchDraft.trim()); setEventType(draftEventType); setProtectedOnly(draftProtectedOnly); setExpandedGroup(null) }
+  useEffect(() => { setSearchDraft(filters.search); setSearch(filters.search); setDraftEventType(filters.eventType); setEventType(filters.eventType); setDraftProtectedOnly(filters.protectedOnly); setProtectedOnly(filters.protectedOnly); setDetailSearchDraft(filters.detailSearch); setDetailSearch(filters.detailSearch) }, [filters])
+  const applySearch = () => { const next = { ...filters, search: searchDraft.trim(), eventType: draftEventType, protectedOnly: draftProtectedOnly }; setPageIndex(0); setSearch(next.search); setEventType(next.eventType); setProtectedOnly(next.protectedOnly); setExpandedGroup(null); onFiltersChange(next) }
   const changeGroupSort = (column: CowrieGroupSortColumn) => { setPageIndex(0); setExpandedGroup(null); setGroupSort((current) => ({ column, direction: current.column === column && current.direction === 'asc' ? 'desc' : 'asc' })) }
-  const resetFilters = () => { setSearchDraft(''); setSearch(''); setEventType(''); setDraftEventType(''); setProtectedOnly(false); setDraftProtectedOnly(false); setPageIndex(0); setExpandedGroup(null) }
+  const resetFilters = () => { setSearchDraft(''); setSearch(''); setEventType(''); setDraftEventType(''); setProtectedOnly(false); setDraftProtectedOnly(false); setDetailSearchDraft(''); setDetailSearch(''); setPageIndex(0); setExpandedGroup(null); onFiltersChange(defaultCowrieFilters) }
   const deleteGroup = async (group: CowrieGroup) => {
     if (!group.src_ip) return
     const confirmation = t('confirmCowrieDeleteGroup')
@@ -2763,9 +3158,9 @@ function CowriePage({ t, language, range, onRangeChange, lastImport }: RangePage
                   </div>
                   <div className="cowrie-group-tabpanel" id="cowrie-tabpanel" role="tabpanel" aria-busy={groupPanelBusy} aria-labelledby={openGroupPanel === 'commands' ? 'cowrie-tab-commands' : 'cowrie-tab-ssh'}>
                     {openGroupPanel === 'commands' ? <CowrieGroupAnalysisView analysis={currentGroupAnalysis} loading={groupAnalysis.loading || Boolean(expandedGroup?.src_ip && !currentGroupAnalysis && !groupAnalysis.error)} error={groupAnalysis.error} retry={groupAnalysis.reload} t={t} language={language} /> : <>
-                      <div className="filter-toolbar burst-filters cowrie-detail-filter-toolbar"><label className="filter-search"><Search size={15} /><input type="search" value={detailSearchDraft} placeholder={t('cowrieDetailSearch')} aria-label={t('cowrieDetailSearch')} title={t('cowrieDetailSearchHint')} onChange={(event) => setDetailSearchDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') applyDetailSearch() }} /></label><button type="button" className="filter-button" onClick={() => { setDetailSearchDraft(''); setDetailSearch('') }}>{t('resetFilters')}</button><button type="button" className="primary-button filter-submit" onClick={applyDetailSearch}>{t('applyFilters')}</button></div>
+                      <div className="filter-toolbar burst-filters cowrie-detail-filter-toolbar"><label className="filter-search"><Search size={15} /><input type="search" value={detailSearchDraft} placeholder={t('cowrieDetailSearch')} aria-label={t('cowrieDetailSearch')} title={t('cowrieDetailSearchHint')} onChange={(event) => setDetailSearchDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') applyDetailSearch() }} /></label><button type="button" className="filter-button" onClick={() => { setDetailSearchDraft(''); setDetailSearch(''); onFiltersChange({ ...filters, detailSearch: '' }) }}>{t('resetFilters')}</button><button type="button" className="primary-button filter-submit" onClick={applyDetailSearch}>{t('applyFilters')}</button></div>
                       <PageDataState loading={groupEvents.loading} error={groupEvents.error} retry={groupEvents.reload} t={t} />
-                      {groupEvents.data && <><div className="cowrie-session-time"><span><small>{t('startTime')}</small><strong>{requestDateTimeText(expandedGroup?.first_time, language)}</strong></span><span><small>{t('duration')}</small><strong>{expandedGroup ? incidentDurationText(expandedGroup.first_time, expandedGroup.last_time, language) : '—'}</strong></span></div><div className="table-scroll"><table><thead><tr><SortableHeader<CowrieDetailSortColumn> column="time" label={t('dateTime')} sort={detailSort} onSort={sortCowrieDetails} /><SortableHeader<CowrieDetailSortColumn> column="event_type" label={t('cowrieEventType')} sort={detailSort} onSort={sortCowrieDetails} filtered={Boolean(normalizedDetailSearch)} filterLabel={t('filteredColumn')} /><th>{t('cowrieCommand')}{normalizedDetailSearch && <Filter size={11} className="column-filter-marker" aria-hidden="true" />}</th><th>{t('honeypotData')}{normalizedDetailSearch && <Filter size={11} className="column-filter-marker" aria-hidden="true" />}</th></tr></thead><tbody>
+                      {groupEvents.data && <><div className="cowrie-session-time"><span><small>{t('startTime')}</small><strong>{requestDateTimeText(expandedGroup?.first_time, language)}</strong></span><span><small>{t('duration')}</small><strong>{expandedGroup ? incidentDurationText(expandedGroup.first_time, expandedGroup.last_time, language) : '—'}</strong></span></div><div ref={detailTableRef} className="table-scroll cowrie-detail-table-scroll"><table><thead><tr><SortableHeader<CowrieDetailSortColumn> column="time" label={t('dateTime')} sort={detailSort} onSort={sortCowrieDetails} /><SortableHeader<CowrieDetailSortColumn> column="event_type" label={t('cowrieEventType')} sort={detailSort} onSort={sortCowrieDetails} filtered={Boolean(normalizedDetailSearch)} filterLabel={t('filteredColumn')} /><th>{t('cowrieCommand')}{normalizedDetailSearch && <Filter size={11} className="column-filter-marker" aria-hidden="true" />}</th><th>{t('honeypotData')}{normalizedDetailSearch && <Filter size={11} className="column-filter-marker" aria-hidden="true" />}</th></tr></thead><tbody>
                         {filteredCowrieDetailItems.map((item) => {
                           const payload = item.input ?? item.message ?? ''
                           const content = item.input ? `${t('cowrieInput')}: ${payload}` : item.message ? `${t('cowrieMessage')}: ${payload}` : ''
@@ -2793,9 +3188,10 @@ function CowriePage({ t, language, range, onRangeChange, lastImport }: RangePage
       <Paginator total={groups.data?.total ?? 0} pageIndex={pageIndex} pageSize={pageSize} onPageChange={(page) => { setPageIndex(page); setExpandedGroup(null) }} onPageSizeChange={(size) => { setPageSize(size); setPageIndex(0); setExpandedGroup(null) }} t={t} language={language} />
     </section>
     {selectedEvent && <div className="honeypot-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedEvent(null) }}><div className="honeypot-dialog-shell"><div className="honeypot-dialog-controls"><button type="button" className="icon-button" onClick={() => setSelectedEvent(null)} aria-label={t('close')} title={t('close')}><X size={16} /></button><button type="button" className="icon-button" onClick={() => moveCowrieDetail(-1)} disabled={cowrieDetailIndex <= 0} aria-label={t('previousRecord')} title={t('previousRecord')}><ChevronUp size={16} /></button><button type="button" className="icon-button" onClick={() => moveCowrieDetail(1)} disabled={cowrieDetailIndex < 0 || cowrieDetailIndex >= cowrieDetailItems.length - 1} aria-label={t('nextRecord')} title={t('nextRecord')}><ChevronDown size={16} /></button></div><section className="panel honeypot-detail honeypot-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="cowrie-event-details-title"><div className="panel-header"><h2 id="cowrie-event-details-title">{t('honeypotDetails')}</h2></div>
-      <dl className="honeypot-meta"><dt>{t('dateTime')}</dt><dd>{dateText(selectedEvent.time, language)}</dd><dt>{t('actor')}</dt><dd><span className="actor-detail"><strong className="primary-cell">{selectedEvent.src_ip || '—'}</strong><ActorMetadata provider={selectedEvent.provider} asn={selectedEvent.asn} country={selectedEvent.country} city={selectedEvent.city} /></span></dd><dt>{t('cowrieEventType')}</dt><dd><code>{cowrieEventLabel(selectedEvent.event_type)}</code></dd><dt>{t('honeypotSessionId')}</dt><dd>{selectedEvent.session || '—'}</dd><dt>{t('cowrieUsername')}</dt><dd>{selectedEvent.username || '—'}</dd><dt>{t('cowriePassword')}</dt><dd>{selectedEvent.password || '—'}</dd>
+      <dl className="honeypot-meta cowrie-event-meta"><dt>{t('dateTime')}</dt><dd>{dateText(selectedEvent.time, language)}</dd><dt>{t('actor')}</dt><dd><span className="actor-detail"><strong className="primary-cell">{selectedEvent.src_ip || '—'}</strong><ActorMetadata provider={selectedEvent.provider} asn={selectedEvent.asn} country={selectedEvent.country} city={selectedEvent.city} /></span></dd><dt>{t('cowrieEventType')}</dt><dd><code>{cowrieEventLabel(selectedEvent.event_type)}</code></dd><dt>{t('honeypotSessionId')}</dt><dd>{selectedEvent.session || '—'}</dd><dt>{t('cowrieUsername')}</dt><dd>{selectedEvent.username || '—'}</dd><dt>{t('cowriePassword')}</dt><dd>{selectedEvent.password || '—'}</dd>
         {selectedEvent.input && selectedEvent.message && <><dt>{t('cowrieDifferences')}</dt><dd><span className="cowrie-comparison-state">{selectedEvent.input.trim() === selectedEvent.message.trim() ? t('cowrieSameContent') : t('cowrieDifferences')}</span></dd></>}
-        <dt>{t('cowrieInput')}</dt><dd><pre className="honeypot-body honeypot-body-modal">{selectedEvent.input && selectedEvent.message ? <CowrieDifference value={selectedEvent.input} other={selectedEvent.message} /> : selectedEvent.input || '—'}</pre></dd><dt>{t('cowrieMessage')}</dt><dd><pre className="honeypot-body honeypot-body-modal">{selectedEvent.input && selectedEvent.message ? <CowrieDifference value={selectedEvent.message} other={selectedEvent.input} /> : selectedEvent.message || '—'}</pre></dd></dl>
+        <dt>{t('payloadView')}</dt><dd><PayloadViewTabs view={payloadView} onChange={setPayloadView} t={t} /></dd>
+        <dt className="cowrie-payload-label">{t('cowrieInput')}<CopyPayloadButton text={payloadView === 'raw' ? selectedEvent.input || '—' : formatPayloadText(selectedEvent.input || '—', t).copyText} t={t} /></dt><dd className="cowrie-payload-value"><PayloadText body={selectedEvent.input || '—'} view={payloadView} t={t} rawContent={selectedEvent.input && selectedEvent.message ? <CowrieDifference value={selectedEvent.input} other={selectedEvent.message} /> : selectedEvent.input || '—'} /></dd><dt className="cowrie-payload-label">{t('cowrieMessage')}<CopyPayloadButton text={payloadView === 'raw' ? selectedEvent.message || '—' : formatPayloadText(selectedEvent.message || '—', t).copyText} t={t} /></dt><dd className="cowrie-payload-value"><PayloadText body={selectedEvent.message || '—'} view={payloadView} t={t} rawContent={selectedEvent.input && selectedEvent.message ? <CowrieDifference value={selectedEvent.message} other={selectedEvent.input} /> : selectedEvent.message || '—'} /></dd></dl>
       {selectedEvent.extra_json && (() => { try { const extra = JSON.parse(selectedEvent.extra_json) as Record<string, unknown>; const entries = Object.entries(extra).filter(([, value]) => value !== null && value !== ''); return entries.length ? <><h3>{t('cowrieAdditionalFields')}</h3><dl className="honeypot-meta">{entries.map(([key, value]) => <Fragment key={key}><dt>{key}</dt><dd>{typeof value === 'string' ? value : JSON.stringify(value)}</dd></Fragment>)}</dl></> : null } catch { return null } })()}
     </section></div></div>}
     {selectedTtyGroup && <div className="honeypot-modal-backdrop cowrie-tty-modal" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedTtyGroup(null) }}><div className="honeypot-dialog-shell"><div className="honeypot-dialog-controls cowrie-tty-close-controls"><button type="button" className="icon-button" onClick={() => setSelectedTtyGroup(null)} aria-label={t('close')} title={t('close')}><X size={16} /></button></div><section className="panel honeypot-detail honeypot-detail-dialog cowrie-tty-dialog" role="dialog" aria-modal="true" aria-labelledby="cowrie-tty-title">
@@ -2808,8 +3204,15 @@ function CowriePage({ t, language, range, onRangeChange, lastImport }: RangePage
 
 function HoneypotPage({ t, language, range, onRangeChange, lastImport, pageSize, onPageSizeChange, sort, onSortChange, filters, onFiltersChange, onGroupRequestsSelect }: PaginatedPageProps & { sort: HoneypotSort; onSortChange: (sort: HoneypotSort) => void; filters: HoneypotFilters; onFiltersChange: (filters: HoneypotFilters) => void; onGroupRequestsSelect: (group: HoneypotGroup) => void }) {
   const [pageIndex, setPageIndex] = useState(0)
+  const [bodyView, setBodyView] = useState<PayloadView>('formatted')
+  const [pendingSortColumn, setPendingSortColumn] = useState<HoneypotSortColumn | null>(null)
+  const [sortRequestStarted, setSortRequestStarted] = useState(false)
   const [draftFilters, setDraftFilters] = useState<HoneypotFilters>(filters)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [payloadFrameHeight, setPayloadFrameHeight] = useState(180)
+  const payloadAreaRef = useRef<HTMLDivElement>(null)
+  const rawPayloadProbeRef = useRef<HTMLPreElement>(null)
+  const formattedPayloadProbeRef = useRef<HTMLPreElement>(null)
   const [expandedGroup, setExpandedGroup] = useState<HoneypotGroup | null>(null)
   const [deletingGroup, setDeletingGroup] = useState<string | null>(null)
   const [actionError, setActionError] = useState('')
@@ -2820,6 +3223,14 @@ function HoneypotPage({ t, language, range, onRangeChange, lastImport, pageSize,
     limit: String(pageSize), offset: String(pageIndex * pageSize),
   }).filter(([, value]) => value))
   const groups = useApiData<HoneypotGroupsResponse>(apiUrl('honeypot/groups', range.query, query))
+  useEffect(() => {
+    if (!pendingSortColumn) return
+    if (groups.loading) setSortRequestStarted(true)
+    else if (sortRequestStarted) {
+      setPendingSortColumn(null)
+      setSortRequestStarted(false)
+    }
+  }, [groups.loading, pendingSortColumn, sortRequestStarted])
   const groupEventsQuery = expandedGroup ? {
     ...(expandedGroup.client_ip === null ? {} : { client_ip: expandedGroup.client_ip }),
     from: expandedGroup.first_time, to: expandedGroup.last_time,
@@ -2828,6 +3239,21 @@ function HoneypotPage({ t, language, range, onRangeChange, lastImport, pageSize,
   } : undefined
   const groupEvents = useApiData<HoneypotEventsResponse>(expandedGroup ? apiUrl('honeypot/group-events', undefined, groupEventsQuery) : null)
   const detail = useApiData<HoneypotEventDetail>(selectedId ? apiUrl(`honeypot/events/${selectedId}`) : null, false)
+  useLayoutEffect(() => {
+    const measure = () => {
+      const raw = rawPayloadProbeRef.current
+      const formatted = formattedPayloadProbeRef.current
+      if (!raw || !formatted) return
+      const height = Math.max(raw.scrollHeight, formatted.scrollHeight)
+      setPayloadFrameHeight(Math.min(1440, Math.max(180, Math.ceil(height))))
+    }
+    measure()
+    const area = payloadAreaRef.current
+    if (!area || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(area)
+    return () => observer.disconnect()
+  }, [detail.data?.body_text, detail.data?.content_type, selectedId])
   const honeypotDetailItems = (groupEvents.data?.items ?? []).filter((item) => Boolean(item.has_body))
   const honeypotDetailIndex = selectedId ? honeypotDetailItems.findIndex((item) => item.event_id === selectedId) : -1
   const moveHoneypotDetail = (offset: number) => { const item = honeypotDetailItems[honeypotDetailIndex + offset]; if (item) setSelectedId(item.event_id) }
@@ -2879,6 +3305,8 @@ function HoneypotPage({ t, language, range, onRangeChange, lastImport, pageSize,
   }
   const changeSort = (column: HoneypotSortColumn) => {
     setPageIndex(0)
+    setPendingSortColumn(column)
+    setSortRequestStarted(false)
     onSortChange({ column, direction: sort.column === column && sort.direction === 'asc' ? 'desc' : 'asc' })
   }
   return <>
@@ -2901,26 +3329,26 @@ function HoneypotPage({ t, language, range, onRangeChange, lastImport, pageSize,
         <span className="honeypot-events-count">{t('honeypotSessions')}: {numberText(groups.data?.total ?? 0, language)} · {t('honeypotRequests')}: {numberText(groups.data?.total_events ?? 0, language)}</span>
       </div>
       <Paginator total={groups.data?.total ?? 0} pageIndex={pageIndex} pageSize={pageSize} onPageChange={(page) => { setPageIndex(page); setSelectedId(null); setExpandedGroup(null) }} onPageSizeChange={(size) => { onPageSizeChange(size); setPageIndex(0); setSelectedId(null); setExpandedGroup(null) }} t={t} language={language} />
-      <div className="table-scroll"><table className="honeypot-table"><thead><tr><SortableHeader column="time" label={t('dateTime')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.postsOnly)} filterLabel={t('filteredColumn')} /><SortableHeader column="client_ip" label={t('actor')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.postsOnly)} filterLabel={t('filteredColumn')} /><SortableHeader column="request_count" label={t('honeypotRequests')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.postsOnly)} filterLabel={t('filteredColumn')} /><SortableHeader column="path_count" label={t('honeypotPaths')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.postsOnly)} filterLabel={t('filteredColumn')} /><SortableHeader column="post_count" label={t('honeypotPostCount')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.postsOnly)} filterLabel={t('filteredColumn')} /><SortableHeader column="body_bytes" label={t('honeypotSize')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.postsOnly)} filterLabel={t('filteredColumn')} /></tr></thead><tbody>
+      <div className="table-scroll" aria-busy={groups.loading && Boolean(groups.data)}><table className="honeypot-table"><thead><tr><SortableHeader column="time" label={t('dateTime')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.postsOnly)} filterLabel={t('filteredColumn')} busy={pendingSortColumn === 'time' || (groups.loading && Boolean(groups.data) && sort.column === 'time')} /><SortableHeader column="client_ip" label={t('actor')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.postsOnly)} filterLabel={t('filteredColumn')} busy={pendingSortColumn === 'client_ip' || (groups.loading && Boolean(groups.data) && sort.column === 'client_ip')} /><SortableHeader column="request_count" label={t('honeypotRequests')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.postsOnly)} filterLabel={t('filteredColumn')} busy={pendingSortColumn === 'request_count' || (groups.loading && Boolean(groups.data) && sort.column === 'request_count')} /><SortableHeader column="path_count" label={t('honeypotPaths')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.postsOnly)} filterLabel={t('filteredColumn')} busy={pendingSortColumn === 'path_count' || (groups.loading && Boolean(groups.data) && sort.column === 'path_count')} /><SortableHeader column="post_count" label={t('honeypotPostCount')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.postsOnly)} filterLabel={t('filteredColumn')} busy={pendingSortColumn === 'post_count' || (groups.loading && Boolean(groups.data) && sort.column === 'post_count')} /><SortableHeader column="body_bytes" label={t('honeypotSize')} sort={sort} onSort={changeSort} filtered={Boolean(filters.search.trim() || filters.postsOnly)} filterLabel={t('filteredColumn')} busy={pendingSortColumn === 'body_bytes' || (groups.loading && Boolean(groups.data) && sort.column === 'body_bytes')} /></tr></thead><tbody>
         {groups.data?.items.map((group) => {
           const expanded = expandedGroup?.client_ip === group.client_ip && expandedGroup.first_time === group.first_time
           return <Fragment key={`${group.client_ip}-${group.first_time}`}>
             <tr>
               <td><button type="button" className="table-link honeypot-time-link" aria-label={`${t('honeypotOpenRequests')}: ${requestDateTimeText(group.first_time, language)}`} onClick={() => onGroupRequestsSelect(group)}><span className="incident-time-cell"><strong>{requestDateTimeText(group.first_time, language)}</strong><small>{incidentDurationText(group.first_time, group.last_time, language)}</small></span></button></td>
               <td><span className="actor-detail"><span className="actor-ip-line"><MaintenanceExclusionToggle ip={group.client_ip} t={t} /><strong className="primary-cell">{group.client_ip || '—'}</strong></span><ActorMetadata provider={group.provider} asn={group.asn} country={group.country} city={group.city} /></span></td>
-              <td><span className="honeypot-group-actions"><button type="button" className="table-link honeypot-group-toggle" aria-label={expanded ? t('honeypotCollapseGroup') : t('honeypotExpandGroup')} onClick={() => setExpandedGroup(expanded ? null : group)}>{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{numberText(group.request_count, language)}</button><button type="button" className="icon-button honeypot-delete-session actor-delete-button" aria-label={t('honeypotDeleteTestSession')} title={t('honeypotDeleteTestSession')} disabled={deletingGroup === `${group.client_ip ?? ''}-${group.first_time}`} onClick={() => void deleteGroup(group)}><Trash2 size={14} /></button></span></td>
+              <td><span className="honeypot-group-actions"><button type="button" className="table-link honeypot-group-toggle" aria-label={expanded ? t('honeypotCollapseGroup') : t('honeypotExpandGroup')} onClick={() => setExpandedGroup(expanded ? null : group)}>{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{filters.postsOnly ? <>{numberText(group.post_count, language)} ({numberText(group.request_count, language)})</> : numberText(group.request_count, language)}</button><button type="button" className="icon-button honeypot-delete-session actor-delete-button" aria-label={t('honeypotDeleteTestSession')} title={t('honeypotDeleteTestSession')} disabled={deletingGroup === `${group.client_ip ?? ''}-${group.first_time}`} onClick={() => void deleteGroup(group)}><Trash2 size={14} /></button></span></td>
               <td>{numberText(group.path_count, language)}</td>
               <td><span className="honeypot-group-posts">{numberText(group.post_count, language)}<small>{numberText(group.body_count, language)} {t('honeypotData').toLowerCase()}</small></span></td>
               <td>{numberText(group.body_bytes, language)} B</td>
             </tr>
             {expanded && <tr className="honeypot-group-expanded"><td colSpan={6}><div className="honeypot-group-events">
               <PageDataState loading={groupEvents.loading} error={groupEvents.error} retry={groupEvents.reload} t={t} />
-              {groupEvents.data && <div className="table-scroll"><table><thead><tr><th>{t('dateTime')}</th><th>{t('honeypotMethod')}</th><th>{t('honeypotPath')}</th><th>{t('honeypotRule')}</th><th>{t('honeypotPhase')}</th><th>{t('honeypotSize')}</th><th>{t('honeypotStatus')}</th><th>{t('honeypotData')}</th></tr></thead><tbody>
+              {groupEvents.data && <div className="table-scroll"><table><thead><tr><th>{t('dateTime')}</th><th>{t('honeypotMethod')}</th><th>{t('honeypotPath')}</th><th>{t('honeypotRule')}</th><th>{t('honeypotPhase')}</th><th>{t('honeypotSize')}</th><th>{t('honeypotStatus')}</th><th>{t('honeypotPage')}</th><th>{t('honeypotData')}</th></tr></thead><tbody>
                 {groupEvents.data.items.map((event) => <tr key={event.event_id}>
                   <td><span className="incident-time-cell"><strong>{requestDateTimeText(event.time, language)} . {timestampMillisText(event.time, language)}</strong><small>{elapsedDurationText(event.duration / 1_000_000, language)}</small></span></td>
                   <td><span className="method-cell">{event.scheme?.split(',', 1)[0].trim().toLowerCase() === 'https' ? <span className="https-lock" title="HTTPS" aria-label="HTTPS"><LockKeyhole size={13} /></span> : <span className="http-lock" title="HTTP" aria-label="HTTP"><LockOpen size={13} /></span>}<span className="method-badge">{event.method}</span></span></td>
                   <td className="honeypot-path"><code className="path-cell">{event.path}</code></td><td>{event.rule || '—'}</td><td>{honeypotPhaseText(event.session_phase, t)}</td><td>{numberText(event.body_bytes, language)} B</td>
-                  <td><span className={`response-code ${(event.status ?? 0) < 400 ? 'response-success' : ''}`}>{event.status ?? '—'}</span></td>
+                  <td><span className={`response-code ${(event.status ?? 0) < 400 ? 'response-success' : ''}`}>{event.status ?? '—'}</span></td><td>{event.response_page || '—'}</td>
                   <td>{event.has_body ? <button type="button" className="table-link honeypot-body-link" onClick={() => setSelectedId(event.event_id)}><FileText size={13} />{t('honeypotViewData')}</button> : '—'}</td>
                 </tr>)}
               </tbody></table></div>}
@@ -2936,7 +3364,22 @@ function HoneypotPage({ t, language, range, onRangeChange, lastImport, pageSize,
       {detail.data && <><dl className="honeypot-meta"><dt>{t('dateTime')}</dt><dd>{dateText(detail.data.time, language)}</dd><dt>{t('actor')}</dt><dd><span className="actor-detail"><strong className="primary-cell">{detail.data.client_ip || '—'}</strong><ActorMetadata provider={detail.data.provider} asn={detail.data.asn} country={detail.data.country} city={detail.data.city} /></span></dd><dt>{t('host')}</dt><dd>{detail.data.host || '—'}</dd><dt>{t('honeypotSessionId')}</dt><dd>{detail.data.session_id || '—'}</dd><dt>{t('honeypotPhase')}</dt><dd>{honeypotPhaseText(detail.data.session_phase, t)}</dd><dt>{t('honeypotAgent')}</dt><dd>{detail.data.user_agent || '—'}</dd><dt>Content-Type</dt><dd>{detail.data.content_type || '—'}</dd><dt>SHA-256</dt><dd>{detail.data.body_sha256 || '—'}</dd></dl>
         <h3>{t('honeypotBody')}</h3>
         {submittedFields.length > 0 && <><h3>{t('honeypotFields')}</h3><dl className="honeypot-meta">{submittedFields.map(([key, value], index) => <Fragment key={`${key}-${index}`}><dt>{key}</dt><dd>{value}</dd></Fragment>)}</dl></>}
-        {detail.data.body_text !== null ? <pre className="honeypot-body honeypot-body-modal">{detail.data.body_text || t('honeypotBodyMissing')}</pre> : detail.data.body_base64 ? <><p>{t('honeypotBodyBinary')}</p><pre className="honeypot-body honeypot-body-modal">{detail.data.body_base64}</pre></> : <p>{t('honeypotBodyMissing')}</p>}
+        {detail.data.body_text !== null && <div className="payload-view-toolbar"><PayloadViewTabs view={bodyView} onChange={setBodyView} t={t} /><CopyPayloadButton text={bodyView === 'raw' ? detail.data.body_text : formatMultipartPayloadText(detail.data.body_text, detail.data.content_type, t)} t={t} /></div>}
+        {detail.data.body_text !== null ? (() => {
+          const bodyText = detail.data.body_text
+          const formattedText = formatMultipartPayloadText(bodyText, detail.data.content_type, t)
+          const parts = bodyText ? parseHoneypotMultipart(bodyText, detail.data.content_type) : []
+          const formattedParts = parts.map((part) => formatPayloadText(part.body, t))
+          return <div className="honeypot-payload-area" ref={payloadAreaRef}>
+            {bodyView === 'raw'
+              ? <PayloadText body={bodyText} view="raw" t={t} height={payloadFrameHeight} />
+              : !parts.length
+                ? <PayloadText body={bodyText || t('honeypotBodyMissing')} view="formatted" t={t} height={payloadFrameHeight} />
+                : <pre style={{ height: payloadFrameHeight }} className="honeypot-body honeypot-body-modal payload-format-view">{parts.map((part, index) => <Fragment key={`${part.name}-${index}`}><span className="payload-part-heading">{part.name || `${t('honeypotFields')} ${index + 1}`}\n{part.headers.join('\n')}\n\n</span><FormattedPayloadContent formatted={formattedParts[index]} t={t} />{index < parts.length - 1 ? '\n\n────────────────────────────────────────\n\n' : ''}</Fragment>)}</pre>}
+            <pre ref={rawPayloadProbeRef} className="honeypot-body honeypot-body-modal payload-measure-probe">{bodyText}</pre>
+            <pre ref={formattedPayloadProbeRef} className="honeypot-body honeypot-body-modal payload-format-view payload-measure-probe">{formattedText}</pre>
+          </div>
+        })() : detail.data.body_base64 ? <><p>{t('honeypotBodyBinary')}</p><pre className="honeypot-body honeypot-body-modal">{detail.data.body_base64}</pre></> : <p>{t('honeypotBodyMissing')}</p>}
         {Boolean(detail.data.body_clipped) && <p className="honeypot-clipped">{t('honeypotTruncated')}</p>}
       </>}
     </section></div></div>}
@@ -3049,6 +3492,9 @@ function AdministrationPage({ t, language }: { t: (key: MessageKey) => string; l
   const retentionDays = Number(environment.MAINTENANCE_LOG_RETENTION_DAYS || 14)
   const importIntervalSeconds = Number(environment.INPUT_INTERVAL_SECONDS || 3600)
   const retentionCycleWarning = retentionDays > 0 && Number.isFinite(importIntervalSeconds) && retentionDays * 86400 < importIntervalSeconds
+  const importedFiles = collector?.last_import_files?.length
+    ? collector.last_import_files
+    : collector?.last_import_file ? [{ file: collector.last_import_file, count: collector.import_count }] : []
   const maintenanceRows = configRows([['MAINTENANCE_INTERVAL_DAYS', 'daysUnit'], ['MAINTENANCE_INACTIVE_DAYS', 'daysUnit'], ['MAINTENANCE_LOG_RETENTION_DAYS', retentionCycleWarning ? 'maintenanceCycleWarning' : 'daysUnit']])
   if (retentionCycleWarning) maintenanceRows[2].push('warning')
   const formatActivity = (activity?: string) => activityText(activity, t)
@@ -3056,15 +3502,16 @@ function AdministrationPage({ t, language }: { t: (key: MessageKey) => string; l
     <div className="page-heading admin-page-heading"><div><h1>{t('administration')}</h1><p>{t('adminSubtitle')}</p></div></div>
     <PageDataState loading={status.loading && !status.data} error={status.data ? null : status.error} retry={status.reload} t={t} />
     {!status.loading && (!status.error || status.data) && <>
-      <section className="admin-health-grid">
+      <section className={`admin-health-grid${status.data?.cowrie_configured ? ' has-cowrie' : ''}`}>
         <HealthCard icon={Activity} label={t('collector')} status={formatActivity(collector?.activity)} detail={collector?.available ? t('collectorAvailable') : t('collectorUnavailable')} healthy={collector?.available === true} />
         <HealthCard icon={Globe2} label={t('api')} status={status.data?.status === 'ok' ? t('connected') : t('degraded')} detail={status.data?.status === 'ok' ? t('apiConnected') : t('apiUnavailable')} healthy={status.data?.status === 'ok'} />
         <HealthCard icon={Database} label={t('database')} status={status.data?.database === 'ok' ? t('operational') : t('degraded')} detail={status.data?.database === 'ok' ? t('databaseConnected') : t('apiUnavailable')} healthy={status.data?.database === 'ok'} />
         {status.data?.honeypot_configured && <HealthCard icon={Bug} label={t('honeypot')} status={status.data.honeypot_available ? t('operational') : t('notStarted')} detail={status.data.honeypot_available ? t('connected') : t('honeypotNotRunning')} healthy={status.data.honeypot_available === true} />}
+        {status.data?.cowrie_configured && <HealthCard icon={Network} label={t('cowrie')} status={status.data.cowrie_available ? t('operational') : t('notStarted')} detail={status.data.cowrie_available ? t('cowrieLogAvailable') : t('cowrieLogUnavailable')} healthy={status.data.cowrie_available} />}
       </section>
       <section className="panel admin-activity-panel">
         <div className="admin-section-heading"><div><h2>{t('collectorActivity')}</h2><p>{t('collectorActivityHint')}</p></div></div>
-        <div className="activity-details"><AdminDetail label={t('lastImport')} value={dateText(collector?.last_import, language)} /><AdminDetail label={t('currentActivity')} value={formatActivity(collector?.activity)} /><AdminDetail label={t('importFile')} value={collector?.import_file || collector?.last_import_file || '—'} /><AdminDetail label={t('importCount')} value={numberText(collector?.import_count, language)} /></div>
+        <div className="admin-import-table-wrap"><table className="admin-import-table"><thead><tr><th>{t('lastImport')}</th><th>{t('importFile')}</th><th>{t('importCount')}</th></tr></thead><tbody>{importedFiles.length ? importedFiles.map((item, index) => <tr key={`${item.file}-${index}`}><td>{index === 0 ? dateText(collector?.last_import, language) : ''}</td><td>{item.file}</td><td>{numberText(item.count, language)}</td></tr>) : <tr><td>{dateText(collector?.last_import, language)}</td><td>—</td><td>—</td></tr>}</tbody></table></div>
       </section>
       <section className="admin-actions-grid">
         <AdminAction icon={ArrowDownRight} title={t('manualImport')} description={t('manualImportHint')} actionLabel={pending === 'import' ? t('starting') : t('startImport')} onClick={() => void runOperation('import')} disabled={busy} />
@@ -3093,10 +3540,6 @@ function AdministrationPage({ t, language }: { t: (key: MessageKey) => string; l
 
 function HealthCard({ icon: Icon, label, status, detail, healthy, neutral = false }: { icon: typeof Activity; label: string; status: string; detail: string; healthy: boolean; neutral?: boolean }) {
   return <div className="panel health-card"><div className="health-card-icon"><Icon size={17} /></div><div className="health-card-body"><span>{label}</span><strong><i className={neutral ? 'offline-dot neutral-dot' : healthy ? '' : 'offline-dot'} />{status}</strong><small>{detail}</small></div><span className={`health-card-check ${neutral ? 'system-check-neutral' : healthy ? '' : 'system-check-error'}`}>{neutral ? '–' : healthy ? '✓' : '!'}</span></div>
-}
-
-function AdminDetail({ label, value }: { label: string; value: string }) {
-  return <div className="admin-detail"><span>{label}</span><strong>{value}</strong></div>
 }
 
 function AdminAction({ icon: Icon, title, description, actionLabel, onClick, disabled }: { icon: typeof Activity; title: string; description: string; actionLabel: string; onClick: () => void; disabled: boolean }) {
