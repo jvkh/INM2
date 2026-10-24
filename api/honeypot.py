@@ -8,12 +8,20 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse
+from honeypot.main import preview_html, response_page as rule_response_page
 
 from api.dependencies import get_database
 from api.status import _honeypot_is_configured
 
 router = APIRouter()
 BODY_DIRECTORY = Path(os.environ.get("HONEYPOT_BODY_DIR", "/logs/honeypot-bodies"))
+
+
+def _fill_response_pages(items: list[dict[str, Any]]) -> None:
+    for item in items:
+        if not item.get("response_page") and item.get("rule"):
+            item["response_page"] = rule_response_page(item["rule"])
 
 
 def _utc_timestamp(value: datetime) -> str:
@@ -241,6 +249,7 @@ def list_honeypot_events(
             ORDER BY {sort_columns[sort_by]} {sort_order.upper()}, e.event_id {sort_order.upper()} LIMIT ? OFFSET ?""",
         [*parameters, limit, offset],
     )
+    _fill_response_pages(items)
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
@@ -399,6 +408,7 @@ def list_honeypot_group_events(
            ORDER BY {sort_columns[sort_by]} {sort_order.upper()}, e.event_id {sort_order.upper()}""",
         parameters,
     )
+    _fill_response_pages(items)
     return {"items": items, "total": len(items)}
 
 
@@ -475,4 +485,29 @@ def get_honeypot_event(request: Request, event_id: str) -> dict[str, Any]:
     event["body_text"] = body
     event["body_base64"] = body_base64
     event["body_file"] = body_file
+    if not event.get("response_page") and event.get("rule"):
+        event["response_page"] = rule_response_page(event["rule"])
     return event
+
+
+@router.get("/honeypot/events/{event_id}/preview", response_class=HTMLResponse)
+def get_honeypot_response_preview(request: Request, event_id: str) -> HTMLResponse:
+    """Return the captured HTML anomaly or render the event's fixed decoy page."""
+    if not re.fullmatch(r"[a-f0-9]{32}", event_id):
+        raise HTTPException(status_code=404, detail="Honeypot event not found")
+    rows = get_database(request).query(
+        "SELECT path, rule, response_html FROM honeypot_event WHERE event_id = ?", (event_id,)
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Honeypot event not found")
+    event = rows[0]
+    rule = event["rule"] or ""
+    if event["response_html"]:
+        content = event["response_html"]
+    elif rule.endswith("login-required"):
+        content = preview_html("/login.php", "portal-login")
+    else:
+        content = preview_html(event["path"], rule)
+    if content is None:
+        content = "<!doctype html><meta charset=utf-8><p>Für diese Antwort gibt es keine HTML-Seite.</p>"
+    return HTMLResponse(content=content, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})

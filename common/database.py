@@ -247,7 +247,7 @@ class Database:
             row[1]
             for row in self.connection.execute("PRAGMA table_info(honeypot_event)")
         }
-        for name in ("provider", "asn", "country", "city", "scheme", "session_id", "session_phase", "response_page"):
+        for name in ("provider", "asn", "country", "city", "scheme", "session_id", "session_phase", "response_page", "response_html"):
             if name not in columns:
                 self.connection.execute(f"ALTER TABLE honeypot_event ADD COLUMN {name} TEXT")
         if "duration" not in columns:

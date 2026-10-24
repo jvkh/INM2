@@ -1526,6 +1526,29 @@ def response_page(rule: str) -> str:
     return pages.get(rule, "Antwort")
 
 
+def preview_html(path: str, rule: str) -> str | None:
+    """Render the matching fixed HTML page for an event without mutating a session."""
+    def inline_assets(content: str) -> str:
+        stylesheet = (Path(__file__).with_name("assets") / "portal.css").read_text(encoding="utf-8")
+        return content.replace(
+            '<link rel="stylesheet" href="/assets/portal.css?v=20261020-1">',
+            f"<style>{stylesheet}</style>",
+        )
+
+    if rule == "portal-login-failed":
+        return inline_assets(_login_html("Mitgliederbereich", path.rstrip("/") or "/", "Mitgliedsnummer oder Passwort stimmt nicht."))
+    session: dict[str, object] = {"authenticated": False, "phase": "anonymous"}
+    portal = _portal_response(path, "GET", b"", session)
+    if portal is not None:
+        rendered_rule, _status, content_type, content, _headers = portal
+        if rendered_rule == rule and content_type.startswith("text/html"):
+            return inline_assets(content)
+    rendered_rule, _status, content_type, content = decoy(path, "GET")
+    if rendered_rule == rule and content_type.startswith("text/html"):
+        return inline_assets(content)
+    return None
+
+
 class HoneypotHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = ""
@@ -1565,6 +1588,8 @@ class HoneypotHandler(BaseHTTPRequestHandler):
             else:
                 rule, status, content_type, response, response_headers = portal
             payload = response.encode("utf-8")
+        expected_html = preview_html(decoded_path, rule) if content_type.startswith("text/html") else None
+        response_html = payload.decode("utf-8", errors="replace") if content_type.startswith("text/html") else None
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         if asset is None:
@@ -1602,6 +1627,7 @@ class HoneypotHandler(BaseHTTPRequestHandler):
             "body_sha256": hashlib.sha256(body).hexdigest() if body else "",
             "rule": rule,
             "response_page": response_page(rule),
+            "response_html": response_html if expected_html is not None and response_html != expected_html else None,
             "status": status,
             "duration": time.perf_counter_ns() - request_started_ns,
             "session_id": session_id,

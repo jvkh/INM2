@@ -146,6 +146,7 @@ CREATE TABLE IF NOT EXISTS honeypot_event (
     body_sha256    TEXT,
     rule           TEXT,
     response_page  TEXT,
+    response_html  TEXT,
     status         INTEGER,
     duration       INTEGER NOT NULL DEFAULT 0,
     body_text      TEXT,

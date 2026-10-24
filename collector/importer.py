@@ -477,9 +477,9 @@ class Importer:
                         """INSERT OR IGNORE INTO honeypot_event (
                                event_id, time, client_ip, provider, asn, country, city,
                                host, scheme, session_id, session_phase, method, path, user_agent,
-                               content_type, body_bytes, body_clipped, body_sha256, rule, response_page,
+                               content_type, body_bytes, body_clipped, body_sha256, rule, response_page, response_html,
                                status, duration, body_text, body_base64, body_file
-                           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
                             event_id, event.get("time", ""), client_ip,
                             geo.get("provider"), geo.get("asn"), geo.get("country"), geo.get("city"),
@@ -487,7 +487,7 @@ class Importer:
                             event.get("method", ""), event.get("path", ""),
                             event.get("user_agent"), event.get("content_type"),
                             int(event.get("body_bytes", 0)), int(bool(event.get("body_clipped"))),
-                            event.get("body_sha256"), event.get("rule"), event.get("response_page"), event.get("status"),
+                            event.get("body_sha256"), event.get("rule"), event.get("response_page"), event.get("response_html"), event.get("status"),
                             int(event.get("duration", 0)), event.get("body_text"), event.get("body_base64"),
                             event.get("body_file"),
                         ),
